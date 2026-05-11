@@ -270,11 +270,17 @@ aegrail agent start --log /var/log/nginx/access.log --log /var/log/nginx/error.l
 aegrail agent start --log /var/log/php-fpm/error.log --secret $env:AEGRAIL_HUB_INGEST_SECRET
 ```
 
-The first log scan records offsets and does not replay historical lines. Later scans read appended bytes, enqueue `log.line` events, and store redacted log text plus the original line hash. If a log is truncated or rotated, the watcher resumes from byte `0` and records the rotation in the scan result.
+The first log scan records offsets and does not replay historical lines. Later scans read appended bytes, enqueue structured log events when possible, and store redacted log text plus the original line hash. If a log is truncated or rotated, the watcher resumes from byte `0` and records the rotation in the scan result.
 
-Initial log severity is intentionally simple until structured parsers land:
+Current structured log parsing:
 
-- PHP fatal errors, critical/emergency lines, and segmentation faults are `high`.
-- HTTP `5xx`, authentication failures, permission denials, and generic errors are `medium`.
-- HTTP `4xx`, warnings, and deprecations are `low`.
+- Nginx and Apache common/combined access lines become `log.access` events with parsed method, path, redacted query, status, response bytes, user agent, source parser, and log event time.
+- PHP and Apache PHP-FPM error lines become `log.php_error` events with parsed level, file, line number, source parser, Apache context when present, and log event time.
+- Unrecognized lines remain redacted `log.line` events with a stable line hash, so evidence is still retained.
+
+Initial severity remains conservative:
+
+- PHP fatal and parse errors are `high`.
+- HTTP `5xx` and generic PHP errors are `medium`.
+- HTTP `4xx`, PHP warnings, notices, and deprecations are `low`.
 - everything else is `info`.

@@ -121,7 +121,8 @@ go run ./cmd/aegrail agent start --once --log /var/log/nginx/access.log --log /v
 go run ./cmd/aegrail agent start --once --log /var/log/nginx/access.log --secret $env:AEGRAIL_HUB_INGEST_SECRET
 ```
 
-The first log scan records offsets without replaying historical lines. Later scans enqueue redacted `log.line` events.
+The first log scan records offsets without replaying historical lines. Later scans enqueue redacted log events.
+Common Nginx and Apache access lines are promoted to structured `log.access` events. PHP error lines are promoted to `log.php_error` events. The original redacted line and line hash stay in the payload.
 
 ## Working Principles
 

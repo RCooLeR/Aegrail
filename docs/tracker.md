@@ -88,7 +88,7 @@ Last updated: 2026-05-12
 - [x] AH-017 Add real filesystem watcher loop for `aegrail agent start`.
 - [x] AH-018 Add log tail watcher loop for web and PHP logs.
 - [x] AH-019 Add inventory bootstrap helper for common single-site WordPress/PrestaShop deployments.
-- [ ] AH-020 Add structured Nginx, Apache, and PHP log parsers on top of tailed log events.
+- [x] AH-020 Add structured Nginx, Apache, and PHP log parsers on top of tailed log events.
 
 ## Evidence Import
 
@@ -104,9 +104,9 @@ Last updated: 2026-05-12
 ## Normalization and Redaction
 
 - [ ] N-001 Define canonical event Go type.
-- [ ] N-002 Normalize Nginx access logs.
-- [ ] N-003 Normalize Apache access logs.
-- [ ] N-004 Normalize PHP error logs.
+- [~] N-002 Normalize Nginx access logs.
+- [~] N-003 Normalize Apache access logs.
+- [~] N-004 Normalize PHP error logs.
 - [x] N-005 Redact query tokens, sessions, cookies, API keys, and credentials.
 - [x] N-006 Add redaction tests.
 

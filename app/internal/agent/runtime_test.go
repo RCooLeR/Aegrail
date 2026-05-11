@@ -285,8 +285,11 @@ func TestScanLogPathsBaselinesThenQueuesAppendedLine(t *testing.T) {
 		t.Fatalf("events = %d, want 1", len(batch.Events))
 	}
 	event := batch.Events[0]
-	if event.Type != "log.line" || event.Severity != "medium" || event.Target != filepath.Clean(logPath) {
-		t.Fatalf("event = %+v, want medium log.line for 500 access log", event)
+	if event.Type != "log.access" || event.Severity != "medium" || event.Target != filepath.Clean(logPath) {
+		t.Fatalf("event = %+v, want medium log.access for 500 access log", event)
+	}
+	if !event.Time.Equal(time.Date(2026, 5, 12, 8, 1, 0, 0, time.UTC)) {
+		t.Fatalf("event time = %s, want parsed log timestamp", event.Time)
 	}
 	line, ok := event.Payload["line"].(string)
 	if !ok {
@@ -294,6 +297,16 @@ func TestScanLogPathsBaselinesThenQueuesAppendedLine(t *testing.T) {
 	}
 	if strings.Contains(line, "super-secret") || !strings.Contains(line, "[REDACTED]") {
 		t.Fatalf("payload line was not redacted: %s", line)
+	}
+	if event.Payload["parser"] != "web_access" || event.Payload["path"] != "/wp-login.php" {
+		t.Fatalf("structured payload = %#v", event.Payload)
+	}
+	query, _ := event.Payload["query_redacted"].(string)
+	if strings.Contains(query, "super-secret") || !strings.Contains(query, "%5BREDACTED%5D") {
+		t.Fatalf("structured query was not redacted: %q", query)
+	}
+	if event.Payload["status_code"] != float64(500) {
+		t.Fatalf("status_code = %#v, want 500", event.Payload["status_code"])
 	}
 }
 

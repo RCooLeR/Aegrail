@@ -13,7 +13,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -338,16 +337,32 @@ func logLineEvent(path string, line logLine) EnqueueEventInput {
 		"line_sha256": sha256Hex(line.Text),
 		"truncated":   line.Truncated,
 	}
+	eventType := "log.line"
+	severity := classifyLogSeverity(line.Text)
+	message := fmt.Sprintf("log line observed: %s", path)
+	eventTime := time.Time{}
+	labels := map[string]string{
+		"watcher": "log",
+	}
+	if parsed, ok := parseStructuredLogEvent(path, line.Text); ok {
+		eventType = parsed.Type
+		severity = parsed.Severity
+		message = parsed.Message
+		eventTime = parsed.EventTime
+		labels["parser"] = parsed.Parser
+		for key, value := range parsed.Payload {
+			payload[key] = value
+		}
+	}
 	return EnqueueEventInput{
-		BatchID:  logLineBatchID(path, line),
-		Type:     "log.line",
-		Target:   path,
-		Severity: classifyLogSeverity(line.Text),
-		Message:  fmt.Sprintf("log line observed: %s", path),
-		Labels: map[string]string{
-			"watcher": "log",
-		},
-		Payload: payload,
+		BatchID:   logLineBatchID(path, line),
+		EventTime: eventTime,
+		Type:      eventType,
+		Target:    path,
+		Severity:  severity,
+		Message:   message,
+		Labels:    labels,
+		Payload:   payload,
 	}
 }
 
@@ -383,20 +398,4 @@ func classifyLogSeverity(line string) string {
 	default:
 		return string(domain.SeverityInfo)
 	}
-}
-
-func commonLogStatus(line string) int {
-	index := strings.LastIndex(line, "\" ")
-	if index < 0 {
-		return 0
-	}
-	fields := strings.Fields(line[index+2:])
-	if len(fields) == 0 {
-		return 0
-	}
-	status, err := strconv.Atoi(fields[0])
-	if err != nil {
-		return 0
-	}
-	return status
 }

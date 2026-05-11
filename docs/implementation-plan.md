@@ -249,9 +249,10 @@ Current status:
 - `aegrail hub serve` exposes HMAC-signed `POST /api/v1/ingest/events`.
 - `aegrail agent install`, `agent enqueue event`, `agent status`, and `agent send` support offline queue/replay.
 - `aegrail agent start` can baseline and poll filesystem paths, including WordPress and PrestaShop watch profiles, then queue and optionally replay signed events.
-- `aegrail agent start --log` can baseline and tail web/PHP log files or directories, enqueue redacted `log.line` events, and optionally replay signed events.
+- `aegrail agent start --log` can baseline and tail web/PHP log files or directories, enqueue redacted structured log events, and optionally replay signed events.
 - `aegrail inventory bootstrap single-site` creates the first common WordPress or PrestaShop Hub topology in one idempotent step.
-- Structured log parsers, per-agent secrets, cross-host baseline comparison, and richer topology templates remain next.
+- Tailed Nginx/Apache access logs and PHP error logs now produce structured `log.access` and `log.php_error` events while retaining redacted raw line evidence.
+- Per-agent secrets, cross-host baseline comparison, richer topology templates, and rule correlation remain next.
 
 ## Phase 10: Remote Collection and Scheduling
 
