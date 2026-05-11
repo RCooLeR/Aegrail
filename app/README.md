@@ -42,6 +42,7 @@ go run ./cmd/aegrail site list
 $env:AEGRAIL_DATA_DIR="../data"
 go run ./cmd/aegrail import files --site petlink --path testdata/evidence-sample/access.log
 go run ./cmd/aegrail import logs --site petlink --path testdata/evidence-sample
+go run ./cmd/aegrail inventory bootstrap single-site --kind wordpress --org acme --project customer-site --host web-01 --agent-id agt_web_01 --fingerprint SHA256:test
 go run ./cmd/aegrail agent start --once --root /var/www/site --profile wordpress
 go run ./cmd/aegrail agent start --once --log /var/log/nginx/access.log
 go fmt ./...

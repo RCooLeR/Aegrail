@@ -100,6 +100,14 @@ Required event labels:
 
 Optional labels can include deployment ring, customer, role, PHP version, container image, or cloud instance ID.
 
+Common single-site WordPress and PrestaShop deployments can be bootstrapped through one CLI call:
+
+```powershell
+aegrail inventory bootstrap single-site --kind wordpress --org acme --project customer-site --host web-01 --agent-id agt_web_01 --fingerprint SHA256:test
+```
+
+This creates the organization, project, `production` environment, `main-web` monitored app, `frontend` service, host, and agent identity. Larger topologies can still use the individual inventory commands so multi-node and database-owned collectors stay explicit.
+
 ## Event Timing
 
 Store both event time and Hub receive time:
@@ -203,8 +211,9 @@ suspicious login activity -> file change on web-02 -> database privilege change 
 4. Add Hub ingest API for signed event batches.
 5. Add Agent spool format and offline queue.
 6. Add deployment marker import.
-7. Add cross-host baseline comparison.
-8. Add correlation rules across hosts, apps, services, and DB events.
+7. Add single-site inventory bootstrap for WordPress and PrestaShop.
+8. Add cross-host baseline comparison.
+9. Add correlation rules across hosts, apps, services, and DB events.
 
 Current signed ingest endpoint:
 

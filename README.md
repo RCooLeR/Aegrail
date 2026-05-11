@@ -58,6 +58,13 @@ Create a distributed Hub inventory path:
 
 ```powershell
 cd app
+go run ./cmd/aegrail inventory bootstrap single-site --kind wordpress --org acme --org-name "Acme" --project customer-site --project-name "Customer Site" --host web-01 --agent-id agt_web_01 --fingerprint SHA256:test --region eu-central --label role=web
+```
+
+For less common topologies, create each inventory object directly:
+
+```powershell
+cd app
 go run ./cmd/aegrail inventory org add --name "Acme" acme
 go run ./cmd/aegrail inventory project add --org acme --name "Customer Site" customer-site
 go run ./cmd/aegrail inventory env add --org acme --project customer-site --name Production production

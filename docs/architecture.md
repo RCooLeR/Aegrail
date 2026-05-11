@@ -361,6 +361,7 @@ aegrail collector db start
 aegrail site add
 aegrail site list
 aegrail inventory org add
+aegrail inventory bootstrap single-site
 aegrail inventory project add
 aegrail inventory env add
 aegrail inventory app add

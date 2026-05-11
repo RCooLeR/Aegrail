@@ -16,6 +16,7 @@ func inventoryCommand(meta domain.AppMeta) *urfavecli.Command {
 		Name:  "inventory",
 		Usage: "manage distributed monitoring inventory",
 		Subcommands: []*urfavecli.Command{
+			inventoryBootstrapCommand(meta),
 			inventoryOrgCommand(meta),
 			inventoryProjectCommand(meta),
 			inventoryEnvironmentCommand(meta),
@@ -24,6 +25,84 @@ func inventoryCommand(meta domain.AppMeta) *urfavecli.Command {
 			inventoryHostCommand(meta),
 			inventoryAgentCommand(meta),
 			inventoryDeployCommand(meta),
+		},
+	}
+}
+
+func inventoryBootstrapCommand(meta domain.AppMeta) *urfavecli.Command {
+	return &urfavecli.Command{
+		Name:  "bootstrap",
+		Usage: "create common inventory topologies",
+		Subcommands: []*urfavecli.Command{
+			{
+				Name:  "single-site",
+				Usage: "create a WordPress or PrestaShop single-site inventory path",
+				Flags: []urfavecli.Flag{
+					&urfavecli.StringFlag{Name: "kind", Usage: "site kind: wordpress or prestashop", Required: true},
+					&urfavecli.StringFlag{Name: "org", Usage: "organization slug", Required: true},
+					&urfavecli.StringFlag{Name: "org-name", Usage: "organization display name"},
+					&urfavecli.StringFlag{Name: "project", Usage: "project slug", Required: true},
+					&urfavecli.StringFlag{Name: "project-name", Usage: "project display name"},
+					&urfavecli.StringFlag{Name: "env", Usage: "environment slug", Value: "production"},
+					&urfavecli.StringFlag{Name: "env-name", Usage: "environment display name", Value: "Production"},
+					&urfavecli.StringFlag{Name: "app", Usage: "monitored app slug", Value: "main-web"},
+					&urfavecli.StringFlag{Name: "app-name", Usage: "monitored app display name"},
+					&urfavecli.StringFlag{Name: "service", Usage: "service slug", Value: "frontend"},
+					&urfavecli.StringFlag{Name: "service-name", Usage: "service display name", Value: "Frontend"},
+					&urfavecli.StringFlag{Name: "service-role", Usage: "service role", Value: "web"},
+					&urfavecli.StringFlag{Name: "host", Usage: "host slug", Required: true},
+					&urfavecli.StringFlag{Name: "hostname", Usage: "host DNS name; defaults to host slug"},
+					&urfavecli.StringFlag{Name: "region", Usage: "host region"},
+					&urfavecli.StringSliceFlag{Name: "label", Usage: "host label in key=value form; can be repeated"},
+					&urfavecli.StringFlag{Name: "agent-id", Usage: "agent identity", Required: true},
+					&urfavecli.StringFlag{Name: "fingerprint", Usage: "agent fingerprint", Required: true},
+					&urfavecli.StringFlag{Name: "agent-version", Usage: "agent version label"},
+				},
+				Action: func(c *urfavecli.Context) error {
+					container, cleanup, err := newDatabaseContainer(c.Context, meta)
+					if err != nil {
+						return err
+					}
+					defer cleanup()
+
+					result, err := container.Hub.BootstrapSingleSite(c.Context, hubapp.BootstrapSingleSiteInput{
+						OrganizationSlug: c.String("org"),
+						OrganizationName: c.String("org-name"),
+						ProjectSlug:      c.String("project"),
+						ProjectName:      c.String("project-name"),
+						EnvironmentSlug:  c.String("env"),
+						EnvironmentName:  c.String("env-name"),
+						AppSlug:          c.String("app"),
+						AppName:          c.String("app-name"),
+						Kind:             c.String("kind"),
+						ServiceSlug:      c.String("service"),
+						ServiceName:      c.String("service-name"),
+						ServiceRole:      c.String("service-role"),
+						HostSlug:         c.String("host"),
+						Hostname:         c.String("hostname"),
+						Region:           c.String("region"),
+						HostLabels:       parseLabels(c.StringSlice("label")),
+						AgentID:          c.String("agent-id"),
+						Fingerprint:      c.String("fingerprint"),
+						AgentVersion:     c.String("agent-version"),
+					})
+					if err != nil {
+						return err
+					}
+
+					fmt.Fprintf(c.App.Writer, "Bootstrapped %s inventory path\n", result.App.Kind)
+					writer := tabwriter.NewWriter(c.App.Writer, 0, 0, 2, ' ', 0)
+					fmt.Fprintln(writer, "TYPE\tSLUG\tDETAIL\tID")
+					fmt.Fprintf(writer, "org\t%s\t%s\t%s\n", result.Organization.Slug, result.Organization.Name, result.Organization.ID)
+					fmt.Fprintf(writer, "project\t%s\t%s\t%s\n", result.Project.Slug, result.Project.Name, result.Project.ID)
+					fmt.Fprintf(writer, "environment\t%s\t%s\t%s\n", result.Environment.Slug, result.Environment.Name, result.Environment.ID)
+					fmt.Fprintf(writer, "app\t%s\t%s/%s\t%s\n", result.App.Slug, result.App.Name, result.App.Kind, result.App.ID)
+					fmt.Fprintf(writer, "service\t%s\t%s/%s\t%s\n", result.Service.Slug, result.Service.Name, result.Service.Role, result.Service.ID)
+					fmt.Fprintf(writer, "host\t%s\t%s\t%s\n", result.Host.Slug, result.Host.Hostname, result.Host.ID)
+					fmt.Fprintf(writer, "agent\t%s\t%s\t%s\n", result.Agent.AgentID, result.Agent.Version, result.Agent.ID)
+					return writer.Flush()
+				},
+			},
 		},
 	}
 }
