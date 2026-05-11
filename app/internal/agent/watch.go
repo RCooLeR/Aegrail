@@ -61,6 +61,12 @@ func (r *Runtime) ScanWatchedPaths(ctx context.Context, options WatchOptions) (W
 		return WatchResult{}, errors.New("at least one watch path is required")
 	}
 	statePath := r.watchStatePath(identity)
+	unlock, err := acquireWatchLock(statePath)
+	if err != nil {
+		return WatchResult{}, err
+	}
+	defer unlock()
+
 	previous, hadState, err := loadWatchState(statePath)
 	if err != nil {
 		return WatchResult{}, err
@@ -158,6 +164,28 @@ func profileWatchPaths(root string, profile string) []string {
 
 func (r *Runtime) watchStatePath(identity Identity) string {
 	return filepath.Join(filepath.Dir(identity.QueueDir), "state", "file-watch.json")
+}
+
+func acquireWatchLock(statePath string) (func(), error) {
+	lockPath := filepath.Join(filepath.Dir(statePath), "file-watch.lock")
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
+		return nil, err
+	}
+	file, err := os.OpenFile(lockPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if errors.Is(err, os.ErrExist) {
+		return nil, fmt.Errorf("watch state is locked by another agent process: %s", lockPath)
+	}
+	if err != nil {
+		return nil, err
+	}
+	_, _ = fmt.Fprintf(file, "pid=%d\ncreated_at=%s\n", os.Getpid(), time.Now().UTC().Format(time.RFC3339Nano))
+	if err := file.Close(); err != nil {
+		_ = os.Remove(lockPath)
+		return nil, err
+	}
+	return func() {
+		_ = os.Remove(lockPath)
+	}, nil
 }
 
 func loadWatchState(path string) (watchState, bool, error) {
@@ -341,6 +369,7 @@ func fileEvent(eventType string, current fileState, previous fileState) EnqueueE
 		}
 	}
 	return EnqueueEventInput{
+		BatchID:  fileEventBatchID(eventType, current, previous),
 		Type:     eventType,
 		Target:   current.Path,
 		Severity: severity,
@@ -350,6 +379,25 @@ func fileEvent(eventType string, current fileState, previous fileState) EnqueueE
 		},
 		Payload: payload,
 	}
+}
+
+func fileEventBatchID(eventType string, current fileState, previous fileState) string {
+	hash := sha256.New()
+	_, _ = fmt.Fprintf(
+		hash,
+		"%s\n%s\n%d\n%s\n%s\n%t\n%d\n%s\n%s\n%t",
+		eventType,
+		current.Path,
+		current.SizeBytes,
+		current.ModTime.Format(time.RFC3339Nano),
+		current.SHA256,
+		current.HashSkipped,
+		previous.SizeBytes,
+		previous.ModTime.Format(time.RFC3339Nano),
+		previous.SHA256,
+		previous.HashSkipped,
+	)
+	return "file-" + hex.EncodeToString(hash.Sum(nil))[:24]
 }
 
 func classifyFileSeverity(eventType string, path string) string {

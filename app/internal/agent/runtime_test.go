@@ -167,6 +167,43 @@ func TestScanWatchedPathsBaselinesThenQueuesFileCreate(t *testing.T) {
 	}
 }
 
+func TestScanWatchedPathsReturnsErrorWhenStateIsLocked(t *testing.T) {
+	root := t.TempDir()
+	appRoot := filepath.Join(root, "site")
+	if err := os.MkdirAll(appRoot, 0o700); err != nil {
+		t.Fatalf("MkdirAll returned error: %v", err)
+	}
+
+	runtime := NewRuntime(Config{
+		ConfigPath: filepath.Join(root, "agent.json"),
+		QueueDir:   filepath.Join(root, "queue"),
+	})
+	if _, err := runtime.Install(context.Background(), Identity{
+		HubURL:      "http://127.0.0.1:8787",
+		QueueDir:    filepath.Join(root, "queue"),
+		Org:         "acme",
+		Project:     "customer-site",
+		Environment: "production",
+		Host:        "web-01",
+		AgentID:     "agt_web_01",
+	}); err != nil {
+		t.Fatalf("Install returned error: %v", err)
+	}
+
+	lockPath := filepath.Join(root, "state", "file-watch.lock")
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
+		t.Fatalf("MkdirAll lock dir returned error: %v", err)
+	}
+	if err := os.WriteFile(lockPath, []byte("locked"), 0o600); err != nil {
+		t.Fatalf("WriteFile lock returned error: %v", err)
+	}
+
+	_, err := runtime.ScanWatchedPaths(context.Background(), WatchOptions{Paths: []string{appRoot}})
+	if err == nil || !strings.Contains(err.Error(), "watch state is locked") {
+		t.Fatalf("ScanWatchedPaths error = %v, want lock error", err)
+	}
+}
+
 func TestResolveWatchPathsReturnsProfilePaths(t *testing.T) {
 	root := filepath.Join("var", "www", "site")
 	paths, err := ResolveWatchPaths(WatchOptions{

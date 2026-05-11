@@ -77,7 +77,7 @@ func runCLI(t *testing.T, args ...string) {
 	var stderr bytes.Buffer
 	app.Writer = &stdout
 	app.ErrWriter = &stderr
-	if err := app.RunContext(context.Background(), args); err != nil {
-		t.Fatalf("RunContext(%v) returned error: %v\nstdout:\n%s\nstderr:\n%s", args, err, stdout.String(), stderr.String())
+	if err := app.Run(args); err != nil {
+		t.Fatalf("Run(%v) returned error: %v\nstdout:\n%s\nstderr:\n%s", args, err, stdout.String(), stderr.String())
 	}
 }
