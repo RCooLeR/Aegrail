@@ -204,6 +204,99 @@ func TestScanWatchedPathsReturnsErrorWhenStateIsLocked(t *testing.T) {
 	}
 }
 
+func TestScanLogPathsBaselinesThenQueuesAppendedLine(t *testing.T) {
+	root := t.TempDir()
+	logDir := filepath.Join(root, "logs")
+	if err := os.MkdirAll(logDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll returned error: %v", err)
+	}
+	logPath := filepath.Join(logDir, "access.log")
+	if err := os.WriteFile(logPath, []byte("127.0.0.1 - - [12/May/2026:08:00:00 +0000] \"GET / HTTP/1.1\" 200 12\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+
+	runtime := NewRuntime(Config{
+		ConfigPath: filepath.Join(root, "agent.json"),
+		QueueDir:   filepath.Join(root, "queue"),
+	})
+	runtime.now = func() time.Time { return time.Date(2026, 5, 12, 8, 0, 0, 0, time.UTC) }
+
+	if _, err := runtime.Install(context.Background(), Identity{
+		HubURL:      "http://127.0.0.1:8787",
+		QueueDir:    filepath.Join(root, "queue"),
+		Org:         "acme",
+		Project:     "customer-site",
+		Environment: "production",
+		App:         "main-web",
+		Service:     "frontend",
+		Host:        "web-01",
+		AgentID:     "agt_web_01",
+	}); err != nil {
+		t.Fatalf("Install returned error: %v", err)
+	}
+
+	result, err := runtime.ScanLogPaths(context.Background(), LogWatchOptions{Paths: []string{logPath}})
+	if err != nil {
+		t.Fatalf("ScanLogPaths returned error: %v", err)
+	}
+	if !result.Baselined || result.Queued != 0 || result.WatchedLogs != 1 {
+		t.Fatalf("first result = %+v, want one log baseline", result)
+	}
+
+	file, err := os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatalf("OpenFile returned error: %v", err)
+	}
+	if _, err := file.WriteString("127.0.0.1 - - [12/May/2026:08:01:00 +0000] \"GET /wp-login.php?token=super-secret HTTP/1.1\" 500 42\n"); err != nil {
+		t.Fatalf("WriteString returned error: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+	runtime.now = func() time.Time { return time.Date(2026, 5, 12, 8, 1, 0, 0, time.UTC) }
+
+	result, err = runtime.ScanLogPaths(context.Background(), LogWatchOptions{Paths: []string{logPath}})
+	if err != nil {
+		t.Fatalf("ScanLogPaths returned error after append: %v", err)
+	}
+	if result.Baselined || result.Queued != 1 || result.WatchedLogs != 1 {
+		t.Fatalf("second result = %+v, want one queued log line", result)
+	}
+
+	files, err := queueFiles(filepath.Join(root, "queue", "pending"))
+	if err != nil {
+		t.Fatalf("queueFiles returned error: %v", err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("pending files = %d, want 1", len(files))
+	}
+	content, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatalf("ReadFile returned error: %v", err)
+	}
+	var batch QueuedBatch
+	if err := json.Unmarshal(content, &batch); err != nil {
+		t.Fatalf("Unmarshal returned error: %v", err)
+	}
+	if !strings.HasPrefix(batch.BatchID, "log-") {
+		t.Fatalf("batch id = %q, want log prefix", batch.BatchID)
+	}
+	if len(batch.Events) != 1 {
+		t.Fatalf("events = %d, want 1", len(batch.Events))
+	}
+	event := batch.Events[0]
+	if event.Type != "log.line" || event.Severity != "medium" || event.Target != filepath.Clean(logPath) {
+		t.Fatalf("event = %+v, want medium log.line for 500 access log", event)
+	}
+	line, ok := event.Payload["line"].(string)
+	if !ok {
+		t.Fatalf("payload line = %#v, want string", event.Payload["line"])
+	}
+	if strings.Contains(line, "super-secret") || !strings.Contains(line, "[REDACTED]") {
+		t.Fatalf("payload line was not redacted: %s", line)
+	}
+}
+
 func TestResolveWatchPathsReturnsProfilePaths(t *testing.T) {
 	root := filepath.Join("var", "www", "site")
 	paths, err := ResolveWatchPaths(WatchOptions{

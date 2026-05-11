@@ -353,6 +353,7 @@ aegrail hub ingest event
 aegrail hub ingest batch list
 aegrail agent install
 aegrail agent start
+aegrail agent start --log /var/log/nginx/access.log
 aegrail agent enqueue event
 aegrail agent send
 aegrail agent status

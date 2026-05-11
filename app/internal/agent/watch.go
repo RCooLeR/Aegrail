@@ -167,7 +167,8 @@ func (r *Runtime) watchStatePath(identity Identity) string {
 }
 
 func acquireWatchLock(statePath string) (func(), error) {
-	lockPath := filepath.Join(filepath.Dir(statePath), "file-watch.lock")
+	base := strings.TrimSuffix(filepath.Base(statePath), filepath.Ext(statePath))
+	lockPath := filepath.Join(filepath.Dir(statePath), base+".lock")
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
 		return nil, err
 	}

@@ -233,6 +233,7 @@ Current Agent queue:
     failed/
   state/
     file-watch.json
+    log-watch.json
 ```
 
 `aegrail agent enqueue event` writes one JSON batch into `pending`. `aegrail agent send` signs each pending batch, posts it to the Hub ingest endpoint, and moves it to `sent` only after the Hub returns success. Failed sends stay pending so evidence is not lost.
@@ -252,3 +253,19 @@ The first severity rules are intentionally conservative:
 - Sensitive config files are `high`.
 - plugin, theme, and module changes are `medium`.
 - deletes are `low` until correlation raises or lowers risk.
+
+Current log tail watcher:
+
+```powershell
+aegrail agent start --log /var/log/nginx/access.log --log /var/log/nginx/error.log
+aegrail agent start --log /var/log/php-fpm/error.log --secret $env:AEGRAIL_HUB_INGEST_SECRET
+```
+
+The first log scan records offsets and does not replay historical lines. Later scans read appended bytes, enqueue `log.line` events, and store redacted log text plus the original line hash. If a log is truncated or rotated, the watcher resumes from byte `0` and records the rotation in the scan result.
+
+Initial log severity is intentionally simple until structured parsers land:
+
+- PHP fatal errors, critical/emergency lines, and segmentation faults are `high`.
+- HTTP `5xx`, authentication failures, permission denials, and generic errors are `medium`.
+- HTTP `4xx`, warnings, and deprecations are `low`.
+- everything else is `info`.

@@ -153,6 +153,7 @@ func agentStartCommand() *urfavecli.Command {
 		Usage: "watch local paths and enqueue evidence events",
 		Flags: append(agentConfigFlags(),
 			&urfavecli.StringSliceFlag{Name: "watch", Usage: "file or directory path to watch; can be repeated"},
+			&urfavecli.StringSliceFlag{Name: "log", Usage: "log file or directory to tail; can be repeated"},
 			&urfavecli.StringFlag{Name: "root", Usage: "application root used by watch profiles"},
 			&urfavecli.StringSliceFlag{Name: "profile", Usage: "watch profile: wordpress, prestashop"},
 			&urfavecli.DurationFlag{Name: "interval", Usage: "watch polling interval", Value: 30 * time.Second},
@@ -170,12 +171,16 @@ func agentStartCommand() *urfavecli.Command {
 				Root:     c.String("root"),
 				Profiles: c.StringSlice("profile"),
 			}
+			logOptions := agent.LogWatchOptions{
+				Paths: c.StringSlice("log"),
+			}
 			paths, err := agent.ResolveWatchPaths(options)
 			if err != nil {
 				return err
 			}
-			if len(paths) == 0 {
-				return fmt.Errorf("at least one watch path is required")
+			logPaths := agent.ResolveLogWatchPaths(logOptions)
+			if len(paths) == 0 && len(logPaths) == 0 {
+				return fmt.Errorf("at least one watch or log path is required")
 			}
 
 			runtime := newAgentRuntime(c)
@@ -183,20 +188,35 @@ func agentStartCommand() *urfavecli.Command {
 			defer stop()
 
 			runOnce := func() error {
-				result, err := runtime.ScanWatchedPaths(ctx, options)
-				if err != nil {
-					return err
+				queued := 0
+				if len(paths) > 0 {
+					result, err := runtime.ScanWatchedPaths(ctx, options)
+					if err != nil {
+						return err
+					}
+					queued += result.Queued
+					if result.Baselined {
+						fmt.Fprintf(c.App.Writer, "Watch baseline saved at %s (%d file(s))\n", result.StatePath, result.WatchedFiles)
+					} else {
+						fmt.Fprintf(c.App.Writer, "Watch scan queued %d event(s) from %d file(s)\n", result.Queued, result.WatchedFiles)
+					}
 				}
-
-				if result.Baselined {
-					fmt.Fprintf(c.App.Writer, "Watch baseline saved at %s (%d file(s))\n", result.StatePath, result.WatchedFiles)
-				} else {
-					fmt.Fprintf(c.App.Writer, "Watch scan queued %d event(s) from %d file(s)\n", result.Queued, result.WatchedFiles)
+				if len(logPaths) > 0 {
+					result, err := runtime.ScanLogPaths(ctx, logOptions)
+					if err != nil {
+						return err
+					}
+					queued += result.Queued
+					if result.Baselined {
+						fmt.Fprintf(c.App.Writer, "Log baseline saved at %s (%d log file(s))\n", result.StatePath, result.WatchedLogs)
+					} else {
+						fmt.Fprintf(c.App.Writer, "Log scan queued %d event(s) from %d log file(s)\n", result.Queued, result.WatchedLogs)
+					}
 				}
 
 				secret := c.String("secret")
 				if secret == "" {
-					if result.Queued > 0 {
+					if queued > 0 {
 						fmt.Fprintln(c.App.Writer, "Hub send skipped because no ingest secret was provided.")
 					}
 					return nil

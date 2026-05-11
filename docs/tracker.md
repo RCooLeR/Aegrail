@@ -86,8 +86,9 @@ Last updated: 2026-05-12
 - [x] AH-015 Add HMAC-signed `POST /api/v1/ingest/events` endpoint.
 - [x] AH-016 Add Agent enqueue/send replay to signed Hub ingest.
 - [x] AH-017 Add real filesystem watcher loop for `aegrail agent start`.
-- [ ] AH-018 Add log tail watcher loop for web and PHP logs.
+- [x] AH-018 Add log tail watcher loop for web and PHP logs.
 - [ ] AH-019 Add inventory bootstrap helper for common single-site WordPress/PrestaShop deployments.
+- [ ] AH-020 Add structured Nginx, Apache, and PHP log parsers on top of tailed log events.
 
 ## Evidence Import
 

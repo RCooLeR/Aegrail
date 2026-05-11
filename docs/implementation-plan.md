@@ -249,7 +249,8 @@ Current status:
 - `aegrail hub serve` exposes HMAC-signed `POST /api/v1/ingest/events`.
 - `aegrail agent install`, `agent enqueue event`, `agent status`, and `agent send` support offline queue/replay.
 - `aegrail agent start` can baseline and poll filesystem paths, including WordPress and PrestaShop watch profiles, then queue and optionally replay signed events.
-- Log watcher loops, per-agent secrets, inventory bootstrap helpers, and cross-host baseline comparison remain next.
+- `aegrail agent start --log` can baseline and tail web/PHP log files or directories, enqueue redacted `log.line` events, and optionally replay signed events.
+- Structured log parsers, per-agent secrets, inventory bootstrap helpers, and cross-host baseline comparison remain next.
 
 ## Phase 10: Remote Collection and Scheduling
 
