@@ -12,7 +12,7 @@ Last updated: 2026-05-12
 
 ## Foundation
 
-- [x] F-001 Preserve original product idea in `Aegrail-idea.md`.
+- [x] F-001 Preserve original product idea in `idea.md`.
 - [x] F-002 Create `docs`, `app`, and `data` workspace areas.
 - [x] F-003 Add architecture, implementation plan, and tracker docs.
 - [x] F-004 Ignore local runtime data and build output.

@@ -20,5 +20,5 @@ app/cmd/aegrail
 ## Consequences
 
 - Documentation, CLI help, and future packaging use one name.
-- The original `Aegrail-idea.md` remains as historical product context.
+- The original `idea.md` remains as historical product context.
 - Old `aegrail` command examples should be updated as docs are touched.

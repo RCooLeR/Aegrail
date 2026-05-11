@@ -15,7 +15,7 @@ For distributed monitoring details, see [Distributed Architecture](distributed-a
 
 ```text
 /
-  Aegrail-idea.md
+  idea.md
   app/
     go.mod
     cmd/

@@ -1,6 +1,6 @@
 # Aegrail Docs
 
-Aegrail is the product and binary name for the security audit and incident triage tool described in `Aegrail-idea.md`.
+Aegrail is the product and binary name for the security audit and incident triage tool described in `../idea.md`.
 
 ## Current Documents
 
@@ -26,3 +26,11 @@ Aegrail is the product and binary name for the security audit and incident triag
 - Sensitive fields are redacted before reports, exports, embeddings, or LLM calls.
 - CLI and HTTP workflows must share the same runtime use-case packages.
 - Modules such as PrestaShop, WordPress, Mautic, Yii2, and Laravel plug into the core without changing it.
+
+## Documentation Discipline
+
+- Keep `architecture.md` focused on durable boundaries and package responsibilities.
+- Keep `distributed-architecture.md` focused on Agent, Collector, Hub, inventory, and correlation behavior.
+- Keep `implementation-plan.md` focused on phases, current status, and exit criteria.
+- Keep `tracker.md` as the task-level source of truth.
+- Add or update an ADR when a decision changes the shape of the system.

@@ -1,6 +1,8 @@
 # Aegrail
 
-Aegrail is a CLI-first security audit and incident triage tool for small websites, ecommerce shops, and self-hosted applications. The original product sketch is preserved in `Aegrail-idea.md`; new implementation work uses `aegrail` as the product and binary name.
+Aegrail is a CLI-first security audit and incident triage tool for small websites, ecommerce shops, and self-hosted applications. The original product sketch is preserved in `idea.md`; new implementation work uses `aegrail` as the product and binary name.
+
+![Aegrail overview](./docs/banner.png)
 
 ## Current Documents
 
@@ -103,6 +105,16 @@ go run ./cmd/aegrail agent start --root /var/www/shop --profile prestashop --int
 ```
 
 The first `agent start` scan creates a local baseline. Later scans enqueue file events and, when `--secret` is provided, replay pending batches to the Hub.
+
+Smoke-test Agent log tailing:
+
+```powershell
+cd app
+go run ./cmd/aegrail agent start --once --log /var/log/nginx/access.log --log /var/log/php-fpm/error.log
+go run ./cmd/aegrail agent start --once --log /var/log/nginx/access.log --secret $env:AEGRAIL_HUB_INGEST_SECRET
+```
+
+The first log scan records offsets without replaying historical lines. Later scans enqueue redacted `log.line` events.
 
 ## Working Principles
 
