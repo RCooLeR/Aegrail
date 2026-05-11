@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="220" viewBox="0 0 980 220" role="img" aria-label="Aegrail logo">
+    
+    <defs>
+      <linearGradient id="gShield" x1="73" y1="65" x2="435" y2="452" gradientUnits="userSpaceOnUse">
+        <stop offset="0" stop-color="#00E5FF"/>
+        <stop offset="0.45" stop-color="#126DFF"/>
+        <stop offset="1" stop-color="#0F1E3A"/>
+      </linearGradient>
+      <linearGradient id="gA" x1="160" y1="130" x2="365" y2="342" gradientUnits="userSpaceOnUse">
+        <stop offset="0" stop-color="#00E5FF"/>
+        <stop offset="0.55" stop-color="#00BFAE"/>
+        <stop offset="1" stop-color="#126DFF"/>
+      </linearGradient>
+      <linearGradient id="gTrail" x1="126" y1="346" x2="386" y2="178" gradientUnits="userSpaceOnUse">
+        <stop offset="0" stop-color="#00E5FF"/>
+        <stop offset="0.55" stop-color="#00BFAE"/>
+        <stop offset="1" stop-color="#78FF82"/>
+      </linearGradient>
+      <filter id="softGlow" x="-30%" y="-30%" width="160%" height="160%">
+        <feGaussianBlur stdDeviation="5" result="blur"/>
+        <feColorMatrix in="blur" type="matrix" values="0 0 0 0 0  0 0 0 0 0.85  0 0 0 0 1  0 0 0 0.45 0" result="glow"/>
+        <feMerge><feMergeNode in="glow"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+      <clipPath id="shieldClip"><path d="M256 28 L421 94 V246 C421 360 352 432 256 484 C160 432 91 360 91 246 V94 Z"/></clipPath>
+    </defs>
+    
+    
+      <g transform="translate(36,30) scale(0.43)">
+      <g filter="url(#softGlow)">
+        <path d="M256 28 L421 94 V246 C421 360 352 432 256 484 C160 432 91 360 91 246 V94 Z" fill="none" fill-opacity="1" stroke="url(#gShield)" stroke-width="18" stroke-linejoin="round"/>
+        <g clip-path="url(#shieldClip)">
+          <path d="M256 108 L370 342 H314 L291 292 H221 L198 342 H142 Z M238 250 H274 L256 204 Z" fill="url(#gA)" fill-rule="evenodd"/>
+          <path d="M126 346 C173 323 203 296 250 270 C300 243 338 214 386 178" fill="none" stroke="url(#gTrail)" stroke-width="16" stroke-linecap="round"/>
+          <circle cx="126" cy="346" r="15" fill="#F6F8FA" stroke="url(#gTrail)" stroke-width="8"/><circle cx="190" cy="310" r="13" fill="#F6F8FA" stroke="url(#gTrail)" stroke-width="8"/><circle cx="255" cy="267" r="13" fill="#F6F8FA" stroke="url(#gTrail)" stroke-width="8"/><circle cx="322" cy="225" r="12" fill="#F6F8FA" stroke="url(#gTrail)" stroke-width="8"/><circle cx="386" cy="178" r="11" fill="#F6F8FA" stroke="url(#gTrail)" stroke-width="8"/>
+          <line x1="170" y1="372" x2="170" y2="402" stroke="#126DFF" stroke-width="8" stroke-linecap="round" opacity="0.45"/><line x1="197" y1="354" x2="197" y2="408" stroke="#00E5FF" stroke-width="8" stroke-linecap="round" opacity="0.45"/><line x1="224" y1="382" x2="224" y2="407" stroke="#126DFF" stroke-width="8" stroke-linecap="round" opacity="0.45"/><line x1="251" y1="342" x2="251" y2="414" stroke="#00E5FF" stroke-width="8" stroke-linecap="round" opacity="0.45"/><line x1="278" y1="365" x2="278" y2="410" stroke="#126DFF" stroke-width="8" stroke-linecap="round" opacity="0.45"/><line x1="305" y1="327" x2="305" y2="401" stroke="#00E5FF" stroke-width="8" stroke-linecap="round" opacity="0.45"/><line x1="332" y1="352" x2="332" y2="406" stroke="#126DFF" stroke-width="8" stroke-linecap="round" opacity="0.45"/><line x1="359" y1="314" x2="359" y2="384" stroke="#00E5FF" stroke-width="8" stroke-linecap="round" opacity="0.45"/>
+        </g>
+      </g></g>
+      <text x="285" y="120" font-family="Inter, Avenir Next, Segoe UI, Arial, sans-serif" font-size="96" font-weight="760" letter-spacing="-4" fill="#0B0F1A">Aegrail</text>
+      <circle cx="814" cy="50" r="12" fill="#00E5FF"/>
+    <text x="292" y="170" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="24" font-weight="450" fill="#0F1E3A">Evidence-first security audits for web incidents</text>
+    </svg>

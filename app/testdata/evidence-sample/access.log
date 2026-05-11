@@ -1,0 +1,1 @@
+127.0.0.1 - - [12/May/2026:00:00:01 +0300] "GET /admin/index.php?token=abc123&controller=AdminOrders HTTP/1.1" 200 512 "-" "AegrailTest/1.0"

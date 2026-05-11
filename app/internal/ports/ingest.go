@@ -1,0 +1,12 @@
+package ports
+
+import (
+	"context"
+
+	"github.com/rcooler/aegrail/internal/domain"
+)
+
+type IngestRepository interface {
+	SaveIngestBatch(ctx context.Context, batch domain.IngestBatch, events []domain.IngestEvent) (domain.IngestBatch, []domain.IngestEvent, bool, error)
+	ListIngestBatches(ctx context.Context, environmentID domain.ID, limit int) ([]domain.IngestBatch, error)
+}

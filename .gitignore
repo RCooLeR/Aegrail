@@ -1,0 +1,25 @@
+# Local runtime data and imported evidence
+.idea
+data/*
+!data/README.md
+app/data/
+.aegrail/
+app/.aegrail/
+
+# Local environment
+.env
+.env.*
+!.env.example
+
+# Go build and test output
+app/bin/
+app/tmp/
+app/dist/
+tmp/
+*.exe
+*.test
+coverage.out
+
+# Editor and OS noise
+.DS_Store
+Thumbs.db
