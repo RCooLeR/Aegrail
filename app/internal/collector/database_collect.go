@@ -899,6 +899,10 @@ func collectPrestaShopDatabaseEntities(ctx context.Context, db *sql.DB, tablePre
 	entities = append(entities, moduleEntities...)
 	warnings = append(warnings, moduleWarnings...)
 
+	configurationEntities, configurationWarnings := collectPrestaShopConfigurationEntities(ctx, db, prefix)
+	entities = append(entities, configurationEntities...)
+	warnings = append(warnings, configurationWarnings...)
+
 	sortDatabaseEntities(entities)
 	return entities, warnings
 }
@@ -987,6 +991,193 @@ func collectPrestaShopModuleEntities(ctx context.Context, db *sql.DB, prefix str
 		return entities, []string{fmt.Sprintf("prestashop module entity rows failed: %v", err)}
 	}
 	return entities, nil
+}
+
+func collectPrestaShopConfigurationEntities(ctx context.Context, db *sql.DB, prefix string) ([]DatabaseEntityObservation, []string) {
+	table := quoteDatabaseIdentifier(prefix + "configuration")
+	names := prestashopTrackedConfigurationNames()
+	patterns := prestashopTrackedConfigurationPatterns()
+	whereParts := []string{"name IN (" + databasePlaceholders(len(names)) + ")"}
+	args := stringArgs(names)
+	for _, pattern := range patterns {
+		whereParts = append(whereParts, "name LIKE ?")
+		args = append(args, pattern)
+	}
+	query := "SELECT name, COALESCE(value, '') FROM " + table +
+		" WHERE " + strings.Join(whereParts, " OR ") + " ORDER BY name LIMIT 1000"
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, []string{fmt.Sprintf("prestashop configuration entity query failed: %v", err)}
+	}
+	defer rows.Close()
+
+	var entities []DatabaseEntityObservation
+	for rows.Next() {
+		var name string
+		var value string
+		if err := rows.Scan(&name, &value); err != nil {
+			return entities, []string{fmt.Sprintf("prestashop configuration entity scan failed: %v", err)}
+		}
+		if entity, ok := prestashopConfigurationEntity(name, value); ok {
+			entities = append(entities, entity)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return entities, []string{fmt.Sprintf("prestashop configuration entity rows failed: %v", err)}
+	}
+	return entities, nil
+}
+
+func prestashopConfigurationEntity(name string, value string) (DatabaseEntityObservation, bool) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return DatabaseEntityObservation{}, false
+	}
+	category, sensitive, suspicious, reasons := classifyPrestaShopConfiguration(name, value)
+	attributes := map[string]any{
+		"config_name":       name,
+		"category":          category,
+		"value_sha256":      databaseSHA256Hex(value),
+		"value_bytes":       len([]byte(value)),
+		"empty":             strings.TrimSpace(value) == "",
+		"sensitive":         sensitive,
+		"suspicious":        suspicious,
+		"suspicious_reason": reasons,
+	}
+	if boolValue, ok := parsePrestaShopBool(value); ok {
+		attributes["value_bool"] = boolValue
+	}
+	entity := DatabaseEntityObservation{
+		Type:       "prestashop_configuration",
+		Key:        databaseEntityKey("prestashop_configuration", name),
+		Label:      name,
+		Privileged: suspicious,
+		Attributes: attributes,
+	}
+	entity.Signature = databaseEntitySignature(entity)
+	return entity, true
+}
+
+func prestashopTrackedConfigurationNames() []string {
+	return []string{
+		"PS_CANONICAL_REDIRECT",
+		"PS_COOKIE_CHECKIP",
+		"PS_COOKIE_SAMESITE",
+		"PS_CURRENCY_DEFAULT",
+		"PS_DEBUG_PROFILING",
+		"PS_DEV_MODE",
+		"PS_DISABLE_NON_NATIVE_MODULE",
+		"PS_DISABLE_OVERRIDES",
+		"PS_DISPLAY_ERRORS",
+		"PS_MAIL_METHOD",
+		"PS_MAIL_PASSWD",
+		"PS_MAIL_SERVER",
+		"PS_MAIL_SMTP_ENCRYPTION",
+		"PS_MAIL_SMTP_PORT",
+		"PS_MAIL_USER",
+		"PS_MAINTENANCE_IP",
+		"PS_MODE_DEV",
+		"PS_REWRITING_SETTINGS",
+		"PS_SHOP_DOMAIN",
+		"PS_SHOP_DOMAIN_SSL",
+		"PS_SHOP_ENABLE",
+		"PS_SSL_ENABLED",
+		"PS_SSL_ENABLED_EVERYWHERE",
+		"PS_TOKEN_ENABLE",
+		"PS_WEBSERVICE",
+		"PS_WEBSERVICE_CGI_HOST",
+	}
+}
+
+func prestashopTrackedConfigurationPatterns() []string {
+	return []string{
+		"%CHECKOUT%",
+		"%PAYMENT%",
+		"%PAYPAL%",
+		"%STRIPE%",
+		"PS_DEBUG%",
+		"PS_DEV%",
+		"PS_DISPLAY%",
+		"PS_MAIL_%",
+		"PS_MAINTENANCE%",
+		"PS_MODE_%",
+		"PS_SHOP_%",
+		"PS_SSL%",
+		"PS_WEBSERVICE%",
+	}
+}
+
+func classifyPrestaShopConfiguration(name string, value string) (string, bool, bool, []string) {
+	upper := strings.ToUpper(strings.TrimSpace(name))
+	category := prestashopConfigurationCategory(upper)
+	sensitive := isPrestaShopSensitiveConfiguration(upper)
+	boolValue, boolOK := parsePrestaShopBool(value)
+	var reasons []string
+
+	switch upper {
+	case "PS_MODE_DEV", "PS_DEV_MODE", "PS_DISPLAY_ERRORS", "PS_DEBUG_PROFILING":
+		if boolOK && boolValue {
+			reasons = append(reasons, "debug mode enabled")
+		}
+	case "PS_SSL_ENABLED", "PS_SSL_ENABLED_EVERYWHERE", "PS_COOKIE_CHECKIP", "PS_TOKEN_ENABLE":
+		if boolOK && !boolValue {
+			reasons = append(reasons, "security setting disabled")
+		}
+	case "PS_WEBSERVICE", "PS_WEBSERVICE_CGI_HOST":
+		if boolOK && boolValue {
+			reasons = append(reasons, "webservice enabled")
+		}
+	case "PS_SHOP_ENABLE":
+		if boolOK && !boolValue {
+			reasons = append(reasons, "shop disabled or maintenance mode active")
+		}
+	}
+	if category == "payment" && sensitive {
+		reasons = append(reasons, "payment secret tracked")
+	}
+	sort.Strings(reasons)
+	return category, sensitive, len(reasons) > 0, reasons
+}
+
+func prestashopConfigurationCategory(upperName string) string {
+	switch {
+	case strings.Contains(upperName, "PAYMENT") || strings.Contains(upperName, "PAYPAL") || strings.Contains(upperName, "STRIPE") || strings.Contains(upperName, "CHECKOUT"):
+		return "payment"
+	case strings.HasPrefix(upperName, "PS_MAIL_"):
+		return "mail"
+	case strings.Contains(upperName, "SSL") || strings.Contains(upperName, "COOKIE") || strings.Contains(upperName, "TOKEN"):
+		return "security"
+	case strings.Contains(upperName, "DEBUG") || strings.Contains(upperName, "DEV") || strings.Contains(upperName, "DISPLAY_ERRORS") || strings.Contains(upperName, "MODE_DEV"):
+		return "debug"
+	case strings.Contains(upperName, "WEBSERVICE") || strings.Contains(upperName, "API"):
+		return "api"
+	case strings.Contains(upperName, "DOMAIN") || strings.Contains(upperName, "SHOP_URL") || strings.Contains(upperName, "CANONICAL") || strings.Contains(upperName, "REWRITING"):
+		return "shop_url"
+	case strings.Contains(upperName, "MAINTENANCE") || upperName == "PS_SHOP_ENABLE":
+		return "maintenance"
+	default:
+		return "configuration"
+	}
+}
+
+func isPrestaShopSensitiveConfiguration(upperName string) bool {
+	for _, marker := range []string{"API", "KEY", "PASSWD", "PASSWORD", "PRIVATE", "SECRET", "TOKEN", "WEBHOOK"} {
+		if strings.Contains(upperName, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func parsePrestaShopBool(value string) (bool, bool) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on", "enabled":
+		return true, true
+	case "0", "false", "no", "off", "disabled":
+		return false, true
+	default:
+		return false, false
+	}
 }
 
 func queryDatabaseCount(ctx context.Context, db *sql.DB, spec databaseCheckSpec) (int64, error) {

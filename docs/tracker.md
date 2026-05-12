@@ -88,11 +88,11 @@ Last updated: 2026-05-12
 - [~] Add PrestaShop DB snapshot importer or collector.
 - [x] Snapshot redacted PrestaShop employees.
 - [x] Snapshot PrestaShop modules.
-- [~] Snapshot PrestaShop configuration.
+- [x] Snapshot PrestaShop configuration.
 - [~] Snapshot PrestaShop tabs, hooks, and access.
 - [x] Emit redacted PrestaShop DB snapshot diff events.
 - [x] Detect new PrestaShop employees and SuperAdmin accounts.
-- [~] Detect suspicious PrestaShop configuration values.
+- [x] Detect suspicious PrestaShop configuration values.
 - [x] Detect suspicious PrestaShop module changes.
 
 ## Phase 4: Detection Quality And Correlation

@@ -368,11 +368,68 @@ func prestashopDatabaseEntityRule(event domain.TimelineEvent, entityType string,
 			Severity:   domain.SeverityMedium,
 			Confidence: domain.ConfidenceMedium,
 		}
+	case "prestashop_configuration":
+		return prestashopConfigurationEntityRule(event, current, previous)
 	default:
 		return databaseSnapshotRule{
 			RuleID:     "prestashop-database-entity-changed",
 			Title:      "PrestaShop database entity changed",
 			Severity:   maxSeverity(event.Severity, domain.SeverityLow),
+			Confidence: domain.ConfidenceMedium,
+		}
+	}
+}
+
+func prestashopConfigurationEntityRule(event domain.TimelineEvent, current map[string]any, previous map[string]any) databaseSnapshotRule {
+	category := strings.ToLower(firstNonEmpty(
+		payloadStringAny(current, "category", ""),
+		payloadStringAny(previous, "category", ""),
+	))
+	currentSuspicious := payloadBool(current, "suspicious")
+	previousSuspicious := payloadBool(previous, "suspicious")
+	currentSensitive := payloadBool(current, "sensitive")
+	previousSensitive := payloadBool(previous, "sensitive")
+	switch {
+	case category == "payment":
+		return databaseSnapshotRule{
+			RuleID:     "prestashop-payment-configuration-changed",
+			Title:      "PrestaShop payment configuration changed",
+			Severity:   domain.SeverityHigh,
+			Confidence: domain.ConfidenceHigh,
+		}
+	case currentSuspicious && !previousSuspicious:
+		return databaseSnapshotRule{
+			RuleID:     "prestashop-suspicious-configuration-changed",
+			Title:      "Suspicious PrestaShop configuration changed",
+			Severity:   domain.SeverityHigh,
+			Confidence: domain.ConfidenceHigh,
+		}
+	case category == "mail":
+		return databaseSnapshotRule{
+			RuleID:     "prestashop-mail-configuration-changed",
+			Title:      "PrestaShop mail configuration changed",
+			Severity:   domain.SeverityMedium,
+			Confidence: domain.ConfidenceHigh,
+		}
+	case category == "shop_url" || category == "security" || category == "api":
+		return databaseSnapshotRule{
+			RuleID:     "prestashop-security-configuration-changed",
+			Title:      "PrestaShop security or URL configuration changed",
+			Severity:   domain.SeverityMedium,
+			Confidence: domain.ConfidenceHigh,
+		}
+	case currentSensitive || previousSensitive:
+		return databaseSnapshotRule{
+			RuleID:     "prestashop-sensitive-configuration-changed",
+			Title:      "PrestaShop sensitive configuration changed",
+			Severity:   domain.SeverityMedium,
+			Confidence: domain.ConfidenceHigh,
+		}
+	default:
+		return databaseSnapshotRule{
+			RuleID:     "prestashop-configuration-entity-changed",
+			Title:      "PrestaShop tracked configuration changed",
+			Severity:   maxSeverity(event.Severity, domain.SeverityMedium),
 			Confidence: domain.ConfidenceMedium,
 		}
 	}

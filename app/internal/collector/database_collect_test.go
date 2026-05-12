@@ -149,3 +149,36 @@ func TestWordPressScriptContentEntityRedactsContentAndExtractsIndicators(t *test
 		t.Fatalf("indicators = %#v, want multiple script indicators", entity.Attributes["indicators"])
 	}
 }
+
+func TestPrestaShopConfigurationEntityRedactsValueAndClassifiesRisk(t *testing.T) {
+	entity, ok := prestashopConfigurationEntity("PS_MODE_DEV", "1")
+	if !ok {
+		t.Fatal("prestashopConfigurationEntity returned ok=false")
+	}
+	if entity.Type != "prestashop_configuration" || entity.Label != "PS_MODE_DEV" || !entity.Privileged {
+		t.Fatalf("entity = %#v, want privileged PrestaShop configuration entity", entity)
+	}
+	if _, ok := entity.Attributes["value"]; ok {
+		t.Fatalf("entity leaked raw config value: %#v", entity.Attributes)
+	}
+	if entity.Attributes["category"] != "debug" || entity.Attributes["value_bool"] != true || entity.Attributes["suspicious"] != true {
+		t.Fatalf("attributes = %#v, want suspicious debug config", entity.Attributes)
+	}
+	reasons, ok := entity.Attributes["suspicious_reason"].([]string)
+	if !ok || len(reasons) != 1 || reasons[0] != "debug mode enabled" {
+		t.Fatalf("reasons = %#v, want debug mode reason", entity.Attributes["suspicious_reason"])
+	}
+}
+
+func TestPrestaShopConfigurationEntityClassifiesPaymentSecrets(t *testing.T) {
+	entity, ok := prestashopConfigurationEntity("PS_CHECKOUT_CLIENT_SECRET", "super-secret")
+	if !ok {
+		t.Fatal("prestashopConfigurationEntity returned ok=false")
+	}
+	if entity.Attributes["category"] != "payment" || entity.Attributes["sensitive"] != true || entity.Attributes["suspicious"] != true {
+		t.Fatalf("attributes = %#v, want sensitive payment config", entity.Attributes)
+	}
+	if _, ok := entity.Attributes["value"]; ok {
+		t.Fatalf("entity leaked raw payment secret: %#v", entity.Attributes)
+	}
+}

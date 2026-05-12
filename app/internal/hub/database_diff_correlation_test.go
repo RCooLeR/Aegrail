@@ -383,6 +383,88 @@ func TestCorrelateEventsBuildsPrestaShopModuleEntityChain(t *testing.T) {
 	}
 }
 
+func TestCorrelateEventsBuildsPrestaShopConfigurationEntityChains(t *testing.T) {
+	now := time.Date(2026, 5, 12, 13, 45, 0, 0, time.UTC)
+	chains := correlateTimelineEvents([]domain.TimelineEvent{
+		{
+			ID:        "evt-ps-debug-config",
+			EventTime: now,
+			EventType: "db.entity.changed",
+			Target:    "prestashop:prestashop_configuration:PS_MODE_DEV",
+			Severity:  domain.SeverityHigh,
+			HostSlug:  "web-01",
+			Labels: map[string]string{
+				"db_profile":     "prestashop",
+				"db_entity_type": "prestashop_configuration",
+			},
+			Payload: map[string]any{
+				"profile":     "prestashop",
+				"entity_type": "prestashop_configuration",
+				"entity_key":  "prestashop_configuration:debug",
+				"previous": map[string]any{
+					"type":      "prestashop_configuration",
+					"key":       "prestashop_configuration:debug",
+					"signature": "sig-debug-old",
+					"attributes": map[string]any{
+						"category":   "debug",
+						"suspicious": false,
+					},
+				},
+				"current": map[string]any{
+					"type":      "prestashop_configuration",
+					"key":       "prestashop_configuration:debug",
+					"signature": "sig-debug-new",
+					"attributes": map[string]any{
+						"category":    "debug",
+						"config_name": "PS_MODE_DEV",
+						"suspicious":  true,
+					},
+				},
+			},
+		},
+		{
+			ID:        "evt-ps-payment-config",
+			EventTime: now.Add(time.Minute),
+			EventType: "db.entity.changed",
+			Target:    "prestashop:prestashop_configuration:PS_CHECKOUT_CLIENT_SECRET",
+			Severity:  domain.SeverityMedium,
+			HostSlug:  "web-01",
+			Labels: map[string]string{
+				"db_profile":     "prestashop",
+				"db_entity_type": "prestashop_configuration",
+			},
+			Payload: map[string]any{
+				"profile":     "prestashop",
+				"entity_type": "prestashop_configuration",
+				"entity_key":  "prestashop_configuration:payment",
+				"current": map[string]any{
+					"type":      "prestashop_configuration",
+					"key":       "prestashop_configuration:payment",
+					"signature": "sig-payment-new",
+					"attributes": map[string]any{
+						"category":    "payment",
+						"config_name": "PS_CHECKOUT_CLIENT_SECRET",
+						"sensitive":   true,
+					},
+				},
+			},
+		},
+	}, 30*time.Minute)
+	if len(chains) != 2 {
+		t.Fatalf("chains = %#v, want two PrestaShop configuration chains", chains)
+	}
+	byRule := map[string]CorrelationChain{}
+	for _, chain := range chains {
+		byRule[chain.RuleID] = chain
+	}
+	if byRule["prestashop-suspicious-configuration-changed"].Severity != domain.SeverityHigh {
+		t.Fatalf("debug config chain = %#v, want high severity suspicious config", byRule["prestashop-suspicious-configuration-changed"])
+	}
+	if byRule["prestashop-payment-configuration-changed"].Severity != domain.SeverityHigh {
+		t.Fatalf("payment config chain = %#v, want high severity payment config", byRule["prestashop-payment-configuration-changed"])
+	}
+}
+
 func bootstrapDatabaseDiffInventory(t *testing.T, ctx context.Context, hub *Hub, appKind string) (domain.Environment, domain.MonitoredApp, domain.Host, domain.Agent) {
 	t.Helper()
 	if _, err := hub.SaveOrganization(ctx, SaveOrganizationInput{Slug: "acme"}); err != nil {

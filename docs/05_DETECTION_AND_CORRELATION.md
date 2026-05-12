@@ -103,6 +103,12 @@ Current deterministic DB diff finding rules:
 - `prestashop-employee-changed`
 - `prestashop-active-module-added`
 - `prestashop-module-entity-changed`
+- `prestashop-suspicious-configuration-changed`
+- `prestashop-payment-configuration-changed`
+- `prestashop-mail-configuration-changed`
+- `prestashop-security-configuration-changed`
+- `prestashop-sensitive-configuration-changed`
+- `prestashop-configuration-entity-changed`
 - `prestashop-employees-changed`
 - `prestashop-modules-changed`
 - `prestashop-configuration-changed`
