@@ -46,9 +46,10 @@ go run ./cmd/aegrail collector browser crawl --url https://example.com --rendere
 go test ./...
 ```
 
-Planned multi-site runtime:
+Multi-site runtime:
 
 ```powershell
+go run ./cmd/aegrail agent config validate --config configs/agent.multi-site.yaml.example
 go run ./cmd/aegrail agent run --config configs/agent.multi-site.yaml.example --once
 ```
 

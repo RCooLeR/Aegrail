@@ -1,6 +1,6 @@
 # Aegrail Agent Multi-Site Configuration
 
-Status: planned
+Status: in progress; validation plus file/log multi-site runs implemented
 Date: 2026-05-12
 
 Canonical context:
@@ -35,9 +35,15 @@ web-01
 
 If the agent only has one global `app` and `service`, the Hub cannot cleanly separate findings for each site. Aegrail must keep host identity and site context separate.
 
-## Target Command
+## Current Command
 
-The long-term command should be:
+Validate the config:
+
+```powershell
+aegrail agent config validate --config /etc/aegrail/agent.yaml
+```
+
+Run the agent from the config:
 
 ```powershell
 aegrail agent run --config /etc/aegrail/agent.yaml
@@ -47,10 +53,11 @@ For local development:
 
 ```powershell
 cd app
+go run ./cmd/aegrail agent config validate --config configs/agent.multi-site.yaml.example
 go run ./cmd/aegrail agent run --config configs/agent.multi-site.yaml.example
 ```
 
-The current implementation still uses `aegrail agent install` plus `aegrail agent start` flags. The multi-site config parser and runner are planned work.
+The current implementation uses the config for file watching, log tailing, queueing, replay, and per-site app/service labels. Database collectors and browser crawls are represented in the config but still need to be wired into `agent run`.
 
 ## Configuration Shape
 
@@ -309,7 +316,9 @@ web-01
 
 The dashboard can then show which sites are covered, partially covered, or not covered.
 
-## First Implementation Steps
+## Implementation Steps
+
+Done:
 
 1. Add a config loader for `aegrail.agent.server_config.v1`.
 2. Add per-site app/service/label overrides to queued events.
@@ -317,3 +326,9 @@ The dashboard can then show which sites are covered, partially covered, or not c
 4. Add `aegrail agent config validate`.
 5. Add `aegrail agent run --config ... --once`.
 6. Extend `agent run` to continuously scan every configured site and replay queued batches.
+
+Next:
+
+1. Run database collectors from configured `databases`.
+2. Run browser crawls from configured `browser_crawl`.
+3. Report config coverage to the Hub for dashboard views.

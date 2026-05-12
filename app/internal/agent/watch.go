@@ -22,9 +22,15 @@ const WatchStateSchema = "aegrail.agent.watch_state.v1"
 const maxWatchedHashBytes = 64 << 20
 
 type WatchOptions struct {
-	Paths    []string
-	Root     string
-	Profiles []string
+	Paths     []string
+	Root      string
+	Profiles  []string
+	Exclude   []string
+	StatePath string
+	App       string
+	Service   string
+	Region    string
+	Labels    map[string]string
 }
 
 type WatchResult struct {
@@ -61,7 +67,10 @@ func (r *Runtime) ScanWatchedPaths(ctx context.Context, options WatchOptions) (W
 	if len(paths) == 0 {
 		return WatchResult{}, errors.New("at least one watch path is required")
 	}
-	statePath := r.watchStatePath(identity)
+	statePath := strings.TrimSpace(options.StatePath)
+	if statePath == "" {
+		statePath = r.watchStatePath(identity)
+	}
 	unlock, err := acquireWatchLock(statePath)
 	if err != nil {
 		return WatchResult{}, err
@@ -72,7 +81,7 @@ func (r *Runtime) ScanWatchedPaths(ctx context.Context, options WatchOptions) (W
 	if err != nil {
 		return WatchResult{}, err
 	}
-	current, err := scanPaths(paths, identity.QueueDir, options.Root)
+	current, err := scanPaths(paths, identity.QueueDir, options.Root, options.Exclude)
 	if err != nil {
 		return WatchResult{}, err
 	}
@@ -85,6 +94,10 @@ func (r *Runtime) ScanWatchedPaths(ctx context.Context, options WatchOptions) (W
 	if hadState {
 		events := diffWatchState(previous.Files, current)
 		for _, event := range events {
+			event.App = options.App
+			event.Service = options.Service
+			event.Region = options.Region
+			event.Labels = mergeStringMaps(event.Labels, options.Labels)
 			if _, _, err := r.EnqueueEvent(ctx, event); err != nil {
 				return WatchResult{}, err
 			}
@@ -219,28 +232,32 @@ func saveWatchState(path string, state watchState) error {
 	return os.WriteFile(path, append(content, '\n'), 0o600)
 }
 
-func scanPaths(paths []string, queueDir string, root string) (map[string]fileState, error) {
+func scanPaths(paths []string, queueDir string, root string, exclude []string) (map[string]fileState, error) {
 	result := map[string]fileState{}
 	queueAbs, _ := filepath.Abs(queueDir)
 	rootAbs := ""
 	if strings.TrimSpace(root) != "" {
 		rootAbs, _ = filepath.Abs(root)
 	}
+	excludeAbs := resolveExcludePaths(exclude)
 	for _, path := range paths {
-		if err := scanPath(path, queueAbs, rootAbs, result); err != nil {
+		if err := scanPath(path, queueAbs, rootAbs, excludeAbs, result); err != nil {
 			return nil, err
 		}
 	}
 	return result, nil
 }
 
-func scanPath(path string, queueAbs string, rootAbs string, result map[string]fileState) error {
+func scanPath(path string, queueAbs string, rootAbs string, excludeAbs []string, result map[string]fileState) error {
 	info, err := os.Stat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	if err != nil {
 		return err
+	}
+	if isExcludedPath(path, excludeAbs) {
+		return nil
 	}
 	if !info.IsDir() {
 		state, err := buildFileState(path, info, rootAbs)
@@ -258,9 +275,12 @@ func scanPath(path string, queueAbs string, rootAbs string, result map[string]fi
 			return nil
 		}
 		if entry.IsDir() {
-			if shouldSkipDir(current, queueAbs) {
+			if shouldSkipDir(current, queueAbs) || isExcludedPath(current, excludeAbs) {
 				return filepath.SkipDir
 			}
+			return nil
+		}
+		if isExcludedPath(current, excludeAbs) {
 			return nil
 		}
 		info, err := entry.Info()
@@ -277,6 +297,40 @@ func scanPath(path string, queueAbs string, rootAbs string, result map[string]fi
 		result[state.Path] = state
 		return nil
 	})
+}
+
+func resolveExcludePaths(exclude []string) []string {
+	paths := make([]string, 0, len(exclude))
+	for _, value := range exclude {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		abs, err := filepath.Abs(value)
+		if err != nil {
+			continue
+		}
+		paths = append(paths, filepath.Clean(abs))
+	}
+	sortStrings(paths)
+	return paths
+}
+
+func isExcludedPath(path string, excludeAbs []string) bool {
+	if len(excludeAbs) == 0 {
+		return false
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+	cleaned := filepath.Clean(abs)
+	for _, exclude := range excludeAbs {
+		if cleaned == exclude || strings.HasPrefix(cleaned, exclude+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }
 
 func shouldSkipDir(path string, queueAbs string) bool {

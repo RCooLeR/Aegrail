@@ -35,6 +35,7 @@ type Runtime struct {
 type Config struct {
 	ConfigPath string
 	QueueDir   string
+	Identity   *Identity
 }
 
 type Identity struct {
@@ -56,6 +57,8 @@ type Identity struct {
 type EnqueueEventInput struct {
 	BatchID   string
 	EventTime time.Time
+	App       string
+	Service   string
 	Type      string
 	Target    string
 	Severity  string
@@ -111,6 +114,9 @@ type SendResult struct {
 }
 
 func NewRuntime(config Config) *Runtime {
+	if config.Identity != nil && strings.TrimSpace(config.Identity.QueueDir) != "" {
+		config.QueueDir = config.Identity.QueueDir
+	}
 	if strings.TrimSpace(config.ConfigPath) == "" {
 		config.ConfigPath = ".aegrail/agent.json"
 	}
@@ -161,6 +167,17 @@ func (r *Runtime) Install(_ context.Context, identity Identity) (Identity, error
 }
 
 func (r *Runtime) LoadIdentity(_ context.Context) (Identity, error) {
+	if r.Config.Identity != nil {
+		identity := *r.Config.Identity
+		identity.Labels = cloneStringMap(identity.Labels)
+		if strings.TrimSpace(identity.QueueDir) == "" {
+			identity.QueueDir = r.Config.QueueDir
+		}
+		if err := validateIdentity(identity); err != nil {
+			return Identity{}, err
+		}
+		return identity, nil
+	}
 	content, err := os.ReadFile(r.Config.ConfigPath)
 	if err != nil {
 		return Identity{}, err
@@ -224,6 +241,14 @@ func (r *Runtime) EnqueueEvent(ctx context.Context, input EnqueueEventInput) (Qu
 	if region == "" {
 		region = identity.Region
 	}
+	app := strings.TrimSpace(input.App)
+	if app == "" {
+		app = identity.App
+	}
+	service := strings.TrimSpace(input.Service)
+	if service == "" {
+		service = identity.Service
+	}
 	labels := cloneStringMap(identity.Labels)
 	for key, value := range input.Labels {
 		key = strings.TrimSpace(key)
@@ -241,8 +266,8 @@ func (r *Runtime) EnqueueEvent(ctx context.Context, input EnqueueEventInput) (Qu
 		Org:         identity.Org,
 		Project:     identity.Project,
 		Environment: identity.Environment,
-		App:         identity.App,
-		Service:     identity.Service,
+		App:         app,
+		Service:     service,
 		Host:        identity.Host,
 		AgentID:     identity.AgentID,
 		BatchID:     batchID,
@@ -457,4 +482,17 @@ func cloneStringMap(values map[string]string) map[string]string {
 		}
 	}
 	return clone
+}
+
+func mergeStringMaps(base map[string]string, overlays ...map[string]string) map[string]string {
+	merged := cloneStringMap(base)
+	for _, overlay := range overlays {
+		for key, value := range overlay {
+			key = strings.TrimSpace(key)
+			if key != "" {
+				merged[key] = strings.TrimSpace(value)
+			}
+		}
+	}
+	return merged
 }

@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -15,6 +17,41 @@ import (
 	"github.com/rcooler/aegrail/internal/agent"
 	"github.com/rcooler/aegrail/internal/domain"
 )
+
+func TestAgentConfigValidateAcceptsMultiSiteConfig(t *testing.T) {
+	root := t.TempDir()
+	configPath := filepath.Join(root, "agent.yaml")
+	content := fmt.Sprintf(`schema: aegrail.agent.server_config.v1
+hub:
+  url: http://127.0.0.1:8787
+identity:
+  org: acme
+  project: hosted-sites
+  environment: production
+  host: web-01
+  agent_id: agt_web_01
+runtime:
+  queue_dir: %q
+  state_dir: %q
+  interval: 30s
+sites:
+  - slug: example-com
+    domain: example.com
+    kind: wordpress
+    app: example-com
+    service: frontend
+    root: %q
+    files:
+      profiles: [wordpress]
+`, filepath.Join(root, "queue"), filepath.Join(root, "state"), filepath.Join(root, "site"))
+	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+	stdout := runCLICapture(t, "aegrail", "agent", "config", "validate", "--config", configPath)
+	if !strings.Contains(stdout, "Config valid: 1 site(s)") {
+		t.Fatalf("stdout = %q, want config valid message", stdout)
+	}
+}
 
 func TestAgentStartOnceSendsOneRequestForOneQueuedChange(t *testing.T) {
 	var requests int32
@@ -72,6 +109,11 @@ func TestAgentStartOnceSendsOneRequestForOneQueuedChange(t *testing.T) {
 
 func runCLI(t *testing.T, args ...string) {
 	t.Helper()
+	_ = runCLICapture(t, args...)
+}
+
+func runCLICapture(t *testing.T, args ...string) string {
+	t.Helper()
 	app := New(domain.AppMeta{Name: "Aegrail", Binary: "aegrail", Version: "test"})
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -80,4 +122,5 @@ func runCLI(t *testing.T, args ...string) {
 	if err := app.Run(args); err != nil {
 		t.Fatalf("Run(%v) returned error: %v\nstdout:\n%s\nstderr:\n%s", args, err, stdout.String(), stderr.String())
 	}
+	return stdout.String()
 }

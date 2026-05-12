@@ -73,6 +73,30 @@ func agentStatusCommand() *urfavecli.Command {
 	}
 }
 
+func agentConfigCommand() *urfavecli.Command {
+	return &urfavecli.Command{
+		Name:  "config",
+		Usage: "inspect Agent server configuration",
+		Subcommands: []*urfavecli.Command{
+			{
+				Name:  "validate",
+				Usage: "validate a multi-site Agent config",
+				Flags: []urfavecli.Flag{
+					&urfavecli.StringFlag{Name: "config", Usage: "Agent server config path", Value: ".aegrail/agent.yaml"},
+				},
+				Action: func(c *urfavecli.Context) error {
+					config, err := agent.LoadServerConfig(c.String("config"))
+					if err != nil {
+						return err
+					}
+					fmt.Fprintf(c.App.Writer, "Config valid: %d site(s), host %s, agent %s\n", len(config.Sites), config.Identity.Host, config.Identity.AgentID)
+					return nil
+				},
+			},
+		},
+	}
+}
+
 func agentEnqueueCommand() *urfavecli.Command {
 	return &urfavecli.Command{
 		Name:  "enqueue",
@@ -117,6 +141,91 @@ func agentEnqueueCommand() *urfavecli.Command {
 					return nil
 				},
 			},
+		},
+	}
+}
+
+func agentRunCommand() *urfavecli.Command {
+	return &urfavecli.Command{
+		Name:  "run",
+		Usage: "run an Agent from a multi-site server config",
+		Flags: []urfavecli.Flag{
+			&urfavecli.StringFlag{Name: "config", Usage: "Agent server config path", Value: ".aegrail/agent.yaml"},
+			&urfavecli.BoolFlag{Name: "once", Usage: "run one scan and exit"},
+			&urfavecli.StringFlag{Name: "secret", Usage: "Hub ingest HMAC secret override", EnvVars: []string{"AEGRAIL_HUB_INGEST_SECRET"}},
+			&urfavecli.IntFlag{Name: "send-limit", Usage: "maximum pending batches to send after each scan"},
+			&urfavecli.DurationFlag{Name: "interval", Usage: "override configured polling interval"},
+		},
+		Action: func(c *urfavecli.Context) error {
+			config, err := agent.LoadServerConfig(c.String("config"))
+			if err != nil {
+				return err
+			}
+			interval := c.Duration("interval")
+			if interval <= 0 {
+				interval, err = config.RuntimeInterval()
+				if err != nil {
+					return err
+				}
+			}
+			sendLimit := c.Int("send-limit")
+			if sendLimit == 0 {
+				sendLimit = config.Hub.SendLimit
+			}
+			runtime := agent.NewRuntime(agent.Config{
+				QueueDir: config.Runtime.QueueDir,
+			})
+			ctx, stop := signal.NotifyContext(c.Context, syscall.SIGINT, syscall.SIGTERM)
+			defer stop()
+
+			runOnce := func(config agent.ServerConfig) error {
+				secret := agent.ResolveServerConfigSecret(config, c.String("secret"))
+				result, err := runtime.RunServerConfigOnce(ctx, config, secret, sendLimit)
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(c.App.Writer, "Scanned %d site(s); queued %d event(s); sent %d; failed %d; pending %d\n", len(result.Sites), result.Queued, result.Sent, result.Failed, result.Pending)
+				for _, site := range result.Sites {
+					fmt.Fprintf(
+						c.App.Writer,
+						"  %s app=%s service=%s files=%d logs=%d queued=%d state=%s\n",
+						site.Slug,
+						site.App,
+						site.Service,
+						site.FilesWatched,
+						site.LogsWatched,
+						site.Queued,
+						site.StateDir,
+					)
+				}
+				return nil
+			}
+
+			if c.Bool("once") {
+				return runOnce(config)
+			}
+
+			for {
+				if err := runOnce(config); err != nil {
+					fmt.Fprintf(c.App.ErrWriter, "%s\n", err)
+				}
+				timer := time.NewTimer(interval)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return nil
+				case <-timer.C:
+					nextConfig, err := agent.LoadServerConfig(c.String("config"))
+					if err != nil {
+						fmt.Fprintf(c.App.ErrWriter, "%s\n", err)
+						continue
+					}
+					config = nextConfig
+					if nextInterval, err := config.RuntimeInterval(); err == nil && c.Duration("interval") <= 0 {
+						interval = nextInterval
+					}
+				}
+			}
 		},
 	}
 }

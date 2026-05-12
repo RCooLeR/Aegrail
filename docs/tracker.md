@@ -51,16 +51,18 @@ Last updated: 2026-05-12
 
 - [x] Document server-level multi-site agent config.
 - [x] Add `app/configs/agent.multi-site.yaml.example`.
-- [ ] Add config schema structs for `aegrail.agent.server_config.v1`.
-- [ ] Add YAML config loader.
-- [ ] Add config validation rules.
-- [ ] Add `aegrail agent config validate`.
-- [ ] Add per-site app/service/label context to queued events.
-- [ ] Add per-site file watch state paths.
-- [ ] Add per-site log tail state paths.
-- [ ] Add `aegrail agent run --config ... --once`.
-- [ ] Add continuous multi-site agent runner.
+- [x] Add config schema structs for `aegrail.agent.server_config.v1`.
+- [x] Add YAML config loader.
+- [x] Add config validation rules.
+- [x] Add `aegrail agent config validate`.
+- [x] Add per-site app/service/label context to queued events.
+- [x] Add per-site file watch state paths.
+- [x] Add per-site log tail state paths.
+- [x] Add `aegrail agent run --config ... --once`.
+- [x] Add continuous multi-site agent runner.
 - [ ] Report config coverage to Hub.
+- [ ] Run database collectors from multi-site agent config.
+- [ ] Run browser crawls from multi-site agent config.
 
 ## Phase 3: WordPress And PrestaShop Evidence
 

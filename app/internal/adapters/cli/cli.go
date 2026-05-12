@@ -130,10 +130,12 @@ func agentCommand(meta domain.AppMeta) *urfavecli.Command {
 		Usage: "run per-server Aegrail Agent workflows",
 		Subcommands: []*urfavecli.Command{
 			agentInstallCommand(),
+			agentConfigCommand(),
 			agentStatusCommand(),
 			agentEnqueueCommand(),
 			agentSendCommand("send", "send queued batches to the Hub"),
 			agentStartCommand(),
+			agentRunCommand(),
 		},
 	}
 }

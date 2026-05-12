@@ -29,7 +29,12 @@ const (
 )
 
 type LogWatchOptions struct {
-	Paths []string
+	Paths     []string
+	StatePath string
+	App       string
+	Service   string
+	Region    string
+	Labels    map[string]string
 }
 
 type LogWatchResult struct {
@@ -75,7 +80,10 @@ func (r *Runtime) ScanLogPaths(ctx context.Context, options LogWatchOptions) (Lo
 	if len(paths) == 0 {
 		return LogWatchResult{}, errors.New("at least one log path is required")
 	}
-	statePath := r.logWatchStatePath(identity)
+	statePath := strings.TrimSpace(options.StatePath)
+	if statePath == "" {
+		statePath = r.logWatchStatePath(identity)
+	}
 	unlock, err := acquireWatchLock(statePath)
 	if err != nil {
 		return LogWatchResult{}, err
@@ -115,7 +123,12 @@ func (r *Runtime) ScanLogPaths(ctx context.Context, options LogWatchOptions) (Lo
 			}
 			offset = nextOffset
 			for _, line := range lines {
-				if _, _, err := r.EnqueueEvent(ctx, logLineEvent(target.Path, line)); err != nil {
+				event := logLineEvent(target.Path, line)
+				event.App = options.App
+				event.Service = options.Service
+				event.Region = options.Region
+				event.Labels = mergeStringMaps(event.Labels, options.Labels)
+				if _, _, err := r.EnqueueEvent(ctx, event); err != nil {
 					return LogWatchResult{}, err
 				}
 				result.Queued++
