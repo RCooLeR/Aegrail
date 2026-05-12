@@ -198,6 +198,19 @@ Good dedupe inputs:
 - normalized payload hash
 - baseline window
 
+## Rule Registry
+
+Hub rules are registered with versioned metadata:
+
+- rule ID
+- rule version
+- category
+- supported platforms
+- evidence types
+- dashboard/action hints
+
+Current categories are `correlation`, `database_snapshot`, and `browser_script`. Findings copy the matching rule metadata into their own metadata, and the Hub exposes the registry through `GET /api/v1/rules`. This lets the CLI, dashboard, and reports use the same rule labels and actions.
+
 ## Finding Lifecycle
 
 Persisted Hub findings have a small triage lifecycle:

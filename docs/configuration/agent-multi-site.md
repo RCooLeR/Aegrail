@@ -413,4 +413,4 @@ Done:
 
 Next:
 
-1. Define the rule interface and registry so detection metadata stays consistent as rules grow.
+1. Add deployment-aware scoring so deploy windows reduce noise without hiding suspicious changes.

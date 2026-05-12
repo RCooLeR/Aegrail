@@ -54,6 +54,7 @@ func hubCommand(meta domain.AppMeta) *urfavecli.Command {
 			hubCorrelationCommand(meta),
 			hubFindingsCommand(meta),
 			hubBrowserScriptsCommand(meta),
+			hubRulesCommand(),
 			inventoryCommand(meta),
 		},
 	}

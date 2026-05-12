@@ -273,12 +273,7 @@ func browserScriptAllowlistFieldsFromFinding(finding domain.HubFinding) (string,
 }
 
 func isBrowserScriptDriftFinding(finding domain.HubFinding) bool {
-	switch finding.RuleID {
-	case "browser-script-domain-new", "browser-inline-script-changed", "browser-tag-manager-id-new", "browser-script-drift":
-		return true
-	default:
-		return false
-	}
+	return ruleHasActionHint(finding.RuleID, RuleActionAllowBrowserScript)
 }
 
 func normalizeBrowserScriptAllowlistStatus(value string) (string, error) {

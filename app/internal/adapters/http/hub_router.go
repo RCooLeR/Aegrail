@@ -54,6 +54,7 @@ func NewHubRouter(meta domain.AppMeta, hub *hubapp.Hub, options HubOptions) http
 			"mode":    "hub",
 		})
 	})
+	router.Get("/api/v1/rules", listRulesHandler(hub))
 	router.Post("/api/v1/ingest/events", ingestEventsHandler(hub, options))
 	router.Get("/api/v1/findings", listFindingsHandler(hub))
 	router.Patch("/api/v1/findings/{id}/status", updateFindingStatusHandler(hub))
@@ -232,6 +233,16 @@ type browserScriptAllowlistEntryResponse struct {
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
+type ruleDefinitionResponse struct {
+	ID            string   `json:"id"`
+	Version       string   `json:"version"`
+	Title         string   `json:"title"`
+	Category      string   `json:"category"`
+	Platforms     []string `json:"platforms"`
+	EvidenceTypes []string `json:"evidence_types"`
+	ActionHints   []string `json:"action_hints"`
+}
+
 type ingestEventsRequest struct {
 	Organization string               `json:"org"`
 	Project      string               `json:"project"`
@@ -325,6 +336,32 @@ func ingestEventsHandler(hub *hubapp.Hub, options HubOptions) http.HandlerFunc {
 			"events":         len(result.Events),
 			"received_at":    result.Batch.ReceivedAt,
 			"already_stored": result.Reused,
+		})
+	}
+}
+
+func listRulesHandler(hub *hubapp.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		category := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("category")))
+		platform := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("platform")))
+		definitions := hub.ListRuleDefinitions()
+		records := make([]ruleDefinitionResponse, 0, len(definitions))
+		for _, definition := range definitions {
+			if category != "" && string(definition.Category) != category {
+				continue
+			}
+			if platform != "" && !containsString(definition.Platforms, platform) {
+				continue
+			}
+			records = append(records, ruleDefinitionRecord(definition))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"count": len(records),
+			"rules": records,
 		})
 	}
 }
@@ -1088,6 +1125,35 @@ func browserScriptAllowlistStatus(entry domain.BrowserScriptAllowlistEntry) stri
 		return "active"
 	}
 	return entry.Status
+}
+
+func ruleDefinitionRecord(definition hubapp.RuleDefinition) ruleDefinitionResponse {
+	return ruleDefinitionResponse{
+		ID:            definition.ID,
+		Version:       definition.Version,
+		Title:         definition.Title,
+		Category:      string(definition.Category),
+		Platforms:     append([]string(nil), definition.Platforms...),
+		EvidenceTypes: append([]string(nil), definition.EvidenceTypes...),
+		ActionHints:   ruleActionHintStrings(definition.ActionHints),
+	}
+}
+
+func ruleActionHintStrings(actions []hubapp.RuleActionHint) []string {
+	values := make([]string, 0, len(actions))
+	for _, action := range actions {
+		values = append(values, string(action))
+	}
+	return values
+}
+
+func containsString(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
 }
 
 func stringDomainIDs(ids []domain.ID) []string {

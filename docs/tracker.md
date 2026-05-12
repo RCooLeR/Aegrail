@@ -103,8 +103,8 @@ Last updated: 2026-05-13
 - [x] Add browser script drift findings from Hub event history.
 - [x] Add browser script allowlist review workflow.
 - [x] Add DB snapshot diff findings from Hub event history.
-- [ ] Define rule interface and registry.
-- [ ] Define versioned rule metadata.
+- [x] Define rule interface and registry.
+- [x] Define versioned rule metadata.
 - [ ] Add generic suspicious path rules.
 - [ ] Add admin request anomaly rules.
 - [ ] Add traffic spike rules.

@@ -52,7 +52,7 @@ type BrowserScriptDrift struct {
 	Metadata    map[string]any
 }
 
-const browserDriftRuleVersion = "2026-05-12.1"
+const browserDriftRuleVersion = currentRuleVersion
 
 func (h *Hub) AnalyzeBrowserScriptDrift(ctx context.Context, input AnalyzeBrowserScriptDriftInput) (BrowserScriptDriftResult, error) {
 	if h.ingest == nil {
@@ -395,7 +395,7 @@ func browserScriptDriftFindings(org domain.Organization, project domain.Project,
 			EnvironmentID:  environment.ID,
 			AppID:          app.ID,
 			RuleID:         drift.RuleID,
-			RuleVersion:    browserDriftRuleVersion,
+			RuleVersion:    ruleVersion(drift.RuleID),
 			DedupeKey:      "browser-drift-" + sha256Short(drift.RuleID+"\n"+drift.PageURL+"\n"+drift.Value),
 			Severity:       drift.Severity,
 			Confidence:     drift.Confidence,
@@ -405,7 +405,7 @@ func browserScriptDriftFindings(org domain.Organization, project domain.Project,
 			EventIDs:       eventIDs,
 			FirstEventAt:   drift.EventTime,
 			LastEventAt:    drift.EventTime,
-			Metadata:       drift.Metadata,
+			Metadata:       ruleMetadata(drift.RuleID, drift.Metadata),
 		})
 	}
 	return findings

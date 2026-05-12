@@ -56,7 +56,7 @@ type CorrelationEvent struct {
 	Message   string
 }
 
-const correlationRuleVersion = "2026-05-12.1"
+const correlationRuleVersion = currentRuleVersion
 
 func (h *Hub) CorrelateEvents(ctx context.Context, input CorrelateEventsInput) (CorrelateEventsResult, error) {
 	if h.ingest == nil {
@@ -414,7 +414,7 @@ func correlationFindings(org domain.Organization, project domain.Project, enviro
 			EnvironmentID:  environment.ID,
 			AppID:          app.ID,
 			RuleID:         chain.RuleID,
-			RuleVersion:    correlationRuleVersion,
+			RuleVersion:    ruleVersion(chain.RuleID),
 			DedupeKey:      chain.ID,
 			Severity:       chain.Severity,
 			Confidence:     chain.Confidence,
@@ -424,7 +424,7 @@ func correlationFindings(org domain.Organization, project domain.Project, enviro
 			EventIDs:       eventIDs,
 			FirstEventAt:   chain.Events[0].EventTime,
 			LastEventAt:    chain.Events[len(chain.Events)-1].EventTime,
-			Metadata:       correlationMetadata(chain),
+			Metadata:       ruleMetadata(chain.RuleID, correlationMetadata(chain)),
 		})
 	}
 	return findings

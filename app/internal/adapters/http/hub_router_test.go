@@ -4,9 +4,14 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/rcooler/aegrail/internal/domain"
+	hubapp "github.com/rcooler/aegrail/internal/hub"
 )
 
 func TestVerifyIngestSignatureAcceptsValidSignature(t *testing.T) {
@@ -71,4 +76,35 @@ func signTestBody(secret string, timestamp string, body []byte) string {
 	mac.Write([]byte("\n"))
 	mac.Write(body)
 	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func TestHubRouterListsRuleDefinitions(t *testing.T) {
+	router := NewHubRouter(domain.AppMeta{Name: "Aegrail", Binary: "aegrail", Version: "test"}, hubapp.New(hubapp.Dependencies{}), HubOptions{})
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/rules?platform=wordpress", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Count int `json:"count"`
+		Rules []struct {
+			ID          string   `json:"id"`
+			Version     string   `json:"version"`
+			Category    string   `json:"category"`
+			Platforms   []string `json:"platforms"`
+			ActionHints []string `json:"action_hints"`
+		} `json:"rules"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("Decode returned error: %v", err)
+	}
+	if body.Count == 0 {
+		t.Fatalf("body = %#v, want WordPress rules", body)
+	}
+	if body.Rules[0].Version == "" || body.Rules[0].Category != "database_snapshot" {
+		t.Fatalf("first rule = %#v, want versioned database rule", body.Rules[0])
+	}
 }
