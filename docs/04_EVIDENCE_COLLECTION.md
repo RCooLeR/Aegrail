@@ -143,7 +143,8 @@ Current implementation:
 - The first good snapshot creates local baseline state under the configured site state directory.
 - Later snapshots emit redacted diff events such as `db.snapshot.check_changed` and `db.snapshot.check_added`.
 - Warning-only snapshots do not replace the previous known-good DB state.
-- Full row snapshots, Hub finding rules, and PostgreSQL collector support are still planned.
+- Hub correlation turns first-wave WordPress and PrestaShop DB diff events into deterministic findings.
+- Full row snapshots, richer entity-level finding rules, and PostgreSQL collector support are still planned.
 
 Minimum WordPress checks:
 

@@ -67,6 +67,25 @@ High-signal findings:
 - suspicious admin controller or tab
 - hook or access-rule change
 
+### Database Snapshot Diffs
+
+Current deterministic DB diff finding rules:
+
+- `wordpress-admin-users-changed`
+- `wordpress-users-changed`
+- `wordpress-active-plugins-changed`
+- `wordpress-theme-option-changed`
+- `wordpress-cron-option-changed`
+- `wordpress-options-changed`
+- `prestashop-employees-changed`
+- `prestashop-modules-changed`
+- `prestashop-configuration-changed`
+- `prestashop-access-rules-changed`
+- `prestashop-hooks-changed`
+- `prestashop-tabs-changed`
+
+These rules currently operate on redacted snapshot diff events: counts, byte lengths, and SHA-256 digests. They intentionally do not expose raw option/config values in findings.
+
 ### Browser JavaScript
 
 High-signal findings:

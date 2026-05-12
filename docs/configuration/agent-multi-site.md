@@ -373,8 +373,9 @@ Done:
 7. Run browser crawls from configured `browser_crawl`.
 8. Run database collectors from configured `databases`.
 9. Persist DB snapshot state and emit redacted DB diff events.
+10. Turn first-wave DB diff events into deterministic Hub findings.
 
 Next:
 
-1. Turn DB diff events into deterministic Hub findings.
-2. Report config coverage to the Hub for dashboard views.
+1. Report config coverage to the Hub for dashboard views.
+2. Add entity-level DB snapshots so findings can name the exact user, plugin, module, or option that changed.

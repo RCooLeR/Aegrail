@@ -78,19 +78,19 @@ Last updated: 2026-05-12
 - [~] Snapshot WordPress active plugins and themes.
 - [~] Snapshot WordPress cron tasks.
 - [x] Emit redacted WordPress DB snapshot diff events.
-- [ ] Detect new WordPress administrators.
-- [ ] Detect changed WordPress capabilities.
-- [ ] Detect suspicious WordPress option values.
-- [ ] Detect new or changed WordPress plugins/themes.
+- [~] Detect new WordPress administrators.
+- [~] Detect changed WordPress capabilities.
+- [~] Detect suspicious WordPress option values.
+- [~] Detect new or changed WordPress plugins/themes.
 - [~] Add PrestaShop DB snapshot importer or collector.
 - [~] Snapshot PrestaShop employees.
 - [~] Snapshot PrestaShop modules.
 - [~] Snapshot PrestaShop configuration.
 - [~] Snapshot PrestaShop tabs, hooks, and access.
 - [x] Emit redacted PrestaShop DB snapshot diff events.
-- [ ] Detect new PrestaShop employees and SuperAdmin accounts.
-- [ ] Detect suspicious PrestaShop configuration values.
-- [ ] Detect suspicious PrestaShop module changes.
+- [~] Detect new PrestaShop employees and SuperAdmin accounts.
+- [~] Detect suspicious PrestaShop configuration values.
+- [~] Detect suspicious PrestaShop module changes.
 
 ## Phase 4: Detection Quality And Correlation
 
@@ -98,6 +98,7 @@ Last updated: 2026-05-12
 - [x] Deduplicate Hub correlation findings.
 - [x] Add browser script drift findings from Hub event history.
 - [x] Add browser script allowlist review workflow.
+- [x] Add DB snapshot diff findings from Hub event history.
 - [ ] Define rule interface and registry.
 - [ ] Define versioned rule metadata.
 - [ ] Add generic suspicious path rules.

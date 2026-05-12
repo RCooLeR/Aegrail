@@ -116,6 +116,10 @@ func correlateTimelineEvents(events []domain.TimelineEvent, window time.Duration
 	seen := map[string]struct{}{}
 	suppressedFollowups := map[string]struct{}{}
 	for i, event := range events {
+		if isDatabaseSnapshotDiffEvent(event) {
+			addCorrelationChain(&chains, seen, buildDatabaseSnapshotDiffChain(event))
+		}
+
 		if isSuspiciousWebEvent(event) {
 			fileEvent, ok := findNextEvent(events, i+1, event.EventTime.Add(window), func(candidate domain.TimelineEvent) bool {
 				return isHighSignalFileEvent(candidate) && sameHostOrApp(event, candidate)
@@ -249,6 +253,13 @@ func isDatabaseSecurityEvent(event domain.TimelineEvent) bool {
 		strings.Contains(lower, "permission") ||
 		strings.Contains(lower, "admin") ||
 		strings.Contains(lower, "user") ||
+		strings.Contains(lower, "capabilities") ||
+		strings.Contains(lower, "plugin") ||
+		strings.Contains(lower, "theme") ||
+		strings.Contains(lower, "module") ||
+		strings.Contains(lower, "employee") ||
+		strings.Contains(lower, "configuration") ||
+		strings.Contains(lower, "access") ||
 		strings.Contains(lower, "schema") ||
 		strings.Contains(lower, "api") ||
 		strings.Contains(lower, "webhook") ||

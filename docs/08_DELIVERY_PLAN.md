@@ -24,6 +24,7 @@ Aegrail already has:
 - Pantheon WordPress monitoring plan
 - dashboard and multi-site agent config plans
 - multi-site Agent YAML config loading, validation, file watching, log tailing, database checks with local diff state, browser crawling, and continuous `agent run`
+- deterministic Hub findings for first-wave WordPress and PrestaShop DB diff events
 
 ## Phase 0: Product Foundation
 
@@ -108,9 +109,9 @@ Deliverables:
 
 Exit criteria:
 
-- initial WordPress and PrestaShop DB checks emit counts, redacted digests, and local diff events
-- WordPress admin and capability changes produce deterministic findings
-- PrestaShop employee, module, and configuration changes produce deterministic findings
+- initial WordPress and PrestaShop DB checks emit counts, redacted digests, local diff events, and Hub findings
+- WordPress admin, plugin, theme, cron, user, and option count changes produce deterministic findings
+- PrestaShop employee, module, configuration, access, hook, and tab changes produce deterministic findings
 - fixtures cover clean and suspicious cases
 
 ## Phase 4: Detection Quality And Correlation
