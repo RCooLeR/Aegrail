@@ -413,4 +413,4 @@ Done:
 
 Next:
 
-1. Add finding lifecycle actions for dashboard triage.
+1. Add browser allowlist mutation APIs for dashboard triage.

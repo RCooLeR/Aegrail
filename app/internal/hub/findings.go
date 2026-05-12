@@ -3,6 +3,7 @@ package hub
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/rcooler/aegrail/internal/domain"
@@ -14,6 +15,17 @@ type ListHubFindingsInput struct {
 	EnvironmentSlug  string
 	AppSlug          string
 	Limit            int
+}
+
+type UpdateHubFindingStatusInput struct {
+	OrganizationSlug string
+	ProjectSlug      string
+	EnvironmentSlug  string
+	FindingID        string
+	Status           string
+	Reason           string
+	Note             string
+	Actor            string
 }
 
 func (h *Hub) ListHubFindings(ctx context.Context, input ListHubFindingsInput) ([]domain.HubFinding, error) {
@@ -36,4 +48,47 @@ func (h *Hub) ListHubFindings(ctx context.Context, input ListHubFindingsInput) (
 		appID = app.ID
 	}
 	return h.findings.ListHubFindings(ctx, environment.ID, appID, input.Limit)
+}
+
+func (h *Hub) UpdateHubFindingStatus(ctx context.Context, input UpdateHubFindingStatusInput) (domain.HubFinding, error) {
+	if h.findings == nil {
+		return domain.HubFinding{}, errors.New("finding repository is not configured")
+	}
+	if err := h.requireInventory(); err != nil {
+		return domain.HubFinding{}, err
+	}
+	environment, err := h.resolveEnvironmentPath(ctx, input.OrganizationSlug, input.ProjectSlug, input.EnvironmentSlug)
+	if err != nil {
+		return domain.HubFinding{}, err
+	}
+	findingID := domain.ID(strings.TrimSpace(input.FindingID))
+	if findingID == "" {
+		return domain.HubFinding{}, errors.New("finding id is required")
+	}
+	status, err := normalizeHubFindingStatus(input.Status)
+	if err != nil {
+		return domain.HubFinding{}, err
+	}
+	return h.findings.UpdateHubFindingStatus(ctx, findingID, environment.ID, domain.HubFindingStatusUpdate{
+		Status: status,
+		Reason: strings.TrimSpace(input.Reason),
+		Note:   strings.TrimSpace(input.Note),
+		Actor:  strings.TrimSpace(input.Actor),
+	})
+}
+
+func normalizeHubFindingStatus(value string) (string, error) {
+	status := strings.ToLower(strings.TrimSpace(value))
+	switch status {
+	case "open", "acknowledged", "false_positive", "resolved":
+		return status, nil
+	case "ack", "acknowledge":
+		return "acknowledged", nil
+	case "false-positive", "false positive", "fp":
+		return "false_positive", nil
+	case "resolve":
+		return "resolved", nil
+	default:
+		return "", fmt.Errorf("finding status %q is not supported", value)
+	}
 }

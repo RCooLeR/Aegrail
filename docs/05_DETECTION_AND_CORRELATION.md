@@ -198,6 +198,23 @@ Good dedupe inputs:
 - normalized payload hash
 - baseline window
 
+## Finding Lifecycle
+
+Persisted Hub findings have a small triage lifecycle:
+
+- `open`
+- `acknowledged`
+- `false_positive`
+- `resolved`
+
+Status changes store a reason, note, actor, and update time. Re-running deterministic rules refreshes evidence and severity while preserving the operator's triage status for the same dedupe key.
+
+Status can be changed through the Hub API or the local CLI:
+
+```bash
+aegrail hub findings status --org acme --project customer-site --env production --id finding-id --status acknowledged --reason reviewed --actor roman
+```
+
 ## Allowlists
 
 Allowlists should be narrow and reviewable:

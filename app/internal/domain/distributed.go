@@ -97,25 +97,37 @@ type DeploymentMarker struct {
 }
 
 type HubFinding struct {
-	ID             ID
-	OrganizationID ID
-	ProjectID      ID
-	EnvironmentID  ID
-	AppID          ID
-	RuleID         string
-	RuleVersion    string
-	DedupeKey      string
-	Severity       Severity
-	Confidence     Confidence
-	Title          string
-	Summary        string
-	Description    string
-	EventIDs       []ID
-	FirstEventAt   time.Time
-	LastEventAt    time.Time
-	Metadata       map[string]any
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID              ID
+	OrganizationID  ID
+	ProjectID       ID
+	EnvironmentID   ID
+	AppID           ID
+	RuleID          string
+	RuleVersion     string
+	DedupeKey       string
+	Severity        Severity
+	Confidence      Confidence
+	Title           string
+	Summary         string
+	Description     string
+	EventIDs        []ID
+	FirstEventAt    time.Time
+	LastEventAt     time.Time
+	Status          string
+	StatusReason    string
+	StatusNote      string
+	StatusActor     string
+	StatusUpdatedAt time.Time
+	Metadata        map[string]any
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+type HubFindingStatusUpdate struct {
+	Status string
+	Reason string
+	Note   string
+	Actor  string
 }
 
 type BrowserScriptAllowlistEntry struct {

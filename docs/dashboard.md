@@ -14,6 +14,7 @@ The target dashboard remains TypeScript, React, and Bootstrap, backed by Hub HTT
 Current Hub read API slice:
 
 - `GET /api/v1/findings?org=...&project=...&environment=...&app=...&limit=...`
+- `PATCH /api/v1/findings/{id}/status?org=...&project=...&environment=...`
 - `GET /api/v1/timeline?org=...&project=...&environment=...&app=...&since=...&limit=...`
 - `GET /api/v1/coverage?org=...&project=...&environment=...&app=...&since=...&limit=...`
 - `GET /api/v1/deployments?org=...&project=...&environment=...&app=...`
@@ -24,4 +25,4 @@ Current Hub read API slice:
 - `GET /api/v1/inventory/hosts?org=...&project=...&environment=...`
 - `GET /api/v1/inventory/agents?org=...&project=...&environment=...&host=...`
 
-These endpoints are the first backend surface for the future Findings, Timeline, Coverage, Inventory, Deployments, and Browser Scripts views. Finding actions and allowlist mutations are still planned.
+These endpoints are the first backend surface for the future Findings, Timeline, Coverage, Inventory, Deployments, and Browser Scripts views. Finding status actions now support `open`, `acknowledged`, `false_positive`, and `resolved`. Browser allowlist mutations are still planned.

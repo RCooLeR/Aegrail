@@ -56,6 +56,7 @@ func NewHubRouter(meta domain.AppMeta, hub *hubapp.Hub, options HubOptions) http
 	})
 	router.Post("/api/v1/ingest/events", ingestEventsHandler(hub, options))
 	router.Get("/api/v1/findings", listFindingsHandler(hub))
+	router.Patch("/api/v1/findings/{id}/status", updateFindingStatusHandler(hub))
 	router.Get("/api/v1/timeline", listTimelineHandler(hub))
 	router.Get("/api/v1/coverage", listCoverageHandler(hub))
 	router.Get("/api/v1/deployments", listDeploymentsHandler(hub))
@@ -69,21 +70,26 @@ func NewHubRouter(meta domain.AppMeta, hub *hubapp.Hub, options HubOptions) http
 }
 
 type hubFindingResponse struct {
-	ID           string         `json:"id"`
-	RuleID       string         `json:"rule_id"`
-	RuleVersion  string         `json:"rule_version"`
-	DedupeKey    string         `json:"dedupe_key"`
-	Severity     string         `json:"severity"`
-	Confidence   string         `json:"confidence"`
-	Title        string         `json:"title"`
-	Summary      string         `json:"summary"`
-	Description  string         `json:"description"`
-	EventIDs     []string       `json:"event_ids"`
-	FirstEventAt time.Time      `json:"first_event_at"`
-	LastEventAt  time.Time      `json:"last_event_at"`
-	Metadata     map[string]any `json:"metadata"`
-	CreatedAt    time.Time      `json:"created_at"`
-	UpdatedAt    time.Time      `json:"updated_at"`
+	ID              string         `json:"id"`
+	RuleID          string         `json:"rule_id"`
+	RuleVersion     string         `json:"rule_version"`
+	DedupeKey       string         `json:"dedupe_key"`
+	Severity        string         `json:"severity"`
+	Confidence      string         `json:"confidence"`
+	Title           string         `json:"title"`
+	Summary         string         `json:"summary"`
+	Description     string         `json:"description"`
+	EventIDs        []string       `json:"event_ids"`
+	FirstEventAt    time.Time      `json:"first_event_at"`
+	LastEventAt     time.Time      `json:"last_event_at"`
+	Status          string         `json:"status"`
+	StatusReason    string         `json:"status_reason,omitempty"`
+	StatusNote      string         `json:"status_note,omitempty"`
+	StatusActor     string         `json:"status_actor,omitempty"`
+	StatusUpdatedAt time.Time      `json:"status_updated_at"`
+	Metadata        map[string]any `json:"metadata"`
+	CreatedAt       time.Time      `json:"created_at"`
+	UpdatedAt       time.Time      `json:"updated_at"`
 }
 
 type timelineEventResponse struct {
@@ -235,6 +241,13 @@ type ingestEventRequest struct {
 	Payload  map[string]any    `json:"payload"`
 }
 
+type updateFindingStatusRequest struct {
+	Status string `json:"status"`
+	Reason string `json:"reason"`
+	Note   string `json:"note"`
+	Actor  string `json:"actor"`
+}
+
 func ingestEventsHandler(hub *hubapp.Hub, options HubOptions) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if hub == nil {
@@ -307,6 +320,37 @@ func listFindingsHandler(hub *hubapp.Hub) http.HandlerFunc {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"count":    len(records),
 			"findings": records,
+		})
+	}
+}
+
+func updateFindingStatusHandler(hub *hubapp.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		var request updateFindingStatusRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		finding, err := hub.UpdateHubFindingStatus(r.Context(), hubapp.UpdateHubFindingStatusInput{
+			OrganizationSlug: r.URL.Query().Get("org"),
+			ProjectSlug:      r.URL.Query().Get("project"),
+			EnvironmentSlug:  r.URL.Query().Get("environment"),
+			FindingID:        chi.URLParam(r, "id"),
+			Status:           request.Status,
+			Reason:           request.Reason,
+			Note:             request.Note,
+			Actor:            request.Actor,
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"finding": hubFindingRecord(finding),
 		})
 	}
 }
@@ -684,22 +728,41 @@ func parseQueryLimit(r *http.Request, fallback int) (int, error) {
 
 func hubFindingRecord(finding domain.HubFinding) hubFindingResponse {
 	return hubFindingResponse{
-		ID:           string(finding.ID),
-		RuleID:       finding.RuleID,
-		RuleVersion:  finding.RuleVersion,
-		DedupeKey:    finding.DedupeKey,
-		Severity:     string(finding.Severity),
-		Confidence:   string(finding.Confidence),
-		Title:        finding.Title,
-		Summary:      finding.Summary,
-		Description:  finding.Description,
-		EventIDs:     stringDomainIDs(finding.EventIDs),
-		FirstEventAt: finding.FirstEventAt,
-		LastEventAt:  finding.LastEventAt,
-		Metadata:     nonNilResponseMap(finding.Metadata),
-		CreatedAt:    finding.CreatedAt,
-		UpdatedAt:    finding.UpdatedAt,
+		ID:              string(finding.ID),
+		RuleID:          finding.RuleID,
+		RuleVersion:     finding.RuleVersion,
+		DedupeKey:       finding.DedupeKey,
+		Severity:        string(finding.Severity),
+		Confidence:      string(finding.Confidence),
+		Title:           finding.Title,
+		Summary:         finding.Summary,
+		Description:     finding.Description,
+		EventIDs:        stringDomainIDs(finding.EventIDs),
+		FirstEventAt:    finding.FirstEventAt,
+		LastEventAt:     finding.LastEventAt,
+		Status:          findingStatus(finding),
+		StatusReason:    finding.StatusReason,
+		StatusNote:      finding.StatusNote,
+		StatusActor:     finding.StatusActor,
+		StatusUpdatedAt: findingStatusUpdatedAt(finding),
+		Metadata:        nonNilResponseMap(finding.Metadata),
+		CreatedAt:       finding.CreatedAt,
+		UpdatedAt:       finding.UpdatedAt,
 	}
+}
+
+func findingStatus(finding domain.HubFinding) string {
+	if strings.TrimSpace(finding.Status) == "" {
+		return "open"
+	}
+	return finding.Status
+}
+
+func findingStatusUpdatedAt(finding domain.HubFinding) time.Time {
+	if finding.StatusUpdatedAt.IsZero() {
+		return finding.UpdatedAt
+	}
+	return finding.StatusUpdatedAt
 }
 
 func timelineEventRecord(event domain.TimelineEvent) timelineEventResponse {

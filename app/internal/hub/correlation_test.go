@@ -307,9 +307,16 @@ func (r *memoryHubFindingRepository) SaveHubFindings(ctx context.Context, findin
 		if ok {
 			finding.ID = existing.ID
 			finding.CreatedAt = existing.CreatedAt
+			finding.Status = existing.Status
+			finding.StatusReason = existing.StatusReason
+			finding.StatusNote = existing.StatusNote
+			finding.StatusActor = existing.StatusActor
+			finding.StatusUpdatedAt = existing.StatusUpdatedAt
 		} else {
 			finding.ID = domain.ID(fmt.Sprintf("finding-%d", len(r.byKey)+1))
 			finding.CreatedAt = now
+			finding.Status = "open"
+			finding.StatusUpdatedAt = now
 		}
 		finding.UpdatedAt = now
 		r.byKey[key] = finding
@@ -330,4 +337,22 @@ func (r *memoryHubFindingRepository) ListHubFindings(ctx context.Context, enviro
 		findings = append(findings, finding)
 	}
 	return findings, nil
+}
+
+func (r *memoryHubFindingRepository) UpdateHubFindingStatus(ctx context.Context, findingID domain.ID, environmentID domain.ID, update domain.HubFindingStatusUpdate) (domain.HubFinding, error) {
+	now := time.Now().UTC()
+	for key, finding := range r.byKey {
+		if finding.ID != findingID || finding.EnvironmentID != environmentID {
+			continue
+		}
+		finding.Status = update.Status
+		finding.StatusReason = update.Reason
+		finding.StatusNote = update.Note
+		finding.StatusActor = update.Actor
+		finding.StatusUpdatedAt = now
+		finding.UpdatedAt = now
+		r.byKey[key] = finding
+		return finding, nil
+	}
+	return domain.HubFinding{}, fmt.Errorf("finding %q was not found", findingID)
 }

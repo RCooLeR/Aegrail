@@ -109,7 +109,7 @@ Last updated: 2026-05-12
 - [ ] Add admin request anomaly rules.
 - [ ] Add traffic spike rules.
 - [ ] Add risk scoring.
-- [ ] Add finding status lifecycle.
+- [x] Add finding status lifecycle.
 - [ ] Add finding-to-allowlist handoff command.
 - [ ] Add deployment-aware scoring.
 - [ ] Add fixture-based rule evaluation sets.
@@ -130,7 +130,7 @@ Last updated: 2026-05-12
 - [ ] Build Timeline view.
 - [ ] Build Inventory, Sites, and Agents views.
 - [ ] Build Browser Scripts view.
-- [ ] Add finding acknowledge and false-positive actions.
+- [x] Add finding acknowledge and false-positive actions.
 - [ ] Add browser script allowlist actions.
 
 ## Phase 6: Reports And AI

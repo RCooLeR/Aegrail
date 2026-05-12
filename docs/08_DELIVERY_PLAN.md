@@ -21,6 +21,7 @@ Aegrail already has:
 - browser crawler with static and rendered modes
 - browser crawl ingest into Hub events
 - browser script drift findings and allowlist workflow
+- finding lifecycle status actions
 - Pantheon WordPress monitoring plan
 - dashboard and multi-site agent config plans
 - multi-site Agent YAML config loading, validation, file watching, log tailing, database checks with local diff state, browser crawling, and continuous `agent run`
@@ -140,6 +141,7 @@ Exit criteria:
 - every finding points to evidence
 - repeated scans do not flood duplicate findings
 - deployment windows influence risk without hiding suspicious changes
+- finding triage status can be updated without losing deterministic evidence refreshes
 
 ## Phase 5: Hub API And Dashboard
 
@@ -163,6 +165,7 @@ Exit criteria:
 Current API slice:
 
 - `GET /api/v1/findings`
+- `PATCH /api/v1/findings/{id}/status`
 - `GET /api/v1/timeline`
 - `GET /api/v1/coverage`
 - `GET /api/v1/deployments`

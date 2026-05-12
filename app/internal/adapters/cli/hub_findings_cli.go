@@ -46,14 +46,15 @@ func hubFindingsCommand(meta domain.AppMeta) *urfavecli.Command {
 					}
 
 					writer := tabwriter.NewWriter(c.App.Writer, 0, 0, 2, ' ', 0)
-					fmt.Fprintln(writer, "TIME\tSEVERITY\tCONFIDENCE\tRULE\tEVENTS\tTITLE\tSUMMARY\tID")
+					fmt.Fprintln(writer, "TIME\tSEVERITY\tCONFIDENCE\tSTATUS\tRULE\tEVENTS\tTITLE\tSUMMARY\tID")
 					for _, finding := range findings {
 						fmt.Fprintf(
 							writer,
-							"%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\n",
+							"%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\n",
 							finding.FirstEventAt.Format(time.RFC3339),
 							finding.Severity,
 							finding.Confidence,
+							hubFindingStatusText(finding),
 							finding.RuleID,
 							len(finding.EventIDs),
 							finding.Title,
@@ -64,8 +65,49 @@ func hubFindingsCommand(meta domain.AppMeta) *urfavecli.Command {
 					return writer.Flush()
 				},
 			},
+			{
+				Name:  "status",
+				Usage: "update a Hub finding triage status",
+				Flags: append(environmentPathFlags(),
+					&urfavecli.StringFlag{Name: "id", Required: true, Usage: "Hub finding id"},
+					&urfavecli.StringFlag{Name: "status", Required: true, Usage: "open, acknowledged, false_positive, or resolved"},
+					&urfavecli.StringFlag{Name: "reason", Usage: "short status reason"},
+					&urfavecli.StringFlag{Name: "note", Usage: "operator note"},
+					&urfavecli.StringFlag{Name: "actor", Usage: "operator identity"},
+				),
+				Action: func(c *urfavecli.Context) error {
+					container, cleanup, err := newDatabaseContainer(c.Context, meta)
+					if err != nil {
+						return err
+					}
+					defer cleanup()
+
+					finding, err := container.Hub.UpdateHubFindingStatus(c.Context, hubapp.UpdateHubFindingStatusInput{
+						OrganizationSlug: c.String("org"),
+						ProjectSlug:      c.String("project"),
+						EnvironmentSlug:  c.String("env"),
+						FindingID:        c.String("id"),
+						Status:           c.String("status"),
+						Reason:           c.String("reason"),
+						Note:             c.String("note"),
+						Actor:            c.String("actor"),
+					})
+					if err != nil {
+						return err
+					}
+					fmt.Fprintf(c.App.Writer, "Finding %s status is now %s.\n", finding.ID, hubFindingStatusText(finding))
+					return nil
+				},
+			},
 		},
 	}
+}
+
+func hubFindingStatusText(finding domain.HubFinding) string {
+	if strings.TrimSpace(finding.Status) == "" {
+		return "open"
+	}
+	return finding.Status
 }
 
 func compactText(value string, max int) string {

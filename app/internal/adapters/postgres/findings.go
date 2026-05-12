@@ -64,7 +64,8 @@ func (r *HubFindingRepository) SaveHubFindings(ctx context.Context, findings []d
 		RETURNING id::text, organization_id::text, project_id::text, environment_id::text,
 			coalesce(app_id::text, ''), rule_id, rule_version, dedupe_key, severity,
 			confidence, title, summary, description, event_ids, first_event_at,
-			last_event_at, metadata, created_at, updated_at
+			last_event_at, status, status_reason, status_note, status_actor,
+			status_updated_at, metadata, created_at, updated_at
 	`
 
 	saved := make([]domain.HubFinding, 0, len(findings))
@@ -107,6 +108,11 @@ func (r *HubFindingRepository) SaveHubFindings(ctx context.Context, findings []d
 			&eventIDs,
 			&item.FirstEventAt,
 			&item.LastEventAt,
+			&item.Status,
+			&item.StatusReason,
+			&item.StatusNote,
+			&item.StatusActor,
+			&item.StatusUpdatedAt,
 			&item.Metadata,
 			&item.CreatedAt,
 			&item.UpdatedAt,
@@ -134,7 +140,8 @@ func (r *HubFindingRepository) ListHubFindings(ctx context.Context, environmentI
 		SELECT id::text, organization_id::text, project_id::text, environment_id::text,
 			coalesce(app_id::text, ''), rule_id, rule_version, dedupe_key, severity,
 			confidence, title, summary, description, event_ids, first_event_at,
-			last_event_at, metadata, created_at, updated_at
+			last_event_at, status, status_reason, status_note, status_actor,
+			status_updated_at, metadata, created_at, updated_at
 		FROM hub_findings
 		WHERE environment_id = $1
 			AND ($2::text = '' OR app_id = nullif($2::text, '')::uuid)
@@ -168,6 +175,11 @@ func (r *HubFindingRepository) ListHubFindings(ctx context.Context, environmentI
 			&eventIDs,
 			&item.FirstEventAt,
 			&item.LastEventAt,
+			&item.Status,
+			&item.StatusReason,
+			&item.StatusNote,
+			&item.StatusActor,
+			&item.StatusUpdatedAt,
 			&item.Metadata,
 			&item.CreatedAt,
 			&item.UpdatedAt,
@@ -178,6 +190,66 @@ func (r *HubFindingRepository) ListHubFindings(ctx context.Context, environmentI
 		findings = append(findings, item)
 	}
 	return findings, rows.Err()
+}
+
+func (r *HubFindingRepository) UpdateHubFindingStatus(ctx context.Context, findingID domain.ID, environmentID domain.ID, update domain.HubFindingStatusUpdate) (domain.HubFinding, error) {
+	const query = `
+		UPDATE hub_findings
+		SET status = $3,
+			status_reason = $4,
+			status_note = $5,
+			status_actor = $6,
+			status_updated_at = now(),
+			updated_at = now()
+		WHERE id = $1
+			AND environment_id = $2
+		RETURNING id::text, organization_id::text, project_id::text, environment_id::text,
+			coalesce(app_id::text, ''), rule_id, rule_version, dedupe_key, severity,
+			confidence, title, summary, description, event_ids, first_event_at,
+			last_event_at, status, status_reason, status_note, status_actor,
+			status_updated_at, metadata, created_at, updated_at
+	`
+	var item domain.HubFinding
+	var eventIDs []string
+	if err := r.pool.QueryRow(
+		ctx,
+		query,
+		findingID,
+		environmentID,
+		update.Status,
+		update.Reason,
+		update.Note,
+		update.Actor,
+	).Scan(
+		&item.ID,
+		&item.OrganizationID,
+		&item.ProjectID,
+		&item.EnvironmentID,
+		&item.AppID,
+		&item.RuleID,
+		&item.RuleVersion,
+		&item.DedupeKey,
+		&item.Severity,
+		&item.Confidence,
+		&item.Title,
+		&item.Summary,
+		&item.Description,
+		&eventIDs,
+		&item.FirstEventAt,
+		&item.LastEventAt,
+		&item.Status,
+		&item.StatusReason,
+		&item.StatusNote,
+		&item.StatusActor,
+		&item.StatusUpdatedAt,
+		&item.Metadata,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+	); err != nil {
+		return domain.HubFinding{}, err
+	}
+	item.EventIDs = domainIDs(eventIDs)
+	return item, nil
 }
 
 func stringIDs(ids []domain.ID) []string {
