@@ -73,6 +73,75 @@ func hubCorrelationCommand(meta domain.AppMeta) *urfavecli.Command {
 					return writer.Flush()
 				},
 			},
+			{
+				Name:  "browser-scripts",
+				Usage: "detect browser script drift from Hub event history",
+				Flags: append(environmentPathFlags(),
+					&urfavecli.StringFlag{Name: "app", Required: true, Usage: "monitored app slug"},
+					&urfavecli.StringFlag{Name: "baseline", Value: "30d", Usage: "baseline lookback window such as 30d or an RFC3339 timestamp"},
+					&urfavecli.StringFlag{Name: "since", Value: "24h", Usage: "observation lookback window such as 24h, 7d, or an RFC3339 timestamp"},
+					&urfavecli.IntFlag{Name: "limit", Value: 5000, Usage: "maximum browser timeline events to inspect"},
+					&urfavecli.BoolFlag{Name: "save", Usage: "save or refresh matching Hub findings"},
+				),
+				Action: func(c *urfavecli.Context) error {
+					observeSince, err := parseLookback(c.String("since"), time.Now)
+					if err != nil {
+						return err
+					}
+					baselineSince, err := parseLookback(c.String("baseline"), time.Now)
+					if err != nil {
+						return err
+					}
+					container, cleanup, err := newDatabaseContainer(c.Context, meta)
+					if err != nil {
+						return err
+					}
+					defer cleanup()
+
+					result, err := container.Hub.AnalyzeBrowserScriptDrift(c.Context, hubapp.AnalyzeBrowserScriptDriftInput{
+						OrganizationSlug: c.String("org"),
+						ProjectSlug:      c.String("project"),
+						EnvironmentSlug:  c.String("env"),
+						AppSlug:          c.String("app"),
+						BaselineSince:    baselineSince,
+						ObserveSince:     observeSince,
+						Limit:            c.Int("limit"),
+						SaveFindings:     c.Bool("save"),
+					})
+					if err != nil {
+						return err
+					}
+					if len(result.Drifts) == 0 {
+						fmt.Fprintf(
+							c.App.Writer,
+							"No browser script drift found across %d observed event(s); baseline had %d event(s) since %s.\n",
+							result.ObservedEvents,
+							result.BaselineEvents,
+							result.BaselineSince.Format(time.RFC3339),
+						)
+						return nil
+					}
+					if c.Bool("save") {
+						fmt.Fprintf(c.App.Writer, "Saved or refreshed %d browser drift finding(s).\n", len(result.Findings))
+					}
+					writer := tabwriter.NewWriter(c.App.Writer, 0, 0, 2, ' ', 0)
+					fmt.Fprintln(writer, "TIME\tSEVERITY\tCONFIDENCE\tRULE\tPAGE\tVALUE\tEVENT")
+					for _, drift := range result.Drifts {
+						fmt.Fprintf(
+							writer,
+							"%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+							drift.EventTime.Format(time.RFC3339),
+							drift.Severity,
+							drift.Confidence,
+							drift.RuleID,
+							drift.PageURL,
+							drift.Value,
+							drift.EventID,
+						)
+					}
+					return writer.Flush()
+				},
+			},
 		},
 	}
 }

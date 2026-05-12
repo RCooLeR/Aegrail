@@ -38,6 +38,7 @@ The collector should live under the generic `collector` runtime app, with WordPr
 aegrail collector browser crawl --url https://example.com --format json
 aegrail collector browser crawl --url https://example.com --rendered --wait-tag-manager --timeout 30s --format json
 aegrail collector browser crawl --url https://example.com --rendered --ingest --org acme --project customer-site --env production --app main-web --service frontend --host web-01 --agent-id agt_web_01
+aegrail hub correlate browser-scripts --org acme --project customer-site --env production --app main-web --baseline 30d --since 24h --save
 aegrail collector browser crawl --url https://example.com --url https://example.com/contact --max-pages 10
 ```
 
@@ -53,6 +54,7 @@ Current implementation:
 - records browser network metadata for rendered script responses when available
 - supports bounded rendered waits with `--network-idle`, `--settle`, and `--wait-tag-manager`
 - can save crawl observations as normalized Hub ingest events with `--ingest`
+- can compare Hub browser event history with `hub correlate browser-scripts` to save drift findings
 - outputs table or JSON
 
 Next rendered-browser work:
@@ -60,7 +62,7 @@ Next rendered-browser work:
 - Store only normalized script evidence by default, not full page content.
 - Hash inline script bodies and fetched script responses.
 - Redact query strings and obvious tokens from URLs.
-- Add baseline comparison and allowlist review for script domains, tag-manager containers, and inline hashes.
+- Add explicit allowlist review for script domains, tag-manager containers, and inline hashes.
 
 ## What To Capture
 
@@ -188,11 +190,11 @@ Initial event types:
 - `browser.tag_manager.detected`
 - `browser.coverage.warning`
 
-Planned baseline/drift event types:
+Current baseline/drift finding rules:
 
-- `browser.script_domain.new`
-- `browser.inline_script.changed`
-- `browser.tag_manager_vendor.new`
+- `browser-script-domain-new`
+- `browser-inline-script-changed`
+- `browser-tag-manager-id-new`
 
 These events should carry the normal Hub labels:
 

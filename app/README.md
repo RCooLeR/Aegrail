@@ -45,6 +45,7 @@ go run ./cmd/aegrail import logs --site petlink --path testdata/evidence-sample
 go run ./cmd/aegrail inventory bootstrap single-site --kind wordpress --org acme --project customer-site --host web-01 --agent-id agt_web_01 --fingerprint SHA256:test
 go run ./cmd/aegrail hub baseline compare-files --org acme --project customer-site --env production --app main-web
 go run ./cmd/aegrail hub correlate events --org acme --project customer-site --env production --app main-web --save
+go run ./cmd/aegrail hub correlate browser-scripts --org acme --project customer-site --env production --app main-web --baseline 30d --since 24h --save
 go run ./cmd/aegrail hub findings list --org acme --project customer-site --env production --app main-web
 go run ./cmd/aegrail report hub-findings --org acme --project customer-site --env production --app main-web
 go run ./cmd/aegrail collector browser crawl --url https://example.com --format json

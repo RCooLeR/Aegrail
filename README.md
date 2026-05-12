@@ -40,6 +40,7 @@ go run ./cmd/aegrail collector --help
 go run ./cmd/aegrail collector browser crawl --url https://example.com --format json
 go run ./cmd/aegrail collector browser crawl --url https://example.com --rendered --wait-tag-manager --timeout 30s --format json
 go run ./cmd/aegrail collector browser crawl --url https://example.com --rendered --ingest --org acme --project customer-site --env production --app main-web --service frontend --host web-01 --agent-id agt_web_01
+go run ./cmd/aegrail hub correlate browser-scripts --org acme --project customer-site --env production --app main-web --baseline 30d --since 24h --save
 ```
 
 Start local infrastructure:

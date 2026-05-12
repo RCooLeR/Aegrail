@@ -143,7 +143,7 @@ Current browser crawler direction:
 - `--rendered` uses an installed Chrome/Chromium browser so dynamic scripts injected by page builders, widgets, consent tools, and tag managers are visible.
 - Rendered mode waits for browser readiness, network quiet, optional tag-manager settling, and a bounded extra settle delay.
 - `--ingest` saves browser crawl observations into Hub ingest events for timelines, correlation, and later findings.
-- Compare script domains and hashes against per-page baselines.
+- `aegrail hub correlate browser-scripts --save` compares observed script domains, inline hashes, and tag-manager IDs against per-page Hub event baselines.
 - See [Browser Crawler And JavaScript Monitoring Plan](collectors/browser-crawler.md).
 
 ## Phase 4B: Secondary PHP Targets
@@ -285,6 +285,7 @@ Current status:
 - Tailed Nginx/Apache access logs and PHP error logs now produce structured `log.access` and `log.php_error` events while retaining redacted raw line evidence.
 - `aegrail hub baseline compare-files` compares recent app-relative file observations across reporting hosts.
 - `aegrail hub correlate events --save` runs the first deterministic incident-chain rules and persists deduplicated Hub findings.
+- `aegrail hub correlate browser-scripts --save` persists browser JavaScript drift findings from Hub event history.
 - Per-agent secrets, richer topology templates, persisted baseline snapshots, and report/export reads from Hub findings remain the next Hub priorities.
 
 ## Phase 10: Remote Collection and Scheduling
