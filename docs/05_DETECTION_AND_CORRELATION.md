@@ -230,6 +230,8 @@ An allowlist entry must carry scope, reason, reviewer, and time.
 
 Browser script allowlist entries can be created from drift review and later disabled without deleting review history. The Hub API and CLI both use `active` and `disabled` statuses, and drift matching only suppresses values from active entries.
 
+Browser drift findings can be handed off directly into the allowlist. The handoff reads the finding metadata (`kind`, `page_url`, and `value`), validates that the finding came from a browser script drift rule, and creates the reviewed allowlist entry without asking the operator to retype evidence values.
+
 ## Dashboard Views
 
 The dashboard should expose:

@@ -57,6 +57,7 @@ func NewHubRouter(meta domain.AppMeta, hub *hubapp.Hub, options HubOptions) http
 	router.Post("/api/v1/ingest/events", ingestEventsHandler(hub, options))
 	router.Get("/api/v1/findings", listFindingsHandler(hub))
 	router.Patch("/api/v1/findings/{id}/status", updateFindingStatusHandler(hub))
+	router.Post("/api/v1/findings/{id}/browser-script-allowlist", allowBrowserScriptFromFindingHandler(hub))
 	router.Get("/api/v1/timeline", listTimelineHandler(hub))
 	router.Get("/api/v1/coverage", listCoverageHandler(hub))
 	router.Get("/api/v1/deployments", listDeploymentsHandler(hub))
@@ -272,6 +273,13 @@ type allowBrowserScriptRequest struct {
 	ApprovedBy string `json:"approved_by"`
 }
 
+type allowBrowserScriptFromFindingRequest struct {
+	PageURL    string `json:"page_url"`
+	AppWide    bool   `json:"app_wide"`
+	Reason     string `json:"reason"`
+	ApprovedBy string `json:"approved_by"`
+}
+
 type updateBrowserScriptAllowlistStatusRequest struct {
 	Status     string `json:"status"`
 	Reason     string `json:"reason"`
@@ -381,6 +389,39 @@ func updateFindingStatusHandler(hub *hubapp.Hub) http.HandlerFunc {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"finding": hubFindingRecord(finding),
+		})
+	}
+}
+
+func allowBrowserScriptFromFindingHandler(hub *hubapp.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		var request allowBrowserScriptFromFindingRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		result, err := hub.AllowBrowserScriptFromFinding(r.Context(), hubapp.AllowBrowserScriptFromFindingInput{
+			OrganizationSlug: r.URL.Query().Get("org"),
+			ProjectSlug:      r.URL.Query().Get("project"),
+			EnvironmentSlug:  r.URL.Query().Get("environment"),
+			AppSlug:          r.URL.Query().Get("app"),
+			FindingID:        chi.URLParam(r, "id"),
+			PageURL:          request.PageURL,
+			AppWide:          request.AppWide,
+			Reason:           request.Reason,
+			ApprovedBy:       request.ApprovedBy,
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"finding": hubFindingRecord(result.Finding),
+			"entry":   browserScriptAllowlistEntryRecord(result.Entry),
 		})
 	}
 }

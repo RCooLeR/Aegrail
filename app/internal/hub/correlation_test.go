@@ -339,6 +339,19 @@ func (r *memoryHubFindingRepository) ListHubFindings(ctx context.Context, enviro
 	return findings, nil
 }
 
+func (r *memoryHubFindingRepository) GetHubFinding(ctx context.Context, findingID domain.ID, environmentID domain.ID, appID domain.ID) (domain.HubFinding, error) {
+	for _, finding := range r.byKey {
+		if finding.ID != findingID || finding.EnvironmentID != environmentID {
+			continue
+		}
+		if appID != "" && finding.AppID != appID {
+			continue
+		}
+		return finding, nil
+	}
+	return domain.HubFinding{}, fmt.Errorf("finding %q was not found", findingID)
+}
+
 func (r *memoryHubFindingRepository) UpdateHubFindingStatus(ctx context.Context, findingID domain.ID, environmentID domain.ID, update domain.HubFindingStatusUpdate) (domain.HubFinding, error) {
 	now := time.Now().UTC()
 	for key, finding := range r.byKey {

@@ -53,6 +53,49 @@ func hubBrowserScriptsCommand(meta domain.AppMeta) *urfavecli.Command {
 				},
 			},
 			{
+				Name:  "allow-finding",
+				Usage: "approve the browser script drift value from a finding",
+				Flags: append(environmentPathFlags(),
+					&urfavecli.StringFlag{Name: "app", Required: true, Usage: "monitored app slug"},
+					&urfavecli.StringFlag{Name: "id", Required: true, Usage: "browser script drift finding id"},
+					&urfavecli.StringFlag{Name: "page", Usage: "override page URL; defaults to finding evidence"},
+					&urfavecli.BoolFlag{Name: "app-wide", Usage: "allow this value across the whole app instead of only the finding page"},
+					&urfavecli.StringFlag{Name: "reason", Usage: "review note explaining why this value is accepted"},
+					&urfavecli.StringFlag{Name: "approved-by", Usage: "reviewer identity"},
+				),
+				Action: func(c *urfavecli.Context) error {
+					container, cleanup, err := newDatabaseContainer(c.Context, meta)
+					if err != nil {
+						return err
+					}
+					defer cleanup()
+
+					result, err := container.Hub.AllowBrowserScriptFromFinding(c.Context, hubapp.AllowBrowserScriptFromFindingInput{
+						OrganizationSlug: c.String("org"),
+						ProjectSlug:      c.String("project"),
+						EnvironmentSlug:  c.String("env"),
+						AppSlug:          c.String("app"),
+						FindingID:        c.String("id"),
+						PageURL:          c.String("page"),
+						AppWide:          c.Bool("app-wide"),
+						Reason:           c.String("reason"),
+						ApprovedBy:       c.String("approved-by"),
+					})
+					if err != nil {
+						return err
+					}
+					fmt.Fprintf(
+						c.App.Writer,
+						"Allowed browser script %s %q for %s from finding %s\n",
+						result.Entry.Kind,
+						result.Entry.Value,
+						browserAllowlistPageLabel(result.Entry.PageURL),
+						result.Finding.ID,
+					)
+					return nil
+				},
+			},
+			{
 				Name:  "allowlist",
 				Usage: "list approved browser script drift values",
 				Flags: append(environmentPathFlags(),

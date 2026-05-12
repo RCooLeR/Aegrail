@@ -110,7 +110,7 @@ Last updated: 2026-05-13
 - [ ] Add traffic spike rules.
 - [ ] Add risk scoring.
 - [x] Add finding status lifecycle.
-- [ ] Add finding-to-allowlist handoff command.
+- [x] Add finding-to-allowlist handoff command.
 - [ ] Add deployment-aware scoring.
 - [ ] Add fixture-based rule evaluation sets.
 

@@ -15,6 +15,7 @@ Current Hub API slice:
 
 - `GET /api/v1/findings?org=...&project=...&environment=...&app=...&limit=...`
 - `PATCH /api/v1/findings/{id}/status?org=...&project=...&environment=...`
+- `POST /api/v1/findings/{id}/browser-script-allowlist?org=...&project=...&environment=...&app=...`
 - `GET /api/v1/timeline?org=...&project=...&environment=...&app=...&since=...&limit=...`
 - `GET /api/v1/coverage?org=...&project=...&environment=...&app=...&since=...&limit=...`
 - `GET /api/v1/deployments?org=...&project=...&environment=...&app=...`
@@ -28,4 +29,4 @@ Current Hub API slice:
 - `GET /api/v1/inventory/hosts?org=...&project=...&environment=...`
 - `GET /api/v1/inventory/agents?org=...&project=...&environment=...&host=...`
 
-These endpoints are the first backend surface for the future Findings, Timeline, Coverage, Inventory, Deployments, and Browser Scripts views. Finding status actions now support `open`, `acknowledged`, `false_positive`, and `resolved`. Browser allowlist actions can create reviewed entries and toggle them between `active` and `disabled`.
+These endpoints are the first backend surface for the future Findings, Timeline, Coverage, Inventory, Deployments, and Browser Scripts views. Finding status actions now support `open`, `acknowledged`, `false_positive`, and `resolved`. Browser allowlist actions can create reviewed entries, toggle them between `active` and `disabled`, and create entries directly from browser drift findings.

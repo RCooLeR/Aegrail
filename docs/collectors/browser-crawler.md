@@ -46,6 +46,7 @@ aegrail collector browser crawl --url https://example.com --rendered --wait-tag-
 aegrail collector browser crawl --url https://example.com --rendered --ingest --org acme --project customer-site --env production --app main-web --service frontend --host web-01 --agent-id agt_web_01
 aegrail hub correlate browser-scripts --org acme --project customer-site --env production --app main-web --baseline 30d --since 24h --save
 aegrail hub browser-scripts allow --org acme --project customer-site --env production --app main-web --page https://example.com --kind domain --value trusted-chat.example --reason "approved chat vendor"
+aegrail hub browser-scripts allow-finding --org acme --project customer-site --env production --app main-web --id finding-id --reason "approved vendor" --approved-by roman
 aegrail hub browser-scripts allowlist --org acme --project customer-site --env production --app main-web
 aegrail collector browser crawl --url https://example.com --url https://example.com/contact --max-pages 10
 ```
@@ -64,6 +65,7 @@ Current implementation:
 - can save crawl observations as normalized Hub ingest events with `--ingest`
 - can compare Hub browser event history with `hub correlate browser-scripts` to save drift findings
 - can approve known-good drift values with `hub browser-scripts allow`
+- can approve browser drift findings directly with `hub browser-scripts allow-finding`
 - outputs table or JSON
 
 Next rendered-browser work:
@@ -71,7 +73,7 @@ Next rendered-browser work:
 - Store only normalized script evidence by default, not full page content.
 - Hash inline script bodies and fetched script responses.
 - Redact query strings and obvious tokens from URLs.
-- Add finding-to-allowlist handoff helpers once finding IDs have richer detail views.
+- Add richer browser drift fixture sets.
 
 ## What To Capture
 
@@ -172,6 +174,7 @@ Allowlist entries can be managed from the CLI:
 
 ```bash
 aegrail hub browser-scripts allow --org acme --project customer-site --env production --app main-web --kind domain --value cdn.vendor.example --reason reviewed --approved-by roman
+aegrail hub browser-scripts allow-finding --org acme --project customer-site --env production --app main-web --id finding-id --reason reviewed --approved-by roman
 aegrail hub browser-scripts status --org acme --project customer-site --env production --app main-web --id allowlist-id --status disabled --reason vendor-removed --approved-by roman
 ```
 
@@ -180,6 +183,7 @@ The dashboard-facing Hub API exposes the same workflow:
 - `GET /api/v1/browser/script-allowlist`
 - `POST /api/v1/browser/script-allowlist`
 - `PATCH /api/v1/browser/script-allowlist/{id}/status`
+- `POST /api/v1/findings/{id}/browser-script-allowlist`
 
 ## WordPress-Specific Value
 

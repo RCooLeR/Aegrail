@@ -93,6 +93,17 @@ func (r *httpTestFindingRepository) ListHubFindings(ctx context.Context, environ
 	return findings, nil
 }
 
+func (r *httpTestFindingRepository) GetHubFinding(ctx context.Context, findingID domain.ID, environmentID domain.ID, appID domain.ID) (domain.HubFinding, error) {
+	finding, ok := r.findings[findingID]
+	if !ok || finding.EnvironmentID != environmentID {
+		return domain.HubFinding{}, fmt.Errorf("finding %q was not found", findingID)
+	}
+	if appID != "" && finding.AppID != appID {
+		return domain.HubFinding{}, fmt.Errorf("finding %q was not found", findingID)
+	}
+	return finding, nil
+}
+
 func (r *httpTestFindingRepository) UpdateHubFindingStatus(ctx context.Context, findingID domain.ID, environmentID domain.ID, update domain.HubFindingStatusUpdate) (domain.HubFinding, error) {
 	finding, ok := r.findings[findingID]
 	if !ok || finding.EnvironmentID != environmentID {

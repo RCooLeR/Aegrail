@@ -413,4 +413,4 @@ Done:
 
 Next:
 
-1. Add finding-to-allowlist handoff helpers for browser drift findings.
+1. Define the rule interface and registry so detection metadata stays consistent as rules grow.

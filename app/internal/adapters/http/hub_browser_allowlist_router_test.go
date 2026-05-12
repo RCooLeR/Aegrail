@@ -87,9 +87,115 @@ func TestHubRouterManagesBrowserScriptAllowlist(t *testing.T) {
 	}
 }
 
+func TestHubRouterAllowsBrowserScriptFromFinding(t *testing.T) {
+	inventory := newHTTPTestInventoryRepository()
+	findings := newHTTPTestBrowserDriftFindingRepository()
+	allowlist := newHTTPTestBrowserScriptAllowlistRepository()
+	router := NewHubRouter(domain.AppMeta{Name: "Aegrail", Binary: "aegrail", Version: "test"}, hubapp.New(hubapp.Dependencies{Inventory: inventory, Findings: findings, BrowserAllowlist: allowlist}), HubOptions{})
+
+	requestBody := bytes.NewBufferString(`{"reason":"reviewed vendor","approved_by":"roman"}`)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/findings/finding-browser-1/browser-script-allowlist?org=acme&project=customer-site&environment=production&app=main-web", requestBody)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("status = %d body = %s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Finding struct {
+			ID string `json:"id"`
+		} `json:"finding"`
+		Entry struct {
+			Kind       string `json:"kind"`
+			Value      string `json:"value"`
+			PageURL    string `json:"page_url"`
+			Reason     string `json:"reason"`
+			ApprovedBy string `json:"approved_by"`
+			Status     string `json:"status"`
+		} `json:"entry"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("Decode returned error: %v", err)
+	}
+	if body.Finding.ID != "finding-browser-1" {
+		t.Fatalf("finding = %#v, want browser finding", body.Finding)
+	}
+	if body.Entry.Kind != "domain" || body.Entry.Value != "cdn.reviewed.example" || body.Entry.PageURL != "https://example.test" || body.Entry.Status != "active" {
+		t.Fatalf("entry = %#v, want browser script allowlist entry from finding", body.Entry)
+	}
+}
+
 type httpTestBrowserScriptAllowlistRepository struct {
 	entries map[domain.ID]domain.BrowserScriptAllowlistEntry
 	next    int
+}
+
+type httpTestBrowserDriftFindingRepository struct {
+	finding domain.HubFinding
+}
+
+func newHTTPTestBrowserDriftFindingRepository() *httpTestBrowserDriftFindingRepository {
+	now := time.Date(2026, 5, 13, 10, 0, 0, 0, time.UTC)
+	return &httpTestBrowserDriftFindingRepository{
+		finding: domain.HubFinding{
+			ID:              "finding-browser-1",
+			OrganizationID:  "org-1",
+			ProjectID:       "project-1",
+			EnvironmentID:   "env-1",
+			AppID:           "app-1",
+			RuleID:          "browser-script-domain-new",
+			RuleVersion:     "2026-05-12.1",
+			DedupeKey:       "browser-drift-test",
+			Severity:        domain.SeverityMedium,
+			Confidence:      domain.ConfidenceMedium,
+			Title:           "New browser script domain",
+			FirstEventAt:    now,
+			LastEventAt:     now,
+			Status:          "open",
+			StatusUpdatedAt: now,
+			Metadata: map[string]any{
+				"kind":     "domain",
+				"page_url": "https://example.test/",
+				"value":    "cdn.reviewed.example",
+			},
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+	}
+}
+
+func (r *httpTestBrowserDriftFindingRepository) SaveHubFindings(ctx context.Context, findings []domain.HubFinding) ([]domain.HubFinding, error) {
+	return findings, nil
+}
+
+func (r *httpTestBrowserDriftFindingRepository) GetHubFinding(ctx context.Context, findingID domain.ID, environmentID domain.ID, appID domain.ID) (domain.HubFinding, error) {
+	if r.finding.ID != findingID || r.finding.EnvironmentID != environmentID {
+		return domain.HubFinding{}, fmt.Errorf("finding %q was not found", findingID)
+	}
+	if appID != "" && r.finding.AppID != appID {
+		return domain.HubFinding{}, fmt.Errorf("finding %q was not found", findingID)
+	}
+	return r.finding, nil
+}
+
+func (r *httpTestBrowserDriftFindingRepository) ListHubFindings(ctx context.Context, environmentID domain.ID, appID domain.ID, limit int) ([]domain.HubFinding, error) {
+	finding, err := r.GetHubFinding(ctx, r.finding.ID, environmentID, appID)
+	if err != nil {
+		return nil, nil
+	}
+	return []domain.HubFinding{finding}, nil
+}
+
+func (r *httpTestBrowserDriftFindingRepository) UpdateHubFindingStatus(ctx context.Context, findingID domain.ID, environmentID domain.ID, update domain.HubFindingStatusUpdate) (domain.HubFinding, error) {
+	finding, err := r.GetHubFinding(ctx, findingID, environmentID, "")
+	if err != nil {
+		return domain.HubFinding{}, err
+	}
+	finding.Status = update.Status
+	finding.StatusReason = update.Reason
+	finding.StatusNote = update.Note
+	finding.StatusActor = update.Actor
+	r.finding = finding
+	return finding, nil
 }
 
 func newHTTPTestBrowserScriptAllowlistRepository() *httpTestBrowserScriptAllowlistRepository {

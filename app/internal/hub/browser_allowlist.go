@@ -42,6 +42,23 @@ type UpdateBrowserScriptAllowlistStatusInput struct {
 	ApprovedBy       string
 }
 
+type AllowBrowserScriptFromFindingInput struct {
+	OrganizationSlug string
+	ProjectSlug      string
+	EnvironmentSlug  string
+	AppSlug          string
+	FindingID        string
+	PageURL          string
+	AppWide          bool
+	Reason           string
+	ApprovedBy       string
+}
+
+type AllowBrowserScriptFromFindingResult struct {
+	Finding domain.HubFinding
+	Entry   domain.BrowserScriptAllowlistEntry
+}
+
 func (h *Hub) AllowBrowserScript(ctx context.Context, input AllowBrowserScriptInput) (domain.BrowserScriptAllowlistEntry, error) {
 	if h.browserAllowlist == nil {
 		return domain.BrowserScriptAllowlistEntry{}, errors.New("browser script allowlist repository is not configured")
@@ -77,6 +94,54 @@ func (h *Hub) AllowBrowserScript(ctx context.Context, input AllowBrowserScriptIn
 		ApprovedBy:     strings.TrimSpace(input.ApprovedBy),
 		Status:         "active",
 	})
+}
+
+func (h *Hub) AllowBrowserScriptFromFinding(ctx context.Context, input AllowBrowserScriptFromFindingInput) (AllowBrowserScriptFromFindingResult, error) {
+	if h.browserAllowlist == nil {
+		return AllowBrowserScriptFromFindingResult{}, errors.New("browser script allowlist repository is not configured")
+	}
+	finding, err := h.GetHubFinding(ctx, GetHubFindingInput{
+		OrganizationSlug: input.OrganizationSlug,
+		ProjectSlug:      input.ProjectSlug,
+		EnvironmentSlug:  input.EnvironmentSlug,
+		AppSlug:          input.AppSlug,
+		FindingID:        input.FindingID,
+	})
+	if err != nil {
+		return AllowBrowserScriptFromFindingResult{}, err
+	}
+	kind, value, pageURL, err := browserScriptAllowlistFieldsFromFinding(finding)
+	if err != nil {
+		return AllowBrowserScriptFromFindingResult{}, err
+	}
+	if input.AppWide {
+		pageURL = ""
+	}
+	if override := normalizeBrowserPageURL(input.PageURL); override != "" {
+		pageURL = override
+	}
+	reason := strings.TrimSpace(input.Reason)
+	if reason == "" {
+		reason = "Approved from finding " + string(finding.ID)
+	}
+	entry, err := h.AllowBrowserScript(ctx, AllowBrowserScriptInput{
+		OrganizationSlug: input.OrganizationSlug,
+		ProjectSlug:      input.ProjectSlug,
+		EnvironmentSlug:  input.EnvironmentSlug,
+		AppSlug:          input.AppSlug,
+		PageURL:          pageURL,
+		Kind:             kind,
+		Value:            value,
+		Reason:           reason,
+		ApprovedBy:       input.ApprovedBy,
+	})
+	if err != nil {
+		return AllowBrowserScriptFromFindingResult{}, err
+	}
+	return AllowBrowserScriptFromFindingResult{
+		Finding: finding,
+		Entry:   entry,
+	}, nil
 }
 
 func (h *Hub) ListBrowserScriptAllowlist(ctx context.Context, input ListBrowserScriptAllowlistInput) ([]domain.BrowserScriptAllowlistEntry, error) {
@@ -188,6 +253,32 @@ func normalizeBrowserPageURL(value string) string {
 	value = strings.TrimSpace(value)
 	value = strings.TrimSuffix(value, "#")
 	return strings.TrimRight(value, "/")
+}
+
+func browserScriptAllowlistFieldsFromFinding(finding domain.HubFinding) (string, string, string, error) {
+	if !isBrowserScriptDriftFinding(finding) {
+		return "", "", "", fmt.Errorf("finding %q is not a browser script drift finding", finding.ID)
+	}
+	metadata := finding.Metadata
+	kind, err := normalizeBrowserScriptAllowlistKind(payloadStringAny(metadata, "kind", ""))
+	if err != nil {
+		return "", "", "", err
+	}
+	value := strings.TrimSpace(payloadStringAny(metadata, "value", ""))
+	if value == "" {
+		return "", "", "", fmt.Errorf("finding %q does not include a browser script allowlist value", finding.ID)
+	}
+	pageURL := normalizeBrowserPageURL(payloadStringAny(metadata, "page_url", ""))
+	return kind, value, pageURL, nil
+}
+
+func isBrowserScriptDriftFinding(finding domain.HubFinding) bool {
+	switch finding.RuleID {
+	case "browser-script-domain-new", "browser-inline-script-changed", "browser-tag-manager-id-new", "browser-script-drift":
+		return true
+	default:
+		return false
+	}
 }
 
 func normalizeBrowserScriptAllowlistStatus(value string) (string, error) {

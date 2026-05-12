@@ -23,6 +23,7 @@ Aegrail already has:
 - browser script drift findings and allowlist workflow
 - finding lifecycle status actions
 - browser script allowlist mutation APIs
+- browser drift finding-to-allowlist handoff command and API
 - Pantheon WordPress monitoring plan
 - dashboard and multi-site agent config plans
 - multi-site Agent YAML config loading, validation, file watching, log tailing, database checks with local diff state, browser crawling, and continuous `agent run`
@@ -167,6 +168,7 @@ Current API slice:
 
 - `GET /api/v1/findings`
 - `PATCH /api/v1/findings/{id}/status`
+- `POST /api/v1/findings/{id}/browser-script-allowlist`
 - `GET /api/v1/timeline`
 - `GET /api/v1/coverage`
 - `GET /api/v1/deployments`

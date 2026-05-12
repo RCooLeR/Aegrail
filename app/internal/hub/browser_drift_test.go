@@ -243,6 +243,60 @@ func TestUpdateBrowserScriptAllowlistStatusDisablesSuppression(t *testing.T) {
 	}
 }
 
+func TestAllowBrowserScriptFromFindingCreatesAllowlistEntry(t *testing.T) {
+	inventory := newMemoryInventoryRepository()
+	findings := newMemoryHubFindingRepository()
+	allowlist := newMemoryBrowserScriptAllowlistRepository()
+	hub := New(Dependencies{Inventory: inventory, Findings: findings, BrowserAllowlist: allowlist})
+	ctx := context.Background()
+
+	environment, app := bootstrapBrowserDriftInventory(t, ctx, hub)
+	now := time.Date(2026, 5, 12, 14, 0, 0, 0, time.UTC)
+	saved, err := findings.SaveHubFindings(ctx, []domain.HubFinding{
+		{
+			OrganizationID: "org-001",
+			ProjectID:      environment.ProjectID,
+			EnvironmentID:  environment.ID,
+			AppID:          app.ID,
+			RuleID:         "browser-script-domain-new",
+			RuleVersion:    browserDriftRuleVersion,
+			DedupeKey:      "browser-drift-test",
+			Severity:       domain.SeverityMedium,
+			Confidence:     domain.ConfidenceMedium,
+			Title:          "New browser script domain",
+			FirstEventAt:   now,
+			LastEventAt:    now,
+			Metadata: map[string]any{
+				"kind":     "domain",
+				"page_url": "https://example.test/",
+				"value":    "cdn.reviewed.example",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("SaveHubFindings returned error: %v", err)
+	}
+
+	result, err := hub.AllowBrowserScriptFromFinding(ctx, AllowBrowserScriptFromFindingInput{
+		OrganizationSlug: "acme",
+		ProjectSlug:      "customer-site",
+		EnvironmentSlug:  "production",
+		AppSlug:          "main-web",
+		FindingID:        string(saved[0].ID),
+		Reason:           "reviewed vendor",
+		ApprovedBy:       "roman",
+	})
+	if err != nil {
+		t.Fatalf("AllowBrowserScriptFromFinding returned error: %v", err)
+	}
+	if result.Entry.Kind != "domain" || result.Entry.Value != "cdn.reviewed.example" || result.Entry.PageURL != "https://example.test" {
+		t.Fatalf("entry = %#v, want browser drift allowlist entry", result.Entry)
+	}
+	if result.Entry.Reason != "reviewed vendor" || result.Entry.ApprovedBy != "roman" || result.Entry.Status != "active" {
+		t.Fatalf("entry metadata = %#v, want review metadata", result.Entry)
+	}
+}
+
 func bootstrapBrowserDriftInventory(t *testing.T, ctx context.Context, hub *Hub) (domain.Environment, domain.MonitoredApp) {
 	t.Helper()
 	if _, err := hub.SaveOrganization(ctx, SaveOrganizationInput{Slug: "acme"}); err != nil {
