@@ -7,6 +7,8 @@ Aegrail is the product and binary name for the security audit and incident triag
 - [Architecture](architecture.md): module boundaries, runtime pipeline, storage strategy, and Ollama integration.
 - [Distributed Architecture](distributed-architecture.md): Agent, DB Collector, Hub, inventory, and cross-host correlation model.
 - [Implementation Plan](implementation-plan.md): phased delivery plan from repository foundation to reports.
+- [Dashboard Plan](dashboard.md): planned Hub UI, views, API surface, and safety model.
+- [Agent Multi-Site Configuration](configuration/agent-multi-site.md): planned server-level agent config for monitoring many hosted sites.
 - [Pantheon WordPress Monitoring Plan](platforms/pantheon-wordpress.md): planned support for Pantheon-hosted single WordPress and WordPress Multisite networks.
 - [Browser Crawler And JavaScript Monitoring Plan](collectors/browser-crawler.md): static and rendered-page crawler direction for script inventory, tag managers, and JavaScript drift.
 - [Tracker](tracker.md): living task board for MVP work.
@@ -33,6 +35,8 @@ Aegrail is the product and binary name for the security audit and incident triag
 
 - Keep `architecture.md` focused on durable boundaries and package responsibilities.
 - Keep `distributed-architecture.md` focused on Agent, Collector, Hub, inventory, and correlation behavior.
+- Keep `dashboard.md` focused on the Hub UI and API contract.
+- Keep `configuration/agent-multi-site.md` focused on operator-facing agent configuration.
 - Keep `implementation-plan.md` focused on phases, current status, and exit criteria.
 - Keep `tracker.md` as the task-level source of truth.
 - Add or update an ADR when a decision changes the shape of the system.

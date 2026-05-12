@@ -243,11 +243,15 @@ Deliverables:
 - Health endpoint.
 - Site, import, finding, report read endpoints.
 - Basic auth strategy decision.
+- Dashboard plan for Overview, Findings, Timeline, Inventory, Agents, Browser Scripts, Deployments, Reports, and Settings.
+- TypeScript, React, and Bootstrap dashboard app structure.
+- Read APIs for Hub inventory, events, findings, deployments, browser scripts, and reports.
 
 Exit criteria:
 
 - API reads from the same runtime use-case packages as CLI.
 - No duplicate business logic in handlers.
+- Dashboard views render Hub data through HTTP APIs only.
 
 ## Phase 9: Agent And Hub Foundation
 
@@ -262,6 +266,9 @@ Deliverables:
 - UTC event time and Hub received time.
 - Deployment marker import.
 - Cross-host app baseline model.
+- Server-level multi-site agent config format.
+- Per-site file/log/browser/database state directories under one host agent.
+- Agent config validation and optional config coverage reporting to the Hub.
 
 Exit criteria:
 
@@ -269,6 +276,7 @@ Exit criteria:
 - Hub can group events by org/project/environment/app/service/host.
 - Hub can distinguish event time from received time.
 - Deployment windows influence file-change risk scoring.
+- One agent can monitor multiple site roots on the same host while emitting separate app/service context for each site.
 
 Current status:
 
@@ -289,6 +297,7 @@ Current status:
 - `aegrail hub correlate browser-scripts --save` persists browser JavaScript drift findings from Hub event history.
 - `aegrail hub browser-scripts allow` and `allowlist` support reviewed browser script drift approvals.
 - Per-agent secrets, richer topology templates, persisted baseline snapshots, and report/export reads from Hub findings remain the next Hub priorities.
+- The multi-site config plan is documented in [Agent Multi-Site Configuration](configuration/agent-multi-site.md), with an example at `app/configs/agent.multi-site.yaml.example`.
 
 ## Phase 10: Remote Collection and Scheduling
 
@@ -300,6 +309,7 @@ Deliverables:
 - MySQL read-only collector.
 - Pantheon provider collector using SFTP logs and Terminus or dashboard-derived connection metadata.
 - Browser crawler collector for rendered-page JavaScript inventory and drift detection.
+- Dashboard shell backed by Hub read APIs.
 - Signed HTTP endpoint collector.
 - PostgreSQL-backed job queue.
 - Scheduling model for daily health reports.

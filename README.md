@@ -9,6 +9,8 @@ Aegrail is a CLI-first security audit and incident triage tool for small website
 - [Architecture](docs/architecture.md): module boundaries, runtime pipeline, storage strategy, and Ollama integration.
 - [Distributed Architecture](docs/distributed-architecture.md): Agent, DB Collector, Hub, inventory, and cross-host correlation model.
 - [Implementation Plan](docs/implementation-plan.md): phased delivery plan from repository foundation to reports.
+- [Dashboard Plan](docs/dashboard.md): planned Hub UI, views, API surface, and safety model.
+- [Agent Multi-Site Configuration](docs/configuration/agent-multi-site.md): planned server-level agent config for monitoring many hosted sites.
 - [Pantheon WordPress Monitoring Plan](docs/platforms/pantheon-wordpress.md): planned support for Pantheon-hosted single WordPress and WordPress Multisite networks.
 - [Browser Crawler And JavaScript Monitoring Plan](docs/collectors/browser-crawler.md): static and rendered-page crawler direction for script inventory, tag managers, and JavaScript drift.
 - [Tracker](docs/tracker.md): living task board for MVP work.
@@ -123,6 +125,15 @@ go run ./cmd/aegrail agent start --root /var/www/shop --profile prestashop --int
 ```
 
 The first `agent start` scan creates a local baseline. Later scans enqueue file events and, when `--secret` is provided, replay pending batches to the Hub.
+
+Planned multi-site agent configuration:
+
+```powershell
+cd app
+Get-Content configs/agent.multi-site.yaml.example
+```
+
+The target runtime is one host-level agent config with many site entries, so a server can monitor `example.com`, `example2.com`, and other hosted apps while sending clean per-site context to the Hub.
 
 Smoke-test Agent log tailing:
 

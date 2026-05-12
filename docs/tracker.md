@@ -33,6 +33,7 @@ Last updated: 2026-05-12
 - [x] A-010 Keep one repo while structuring code as Local, Hub, Agent, and Collector apps.
 - [x] A-011 Add Pantheon WordPress hosting to the first-wave monitoring plan.
 - [x] A-012 Add browser crawler JavaScript monitoring to the collector plan.
+- [x] A-013 Plan dashboard and multi-site agent configuration.
 - [?] A-005 Decide credential encryption approach for local deployments.
 - [?] A-006 Decide whether scheduled jobs live in the main binary or a worker command.
 
@@ -93,6 +94,10 @@ Last updated: 2026-05-12
 - [x] AH-019 Add inventory bootstrap helper for common single-site WordPress/PrestaShop deployments.
 - [x] AH-020 Add structured Nginx, Apache, and PHP log parsers on top of tailed log events.
 - [x] AH-021 Persist and list deduplicated Hub correlation findings.
+- [ ] AH-022 Implement server-level multi-site agent config parser and runner.
+- [ ] AH-023 Add per-site file, log, browser, and database state paths.
+- [ ] AH-024 Add agent config validation command.
+- [ ] AH-025 Report agent config coverage to the Hub.
 
 ## Evidence Import
 
@@ -187,10 +192,19 @@ Last updated: 2026-05-12
 - [ ] REP-004 CSV timeline export.
 - [ ] REP-005 Golden tests for report rendering.
 
+## Dashboard
+
+- [x] UI-001 Document dashboard information architecture and API direction.
+- [ ] UI-002 Add Hub read APIs for inventory, timelines, findings, deployments, agents, and browser scripts.
+- [ ] UI-003 Create TypeScript React dashboard shell with Bootstrap.
+- [ ] UI-004 Build Overview, Findings, Timeline, Inventory, Agents, and Browser Scripts views.
+- [ ] UI-005 Add finding acknowledge and browser script allowlist actions.
+- [ ] UI-006 Show multi-site agent config coverage.
+
 ## Later
 
 - [ ] FUT-001 chi HTTP API.
-- [ ] FUT-002 Local dashboard.
+- [~] FUT-002 Local dashboard.
 - [ ] FUT-003 SSH/SFTP collector.
 - [ ] FUT-004 MySQL read-only collector.
 - [ ] FUT-005 Signed HTTP endpoint collector.
@@ -206,3 +220,4 @@ Last updated: 2026-05-12
 - [x] FUT-015 Browser script drift findings from Hub event history.
 - [x] FUT-016 Browser script allowlist review workflow.
 - [ ] FUT-017 Finding-to-allowlist handoff command.
+- [ ] FUT-018 Multi-site agent config loader.

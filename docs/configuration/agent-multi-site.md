@@ -1,0 +1,312 @@
+# Aegrail Agent Multi-Site Configuration
+
+Status: planned
+Date: 2026-05-12
+
+This document defines the target operator-facing configuration for running one Aegrail Agent on a server that hosts multiple sites or applications.
+
+The goal is simple:
+
+```text
+one server
+  one Aegrail Agent process
+  one host identity
+  many monitored sites
+  one central Hub timeline
+```
+
+## Why This Matters
+
+Shared hosting, agency servers, managed VPS boxes, and multi-site production nodes often host several unrelated applications:
+
+```text
+web-01
+  /var/www/example.com/
+  /var/www/example2.com/
+  /var/www/shop.example.net/
+```
+
+If the agent only has one global `app` and `service`, the Hub cannot cleanly separate findings for each site. Aegrail must keep host identity and site context separate.
+
+## Target Command
+
+The long-term command should be:
+
+```powershell
+aegrail agent run --config /etc/aegrail/agent.yaml
+```
+
+For local development:
+
+```powershell
+cd app
+go run ./cmd/aegrail agent run --config configs/agent.multi-site.yaml.example
+```
+
+The current implementation still uses `aegrail agent install` plus `aegrail agent start` flags. The multi-site config parser and runner are planned work.
+
+## Configuration Shape
+
+The config has three layers:
+
+- `hub`: where evidence goes and how the agent authenticates.
+- `identity`: host-level identity shared by every event from this agent.
+- `sites`: per-site collection rules, labels, database DSNs, crawl URLs, and state.
+
+Secrets should be referenced by environment variable name or file path, not embedded as plaintext.
+
+## Example
+
+See [`app/configs/agent.multi-site.yaml.example`](../../app/configs/agent.multi-site.yaml.example).
+
+Reduced example:
+
+```yaml
+schema: aegrail.agent.server_config.v1
+
+hub:
+  url: http://127.0.0.1:8787
+  ingest_secret_env: AEGRAIL_HUB_INGEST_SECRET
+
+identity:
+  org: acme
+  project: hosted-sites
+  environment: production
+  host: web-01
+  agent_id: agt_web_01
+  region: eu-central
+
+runtime:
+  queue_dir: /var/lib/aegrail/queue
+  state_dir: /var/lib/aegrail/state
+  interval: 30s
+
+sites:
+  - slug: example-com
+    domain: example.com
+    app: example-com
+    service: frontend
+    kind: wordpress
+    root: /var/www/example.com
+    files:
+      profiles: [wordpress]
+    logs:
+      - path: /var/log/nginx/example.com.access.log
+        kind: nginx_access
+    databases:
+      - name: wordpress
+        engine: mysql
+        dsn_env: AEGRAIL_DB_EXAMPLE_COM_DSN
+        profile: wordpress
+    browser_crawl:
+      enabled: true
+      rendered: true
+      wait_tag_manager: true
+      urls:
+        - https://example.com/
+```
+
+## Site Context Rules
+
+Each event emitted for a configured site should carry:
+
+- `org`
+- `project`
+- `environment`
+- `app`
+- `service`
+- `host`
+- `agent_id`
+- `region`
+- `labels`
+
+Host-level values come from `identity`. Site-level values override only `app`, `service`, and labels. This lets one server produce clean Hub timelines for many sites.
+
+Example event context:
+
+```json
+{
+  "org": "acme",
+  "project": "hosted-sites",
+  "environment": "production",
+  "app": "example-com",
+  "service": "frontend",
+  "host": "web-01",
+  "agent_id": "agt_web_01",
+  "type": "file.created",
+  "target": "/var/www/example.com/wp-content/uploads/avatar.php",
+  "severity": "high"
+}
+```
+
+## State Layout
+
+One global file baseline will not work for multiple sites. Each site needs isolated state.
+
+Target layout:
+
+```text
+/var/lib/aegrail/state/
+  sites/
+    example-com/
+      file-watch.json
+      log-tail.json
+      browser-crawl.json
+      db-snapshot.json
+    example2-com/
+      file-watch.json
+      log-tail.json
+      browser-crawl.json
+      db-snapshot.json
+```
+
+This prevents a scan of `example2.com` from overwriting the baseline for `example.com`.
+
+## Files
+
+Each site can use a built-in profile and optional additional paths:
+
+```yaml
+files:
+  profiles: [wordpress]
+  extra_paths:
+    - /var/www/example.com/mu-plugins
+  exclude:
+    - /var/www/example.com/wp-content/cache
+```
+
+Initial profiles:
+
+- `wordpress`
+- `prestashop`
+
+Future profiles:
+
+- `mautic`
+- `yii2`
+- `laravel`
+- `generic-php`
+
+## Logs
+
+Logs are attached to the site they belong to:
+
+```yaml
+logs:
+  - path: /var/log/nginx/example.com.access.log
+    kind: nginx_access
+  - path: /var/www/example.com/wp-content/debug.log
+    kind: php_error
+```
+
+Directory paths should be allowed when a host rotates logs into per-site directories.
+
+## Databases
+
+Database access is per site and should be read-only when possible.
+
+```yaml
+databases:
+  - name: wordpress
+    engine: mysql
+    dsn_env: AEGRAIL_DB_EXAMPLE_COM_DSN
+    profile: wordpress
+    schedule: 15m
+```
+
+Minimum WordPress database checks:
+
+- users and administrator roles
+- usermeta capabilities
+- options
+- active plugins and themes
+- cron tasks
+- suspicious script-bearing posts, pages, widgets, and builder content
+
+Minimum PrestaShop database checks:
+
+- employees and SuperAdmin status
+- sessions and recent logins
+- configuration values
+- modules
+- tabs, hooks, and access rules
+
+## Browser Crawling
+
+Browser crawler settings belong per site:
+
+```yaml
+browser_crawl:
+  enabled: true
+  rendered: true
+  wait_tag_manager: true
+  max_pages: 8
+  urls:
+    - https://example.com/
+    - https://example.com/contact/
+```
+
+Rendered crawling should use bounded waits, not unbounded browser sessions. Aegrail should wait for tag-manager-loaded scripts when configured, then settle for a short maximum duration.
+
+## WordPress Multisite
+
+WordPress Multisite should be represented as one `site` with optional logical network sites:
+
+```yaml
+sites:
+  - slug: network-main
+    domain: example.com
+    kind: wordpress-multisite
+    root: /var/www/example.com
+    wordpress:
+      multisite: true
+      network_sites:
+        - blog_id: 1
+          domain: example.com
+        - blog_id: 2
+          domain: shop.example.com
+```
+
+The Hub should group the network as one app while still allowing findings to reference a specific `blog_id` or domain.
+
+## Validation Rules
+
+The planned `agent config validate` command should check:
+
+- required `hub`, `identity`, and `sites` fields
+- unique site slugs
+- absolute local paths for roots, logs, queue, and state
+- valid URL values for Hub and browser crawl seeds
+- known site kinds and profiles
+- no literal database passwords in committed example configs
+- DSN environment variables exist when validation is run on a live server
+- no duplicate path ownership between unrelated site configs unless explicitly allowed
+
+## Hub Inventory Sync
+
+The agent should optionally report its config coverage to the Hub:
+
+```text
+web-01
+  agent agt_web_01
+    monitors example-com
+      files: wordpress profile
+      logs: nginx access, PHP debug
+      db: wordpress
+      browser: rendered crawl
+    monitors example2-com
+      files: prestashop profile
+      logs: nginx access, PHP error
+      db: prestashop
+```
+
+The dashboard can then show which sites are covered, partially covered, or not covered.
+
+## First Implementation Steps
+
+1. Add a config loader for `aegrail.agent.server_config.v1`.
+2. Add per-site app/service/label overrides to queued events.
+3. Add per-site file and log state paths.
+4. Add `aegrail agent config validate`.
+5. Add `aegrail agent run --config ... --once`.
+6. Extend `agent run` to continuously scan every configured site and replay queued batches.
