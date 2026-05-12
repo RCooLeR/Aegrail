@@ -183,6 +183,10 @@ func wordpressDatabaseEntityRule(event domain.TimelineEvent, entityType string, 
 		}
 	case "wordpress_option":
 		return wordpressOptionEntityRule(event, current, previous)
+	case "wordpress_cron":
+		return wordpressCronEntityRule(event, current, previous)
+	case "wordpress_content_script":
+		return wordpressContentScriptEntityRule(event, current, previous)
 	}
 	return databaseSnapshotRule{
 		RuleID:     "wordpress-database-entity-changed",
@@ -247,6 +251,69 @@ func wordpressOptionEntityRule(event domain.TimelineEvent, current map[string]an
 			Title:      "WordPress tracked option changed",
 			Severity:   maxSeverity(event.Severity, domain.SeverityMedium),
 			Confidence: domain.ConfidenceMedium,
+		}
+	}
+}
+
+func wordpressCronEntityRule(event domain.TimelineEvent, current map[string]any, previous map[string]any) databaseSnapshotRule {
+	currentSuspicious := payloadBool(current, "suspicious")
+	previousSuspicious := payloadBool(previous, "suspicious")
+	switch {
+	case event.EventType == "db.entity.added" && currentSuspicious:
+		return databaseSnapshotRule{
+			RuleID:     "wordpress-suspicious-cron-task-added",
+			Title:      "Suspicious WordPress cron task added",
+			Severity:   domain.SeverityHigh,
+			Confidence: domain.ConfidenceHigh,
+		}
+	case event.EventType == "db.entity.changed" && currentSuspicious && !previousSuspicious:
+		return databaseSnapshotRule{
+			RuleID:     "wordpress-cron-task-became-suspicious",
+			Title:      "WordPress cron task became suspicious",
+			Severity:   domain.SeverityHigh,
+			Confidence: domain.ConfidenceHigh,
+		}
+	case event.EventType == "db.entity.added":
+		return databaseSnapshotRule{
+			RuleID:     "wordpress-cron-task-added",
+			Title:      "WordPress cron task added",
+			Severity:   domain.SeverityMedium,
+			Confidence: domain.ConfidenceHigh,
+		}
+	default:
+		return databaseSnapshotRule{
+			RuleID:     "wordpress-cron-task-changed",
+			Title:      "WordPress cron task changed",
+			Severity:   domain.SeverityMedium,
+			Confidence: domain.ConfidenceMedium,
+		}
+	}
+}
+
+func wordpressContentScriptEntityRule(event domain.TimelineEvent, current map[string]any, previous map[string]any) databaseSnapshotRule {
+	currentDomains := payloadInt(current, "external_domains_count")
+	previousDomains := payloadInt(previous, "external_domains_count")
+	switch {
+	case event.EventType == "db.entity.added" && currentDomains > 0:
+		return databaseSnapshotRule{
+			RuleID:     "wordpress-script-content-added",
+			Title:      "WordPress script-bearing content added",
+			Severity:   domain.SeverityMedium,
+			Confidence: domain.ConfidenceHigh,
+		}
+	case event.EventType == "db.entity.changed" && currentDomains > previousDomains:
+		return databaseSnapshotRule{
+			RuleID:     "wordpress-script-content-domain-added",
+			Title:      "WordPress content gained an external script domain",
+			Severity:   domain.SeverityHigh,
+			Confidence: domain.ConfidenceHigh,
+		}
+	default:
+		return databaseSnapshotRule{
+			RuleID:     "wordpress-script-content-changed",
+			Title:      "WordPress script-bearing content changed",
+			Severity:   domain.SeverityMedium,
+			Confidence: domain.ConfidenceHigh,
 		}
 	}
 }

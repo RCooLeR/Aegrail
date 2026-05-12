@@ -76,12 +76,15 @@ Last updated: 2026-05-12
 - [x] Snapshot redacted WordPress usermeta capabilities.
 - [x] Snapshot tracked WordPress options as redacted entities.
 - [x] Snapshot WordPress active plugins and themes as entities.
-- [~] Snapshot WordPress cron tasks.
+- [x] Snapshot WordPress cron tasks.
+- [x] Snapshot WordPress script-bearing posts, widgets, and builder content.
 - [x] Emit redacted WordPress DB snapshot diff events.
 - [x] Detect new WordPress administrators.
 - [x] Detect changed WordPress capabilities.
 - [x] Detect suspicious tracked WordPress option changes.
 - [x] Detect new or changed WordPress plugins/themes.
+- [x] Detect suspicious WordPress cron task changes.
+- [x] Detect script-bearing WordPress content changes.
 - [~] Add PrestaShop DB snapshot importer or collector.
 - [x] Snapshot redacted PrestaShop employees.
 - [x] Snapshot PrestaShop modules.

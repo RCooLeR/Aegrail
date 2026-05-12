@@ -85,6 +85,13 @@ Current deterministic DB diff finding rules:
 - `wordpress-identity-option-changed`
 - `wordpress-user-roles-option-changed`
 - `wordpress-option-entity-changed`
+- `wordpress-suspicious-cron-task-added`
+- `wordpress-cron-task-became-suspicious`
+- `wordpress-cron-task-added`
+- `wordpress-cron-task-changed`
+- `wordpress-script-content-added`
+- `wordpress-script-content-domain-added`
+- `wordpress-script-content-changed`
 - `wordpress-admin-users-changed`
 - `wordpress-users-changed`
 - `wordpress-active-plugins-changed`

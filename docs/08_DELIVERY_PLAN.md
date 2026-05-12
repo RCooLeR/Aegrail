@@ -27,6 +27,7 @@ Aegrail already has:
 - deterministic Hub findings for first-wave WordPress and PrestaShop DB diff and entity events
 - Hub read APIs for findings and timelines
 - WordPress option, active plugin, active theme, and Multisite network option entity snapshots
+- WordPress cron and script-bearing content entity snapshots
 - Agent config coverage events and Hub coverage read API
 - Hub inventory read APIs for apps, services, hosts, agents, and topology
 - Hub deployment and browser script observation read APIs
@@ -115,7 +116,7 @@ Deliverables:
 Exit criteria:
 
 - initial WordPress and PrestaShop DB checks emit counts, redacted digests, entity fingerprints, local diff events, and Hub findings
-- WordPress admin/user capability, tracked option, active plugin, and active theme entity changes plus cron/user/option count changes produce deterministic findings
+- WordPress admin/user capability, tracked option, cron hook, script-bearing content, active plugin, and active theme entity changes plus cron/user/option count changes produce deterministic findings
 - PrestaShop employee/module entity changes plus configuration, access, hook, and tab count changes produce deterministic findings
 - fixtures cover clean and suspicious cases
 

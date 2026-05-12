@@ -106,3 +106,46 @@ func TestWordPressOptionEntitiesIncludeDerivedPluginAndTheme(t *testing.T) {
 		t.Fatalf("theme entity = %#v, want active theme identity", themeEntities[1])
 	}
 }
+
+func TestWordPressOptionEntitiesIncludeCronHooks(t *testing.T) {
+	cron := `a:1:{i:1715540000;a:2:{s:16:"wp_version_check";a:1:{s:32:"0123456789abcdef0123456789abcdef";a:3:{s:8:"schedule";s:10:"twicedaily";s:4:"args";a:0:{}s:8:"interval";i:43200;}}s:15:"evil_shell_exec";a:1:{s:32:"abcdefabcdefabcdefabcdefabcdefab";a:3:{s:8:"schedule";s:6:"hourly";s:4:"args";a:0:{}s:8:"interval";i:3600;}}}}`
+	entities := wordpressEntitiesFromOption("site", "cron", cron)
+	var hooks []DatabaseEntityObservation
+	for _, entity := range entities {
+		if entity.Type == "wordpress_cron" {
+			hooks = append(hooks, entity)
+		}
+	}
+	if len(hooks) != 2 {
+		t.Fatalf("hooks = %#v, want two cron hook entities", hooks)
+	}
+	if hooks[0].Label != "evil_shell_exec" || !hooks[0].Privileged || hooks[0].Attributes["suspicious"] != true {
+		t.Fatalf("first hook = %#v, want suspicious evil_shell_exec", hooks[0])
+	}
+	if hooks[1].Label != "wp_version_check" || hooks[1].Privileged {
+		t.Fatalf("second hook = %#v, want normal wp_version_check", hooks[1])
+	}
+}
+
+func TestWordPressScriptContentEntityRedactsContentAndExtractsIndicators(t *testing.T) {
+	entity := wordpressScriptContentEntity("post_content", "42", "post:page:hash", `<p>Hello</p><script src="https://evil.example/skimmer.js"></script><img src=x onerror="eval(atob('x'))">`, map[string]any{
+		"post_type": "page",
+	})
+	if entity.Type != "wordpress_content_script" || entity.Label != "post:page:hash" {
+		t.Fatalf("entity = %#v, want script content entity", entity)
+	}
+	if _, ok := entity.Attributes["content"]; ok {
+		t.Fatalf("entity leaked raw content: %#v", entity.Attributes)
+	}
+	if entity.Attributes["content_sha256"] == "" || entity.Attributes["post_type"] != "page" {
+		t.Fatalf("attributes = %#v, want redacted content metadata", entity.Attributes)
+	}
+	domains, ok := entity.Attributes["external_domains"].([]string)
+	if !ok || len(domains) != 1 || domains[0] != "evil.example" {
+		t.Fatalf("domains = %#v, want evil.example", entity.Attributes["external_domains"])
+	}
+	indicators, ok := entity.Attributes["indicators"].([]string)
+	if !ok || len(indicators) < 3 {
+		t.Fatalf("indicators = %#v, want multiple script indicators", entity.Attributes["indicators"])
+	}
+}

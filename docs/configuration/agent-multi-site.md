@@ -241,10 +241,11 @@ Current implementation:
 - If `dsn_env` is missing at runtime, the agent queues `db.coverage.warning` instead of failing the whole scan.
 - Events are emitted under `source=agent.database` and `service=database`.
 - Sensitive DB values are not queued raw. Aegrail records counts, value byte lengths, and SHA-256 digests for selected option/config values.
-- Aegrail also records redacted entity fingerprints for WordPress users/capabilities/options/plugins/themes and PrestaShop employees/modules.
+- Aegrail also records redacted entity fingerprints for WordPress users/capabilities/options/cron hooks/plugins/themes/script-bearing content and PrestaShop employees/modules.
 - User and employee emails/logins are hashed; PrestaShop module names, WordPress plugin basenames, and theme slugs may be retained because they are operational security evidence.
 - WordPress `active_plugins` and `active_sitewide_plugins` are parsed into individual active plugin entities. `stylesheet` and `template` become active theme entities.
 - WordPress Multisite network options are collected from `<prefix>sitemeta` when the table exists.
+- WordPress cron hooks and script-bearing posts, widgets, and selected page-builder metadata become redacted entities for baseline diffing.
 - The first successful snapshot creates a per-site, per-database JSON baseline in `runtime.state_dir`.
 - Later snapshots compare against that state and emit `db.snapshot.check_changed`, `db.entity.added`, `db.entity.changed`, or `db.entity.removed` events when counts, digests, or redacted entities change.
 - Failed or warning-only snapshots do not overwrite the previous good DB state.
@@ -273,8 +274,10 @@ Implemented WordPress entity events:
 
 - `wordpress_user`
 - `wordpress_option`
+- `wordpress_cron`
 - `wordpress_plugin`
 - `wordpress_theme`
+- `wordpress_content_script`
 
 Minimum PrestaShop database checks:
 
@@ -403,5 +406,5 @@ Done:
 
 Next:
 
-1. Add exact cron, post, widget, builder-content, and PrestaShop configuration parsers.
+1. Add PrestaShop configuration entities and suspicious configuration findings.
 2. Add finding lifecycle actions for dashboard triage.

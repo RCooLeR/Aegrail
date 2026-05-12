@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -71,6 +72,8 @@ const (
 	databaseCheckCount  = "count"
 	databaseCheckDigest = "digest"
 )
+
+var wordpressScriptDomainPattern = regexp.MustCompile(`(?i)(?:https?:)?//([a-z0-9][a-z0-9.-]*[a-z0-9])(?::[0-9]+)?`)
 
 func (r *Runtime) CollectDatabaseSnapshot(ctx context.Context, input DatabaseCollectInput) (DatabaseCollectResult, error) {
 	startedAt := time.Now().UTC()
@@ -205,6 +208,10 @@ func collectWordPressDatabaseEntities(ctx context.Context, db *sql.DB, tablePref
 	networkEntities, networkWarnings := collectWordPressNetworkOptionEntities(ctx, db, prefix)
 	entities = append(entities, networkEntities...)
 	warnings = append(warnings, networkWarnings...)
+
+	contentEntities, contentWarnings := collectWordPressContentScriptEntities(ctx, db, prefix)
+	entities = append(entities, contentEntities...)
+	warnings = append(warnings, contentWarnings...)
 
 	sortDatabaseEntities(entities)
 	return entities, warnings
@@ -367,6 +374,10 @@ func wordpressEntitiesFromOption(scope string, name string, value string) []Data
 		if theme := strings.TrimSpace(value); theme != "" {
 			entities = append(entities, wordpressThemeEntity(scope, name, theme))
 		}
+	case "cron":
+		for _, hook := range parseWordPressCronHooks(value) {
+			entities = append(entities, wordpressCronEntity(scope, name, hook))
+		}
 	}
 	return entities
 }
@@ -432,6 +443,27 @@ func wordpressThemeEntity(scope string, sourceOption string, theme string) Datab
 	return entity
 }
 
+func wordpressCronEntity(scope string, sourceOption string, hook string) DatabaseEntityObservation {
+	hook = normalizeWordPressCronHook(hook)
+	suspicious, reasons := classifyWordPressCronHook(hook)
+	entity := DatabaseEntityObservation{
+		Type:       "wordpress_cron",
+		Key:        databaseEntityKey("wordpress_cron", scope+"\x00"+hook),
+		Label:      hook,
+		Privileged: suspicious,
+		Attributes: map[string]any{
+			"scope":             scope,
+			"source_option":     sourceOption,
+			"hook_name":         hook,
+			"hook_name_sha256":  databaseSHA256Hex(hook),
+			"suspicious":        suspicious,
+			"suspicious_reason": reasons,
+		},
+	}
+	entity.Signature = databaseEntitySignature(entity)
+	return entity
+}
+
 func parseWordPressActivePlugins(value string) []string {
 	plugins, ok := parsePHPSerializedStrings(value)
 	if !ok {
@@ -449,6 +481,86 @@ func parseWordPressActivePlugins(value string) []string {
 	}
 	sort.Strings(normalized)
 	return normalized
+}
+
+func parseWordPressCronHooks(value string) []string {
+	values, ok := parsePHPSerializedStrings(value)
+	if !ok {
+		values = splitWordPressOptionList(value)
+	}
+	seen := map[string]bool{}
+	hooks := make([]string, 0, len(values))
+	for _, value := range values {
+		hook := normalizeWordPressCronHook(value)
+		if hook == "" || isWordPressCronMetadataString(hook) || seen[hook] {
+			continue
+		}
+		seen[hook] = true
+		hooks = append(hooks, hook)
+	}
+	sort.Strings(hooks)
+	return hooks
+}
+
+func normalizeWordPressCronHook(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > 120 {
+		return ""
+	}
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' || r == '.' || r == ':' {
+			continue
+		}
+		return ""
+	}
+	return value
+}
+
+func isWordPressCronMetadataString(value string) bool {
+	lower := strings.ToLower(strings.TrimSpace(value))
+	switch lower {
+	case "schedule", "args", "interval", "timestamp", "hook", "hourly", "twicedaily", "daily", "weekly", "monthly":
+		return true
+	}
+	if len(lower) >= 16 && isLowerHexString(lower) {
+		return true
+	}
+	return false
+}
+
+func classifyWordPressCronHook(hook string) (bool, []string) {
+	lower := strings.ToLower(strings.TrimSpace(hook))
+	checks := map[string]string{
+		"assert":         "assert reference",
+		"backdoor":       "backdoor wording",
+		"base64":         "base64 wording",
+		"cmd":            "command wording",
+		"eval":           "eval reference",
+		"exec":           "exec reference",
+		"malware":        "malware wording",
+		"passthru":       "passthru reference",
+		"shell":          "shell wording",
+		"system":         "system reference",
+		"wp_ajax_nopriv": "unauthenticated ajax wording",
+	}
+	var reasons []string
+	for needle, reason := range checks {
+		if strings.Contains(lower, needle) {
+			reasons = append(reasons, reason)
+		}
+	}
+	sort.Strings(reasons)
+	return len(reasons) > 0, reasons
+}
+
+func isLowerHexString(value string) bool {
+	for _, r := range value {
+		if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func parsePHPSerializedStrings(value string) ([]string, bool) {
@@ -537,6 +649,240 @@ func isWordPressSensitiveOption(name string) bool {
 	default:
 		return strings.HasSuffix(name, "user_roles")
 	}
+}
+
+func collectWordPressContentScriptEntities(ctx context.Context, db *sql.DB, prefix string) ([]DatabaseEntityObservation, []string) {
+	var entities []DatabaseEntityObservation
+	var warnings []string
+
+	postEntities, postWarnings := collectWordPressPostContentScriptEntities(ctx, db, prefix)
+	entities = append(entities, postEntities...)
+	warnings = append(warnings, postWarnings...)
+
+	metaEntities, metaWarnings := collectWordPressPostMetaScriptEntities(ctx, db, prefix)
+	entities = append(entities, metaEntities...)
+	warnings = append(warnings, metaWarnings...)
+
+	widgetEntities, widgetWarnings := collectWordPressWidgetScriptEntities(ctx, db, prefix)
+	entities = append(entities, widgetEntities...)
+	warnings = append(warnings, widgetWarnings...)
+
+	return entities, warnings
+}
+
+func collectWordPressPostContentScriptEntities(ctx context.Context, db *sql.DB, prefix string) ([]DatabaseEntityObservation, []string) {
+	table := prefix + "posts"
+	exists, err := databaseTableExists(ctx, db, table)
+	if err != nil {
+		return nil, []string{fmt.Sprintf("wordpress post content table check failed: %v", err)}
+	}
+	if !exists {
+		return nil, nil
+	}
+
+	where, args := wordpressScriptContentWhere("post_content")
+	query := "SELECT ID, COALESCE(post_type, ''), COALESCE(post_status, ''), COALESCE(post_content, '') FROM " + quoteDatabaseIdentifier(table) +
+		" WHERE (" + where + ") AND COALESCE(post_status, '') NOT IN ('trash', 'auto-draft') ORDER BY ID LIMIT 1000"
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, []string{fmt.Sprintf("wordpress post content entity query failed: %v", err)}
+	}
+	defer rows.Close()
+
+	var entities []DatabaseEntityObservation
+	for rows.Next() {
+		var id int64
+		var postType string
+		var postStatus string
+		var content string
+		if err := rows.Scan(&id, &postType, &postStatus, &content); err != nil {
+			return entities, []string{fmt.Sprintf("wordpress post content entity scan failed: %v", err)}
+		}
+		idText := strconv.FormatInt(id, 10)
+		entities = append(entities, wordpressScriptContentEntity("post_content", idText, "post:"+strings.TrimSpace(postType)+":"+databaseSHA256Short(idText), content, map[string]any{
+			"post_id_hash": databaseSHA256Hex(idText),
+			"post_type":    strings.TrimSpace(postType),
+			"post_status":  strings.TrimSpace(postStatus),
+		}))
+	}
+	if err := rows.Err(); err != nil {
+		return entities, []string{fmt.Sprintf("wordpress post content entity rows failed: %v", err)}
+	}
+	return entities, nil
+}
+
+func collectWordPressPostMetaScriptEntities(ctx context.Context, db *sql.DB, prefix string) ([]DatabaseEntityObservation, []string) {
+	table := prefix + "postmeta"
+	exists, err := databaseTableExists(ctx, db, table)
+	if err != nil {
+		return nil, []string{fmt.Sprintf("wordpress builder content table check failed: %v", err)}
+	}
+	if !exists {
+		return nil, nil
+	}
+
+	keys := wordpressTrackedBuilderMetaKeys()
+	where, args := wordpressScriptContentWhere("meta_value")
+	queryArgs := append(stringArgs(keys), args...)
+	query := "SELECT meta_id, post_id, meta_key, COALESCE(meta_value, '') FROM " + quoteDatabaseIdentifier(table) +
+		" WHERE meta_key IN (" + databasePlaceholders(len(keys)) + ") AND (" + where + ") ORDER BY meta_id LIMIT 1000"
+	rows, err := db.QueryContext(ctx, query, queryArgs...)
+	if err != nil {
+		return nil, []string{fmt.Sprintf("wordpress builder content entity query failed: %v", err)}
+	}
+	defer rows.Close()
+
+	var entities []DatabaseEntityObservation
+	for rows.Next() {
+		var metaID int64
+		var postID int64
+		var metaKey string
+		var value string
+		if err := rows.Scan(&metaID, &postID, &metaKey, &value); err != nil {
+			return entities, []string{fmt.Sprintf("wordpress builder content entity scan failed: %v", err)}
+		}
+		metaIDText := strconv.FormatInt(metaID, 10)
+		postIDText := strconv.FormatInt(postID, 10)
+		metaKey = strings.TrimSpace(metaKey)
+		entities = append(entities, wordpressScriptContentEntity("postmeta:"+metaKey, metaIDText, "postmeta:"+metaKey+":"+databaseSHA256Short(metaIDText), value, map[string]any{
+			"meta_id_hash": databaseSHA256Hex(metaIDText),
+			"post_id_hash": databaseSHA256Hex(postIDText),
+			"meta_key":     metaKey,
+			"builder_data": true,
+		}))
+	}
+	if err := rows.Err(); err != nil {
+		return entities, []string{fmt.Sprintf("wordpress builder content entity rows failed: %v", err)}
+	}
+	return entities, nil
+}
+
+func collectWordPressWidgetScriptEntities(ctx context.Context, db *sql.DB, prefix string) ([]DatabaseEntityObservation, []string) {
+	table := prefix + "options"
+	where, args := wordpressScriptContentWhere("option_value")
+	queryArgs := append([]any{"widget_%"}, args...)
+	query := "SELECT option_name, COALESCE(option_value, '') FROM " + quoteDatabaseIdentifier(table) +
+		" WHERE option_name LIKE ? AND (" + where + ") ORDER BY option_name LIMIT 1000"
+	rows, err := db.QueryContext(ctx, query, queryArgs...)
+	if err != nil {
+		return nil, []string{fmt.Sprintf("wordpress widget content entity query failed: %v", err)}
+	}
+	defer rows.Close()
+
+	var entities []DatabaseEntityObservation
+	for rows.Next() {
+		var optionName string
+		var value string
+		if err := rows.Scan(&optionName, &value); err != nil {
+			return entities, []string{fmt.Sprintf("wordpress widget content entity scan failed: %v", err)}
+		}
+		optionName = strings.TrimSpace(optionName)
+		entities = append(entities, wordpressScriptContentEntity("widget_option", optionName, "widget:"+optionName, value, map[string]any{
+			"option_name":    optionName,
+			"widget_content": true,
+		}))
+	}
+	if err := rows.Err(); err != nil {
+		return entities, []string{fmt.Sprintf("wordpress widget content entity rows failed: %v", err)}
+	}
+	return entities, nil
+}
+
+func wordpressScriptContentWhere(column string) (string, []any) {
+	column = strings.TrimSpace(column)
+	patterns := []string{"%<script%", "%<iframe%", "%javascript:%", "%onerror=%", "%onload=%", "%document.write%", "%eval(%", "%atob(%"}
+	parts := make([]string, 0, len(patterns))
+	args := make([]any, 0, len(patterns))
+	for _, pattern := range patterns {
+		parts = append(parts, column+" LIKE ?")
+		args = append(args, pattern)
+	}
+	return strings.Join(parts, " OR "), args
+}
+
+func wordpressTrackedBuilderMetaKeys() []string {
+	return []string{
+		"_elementor_data",
+		"_elementor_css",
+		"_et_pb_custom_css",
+		"_fl_builder_data",
+		"_oxygen_builder_shortcodes",
+		"_wpb_shortcodes_custom_css",
+	}
+}
+
+func wordpressScriptContentEntity(source string, identifier string, label string, content string, extra map[string]any) DatabaseEntityObservation {
+	indicators := wordpressScriptContentIndicators(content)
+	domains := wordpressScriptContentDomains(content)
+	source = strings.TrimSpace(source)
+	identifier = strings.TrimSpace(identifier)
+	label = strings.TrimSpace(label)
+	attributes := map[string]any{
+		"source":                 source,
+		"content_sha256":         databaseSHA256Hex(content),
+		"content_bytes":          len([]byte(content)),
+		"indicators":             indicators,
+		"indicator_count":        len(indicators),
+		"external_domains":       domains,
+		"external_domains_count": len(domains),
+		"suspicious":             len(indicators) > 0,
+	}
+	for key, value := range extra {
+		key = strings.TrimSpace(key)
+		if key != "" {
+			attributes[key] = value
+		}
+	}
+	entity := DatabaseEntityObservation{
+		Type:       "wordpress_content_script",
+		Key:        databaseEntityKey("wordpress_content_script", source+"\x00"+identifier),
+		Label:      label,
+		Privileged: false,
+		Attributes: attributes,
+	}
+	entity.Signature = databaseEntitySignature(entity)
+	return entity
+}
+
+func wordpressScriptContentIndicators(content string) []string {
+	lower := strings.ToLower(content)
+	checks := map[string]string{
+		"<iframe":        "iframe",
+		"<script":        "script_tag",
+		"atob(":          "atob_decode",
+		"document.write": "document_write",
+		"eval(":          "eval_call",
+		"javascript:":    "javascript_url",
+		"onerror=":       "inline_error_handler",
+		"onload=":        "inline_load_handler",
+	}
+	var indicators []string
+	for needle, indicator := range checks {
+		if strings.Contains(lower, needle) {
+			indicators = append(indicators, indicator)
+		}
+	}
+	sort.Strings(indicators)
+	return indicators
+}
+
+func wordpressScriptContentDomains(content string) []string {
+	matches := wordpressScriptDomainPattern.FindAllStringSubmatch(content, -1)
+	seen := map[string]bool{}
+	domains := make([]string, 0, len(matches))
+	for _, match := range matches {
+		if len(match) < 2 {
+			continue
+		}
+		domain := strings.ToLower(strings.Trim(strings.TrimSpace(match[1]), "."))
+		if domain == "" || seen[domain] {
+			continue
+		}
+		seen[domain] = true
+		domains = append(domains, domain)
+	}
+	sort.Strings(domains)
+	return domains
 }
 
 func collectPrestaShopDatabaseEntities(ctx context.Context, db *sql.DB, tablePrefix string) ([]DatabaseEntityObservation, []string) {

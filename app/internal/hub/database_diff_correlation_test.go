@@ -224,6 +224,86 @@ func TestCorrelateEventsBuildsWordPressPluginAndOptionEntityChains(t *testing.T)
 	}
 }
 
+func TestCorrelateEventsBuildsWordPressCronAndScriptContentEntityChains(t *testing.T) {
+	now := time.Date(2026, 5, 12, 12, 50, 0, 0, time.UTC)
+	chains := correlateTimelineEvents([]domain.TimelineEvent{
+		{
+			ID:        "evt-wp-cron",
+			EventTime: now,
+			EventType: "db.entity.added",
+			Target:    "wordpress:wordpress_cron:evil_shell_exec",
+			Severity:  domain.SeverityHigh,
+			HostSlug:  "web-01",
+			Labels: map[string]string{
+				"db_profile":     "wordpress",
+				"db_entity_type": "wordpress_cron",
+			},
+			Payload: map[string]any{
+				"profile":     "wordpress",
+				"entity_type": "wordpress_cron",
+				"entity_key":  "wordpress_cron:abc",
+				"current": map[string]any{
+					"type":      "wordpress_cron",
+					"key":       "wordpress_cron:abc",
+					"label":     "evil_shell_exec",
+					"signature": "sig-cron",
+					"attributes": map[string]any{
+						"hook_name":  "evil_shell_exec",
+						"suspicious": true,
+					},
+				},
+			},
+		},
+		{
+			ID:        "evt-wp-content",
+			EventTime: now.Add(time.Minute),
+			EventType: "db.entity.changed",
+			Target:    "wordpress:wordpress_content_script:post:page:abc",
+			Severity:  domain.SeverityMedium,
+			HostSlug:  "web-01",
+			Labels: map[string]string{
+				"db_profile":     "wordpress",
+				"db_entity_type": "wordpress_content_script",
+			},
+			Payload: map[string]any{
+				"profile":     "wordpress",
+				"entity_type": "wordpress_content_script",
+				"entity_key":  "wordpress_content_script:def",
+				"previous": map[string]any{
+					"type":      "wordpress_content_script",
+					"key":       "wordpress_content_script:def",
+					"signature": "sig-content-old",
+					"attributes": map[string]any{
+						"external_domains_count": 0,
+					},
+				},
+				"current": map[string]any{
+					"type":      "wordpress_content_script",
+					"key":       "wordpress_content_script:def",
+					"signature": "sig-content-new",
+					"attributes": map[string]any{
+						"external_domains_count": 1,
+						"indicator_count":        2,
+					},
+				},
+			},
+		},
+	}, 30*time.Minute)
+	if len(chains) != 2 {
+		t.Fatalf("chains = %#v, want cron and script content chains", chains)
+	}
+	byRule := map[string]CorrelationChain{}
+	for _, chain := range chains {
+		byRule[chain.RuleID] = chain
+	}
+	if byRule["wordpress-suspicious-cron-task-added"].Severity != domain.SeverityHigh {
+		t.Fatalf("cron chain = %#v, want high severity suspicious cron", byRule["wordpress-suspicious-cron-task-added"])
+	}
+	if byRule["wordpress-script-content-domain-added"].Severity != domain.SeverityHigh {
+		t.Fatalf("content chain = %#v, want high severity domain addition", byRule["wordpress-script-content-domain-added"])
+	}
+}
+
 func TestCorrelateEventsBuildsPrestaShopDatabaseDiffChain(t *testing.T) {
 	now := time.Date(2026, 5, 12, 13, 0, 0, 0, time.UTC)
 	chains := correlateTimelineEvents([]domain.TimelineEvent{
