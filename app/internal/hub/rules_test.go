@@ -23,6 +23,7 @@ func TestDefaultRuleRegistryIncludesCurrentRuleMetadata(t *testing.T) {
 		"wordpress-admin-user-added",
 		"prestashop-payment-configuration-changed",
 		"browser-script-domain-new",
+		"file-php-in-writable-path",
 	} {
 		if _, ok := seen[id]; !ok {
 			t.Fatalf("rule %q was not registered", id)
@@ -47,6 +48,11 @@ func TestRuleMetadataAddsVersionAndActionHints(t *testing.T) {
 	}
 	if !ruleHasActionHint("wordpress-admin-user-added", RuleActionInspectDeployment) {
 		t.Fatal("wordpress admin rule missing inspect_deployment action hint")
+	}
+	metadata = ruleMetadata("file-php-in-writable-path", nil)
+	rule, ok = metadata["rule"].(map[string]any)
+	if !ok || rule["category"] != string(RuleCategoryFilePath) {
+		t.Fatalf("file rule metadata = %#v, want file_path category", metadata)
 	}
 	if ruleHasActionHint("wordpress-admin-user-added", RuleActionAllowBrowserScript) {
 		t.Fatal("wordpress admin rule should not support browser script allowlist action")

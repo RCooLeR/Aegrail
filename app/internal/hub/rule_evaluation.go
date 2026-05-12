@@ -121,6 +121,22 @@ func builtInRuleEvaluationCases() []ruleEvaluationCase {
 		},
 		{
 			fixture: RuleEvaluationFixture{
+				ID:          "generic-suspicious-file-paths",
+				Name:        "Generic Suspicious File Paths",
+				Kind:        "file_path",
+				Description: "Standalone suspicious PHP, sensitive config, extension, and CMS extension paths should produce file path findings.",
+			},
+			expected: []RuleEvaluationExpectedSignal{
+				{ID: "file-php-in-writable-path", Severity: domain.SeverityHigh, Confidence: domain.ConfidenceHigh},
+				{ID: "file-sensitive-config-changed", Severity: domain.SeverityHigh, Confidence: domain.ConfidenceHigh},
+				{ID: "file-suspicious-path-pattern", Severity: domain.SeverityMedium, Confidence: domain.ConfidenceMedium},
+				{ID: "file-plugin-theme-module-changed", Severity: domain.SeverityMedium, Confidence: domain.ConfidenceMedium},
+				{ID: "file-php-changed", Severity: domain.SeverityMedium, Confidence: domain.ConfidenceMedium},
+			},
+			evaluate: evaluateGenericSuspiciousFilePathFixture,
+		},
+		{
+			fixture: RuleEvaluationFixture{
 				ID:          "wordpress-admin-role-change",
 				Name:        "WordPress Admin Role Change",
 				Kind:        "database_snapshot",
@@ -264,6 +280,35 @@ func evaluateCompromisedWordPressFixture(now time.Time) []RuleEvaluationSignal {
 		wordpressUserEntityEvent("evt-wp-admin", now.Add(7*time.Minute), "db.entity.added", true, false),
 	}
 	return correlationEvaluationSignals(events, 30*time.Minute)
+}
+
+func evaluateGenericSuspiciousFilePathFixture(now time.Time) []RuleEvaluationSignal {
+	return correlationEvaluationSignals([]domain.TimelineEvent{
+		evaluationTimelineEvent("evt-file-upload-php", now, "file.created", "wp-content/uploads/avatar.php", domain.SeverityInfo, map[string]any{
+			"relative_path": "wp-content/uploads/avatar.php",
+			"sha256":        "upload-php",
+		}),
+		evaluationTimelineEvent("evt-file-config", now.Add(time.Minute), "file.modified", "wp-config.php", domain.SeverityInfo, map[string]any{
+			"relative_path": "wp-config.php",
+			"sha256":        "config",
+		}),
+		evaluationTimelineEvent("evt-file-pattern", now.Add(2*time.Minute), "file.created", "assets/shell.txt", domain.SeverityInfo, map[string]any{
+			"relative_path": "assets/shell.txt",
+			"sha256":        "shell-name",
+		}),
+		evaluationTimelineEvent("evt-file-plugin", now.Add(3*time.Minute), "file.modified", "wp-content/plugins/shop/plugin.php", domain.SeverityInfo, map[string]any{
+			"relative_path": "wp-content/plugins/shop/plugin.php",
+			"sha256":        "plugin",
+		}),
+		evaluationTimelineEvent("evt-file-php", now.Add(4*time.Minute), "file.modified", "public/index.php", domain.SeverityInfo, map[string]any{
+			"relative_path": "public/index.php",
+			"sha256":        "php",
+		}),
+		evaluationTimelineEvent("evt-file-static", now.Add(5*time.Minute), "file.created", "wp-content/uploads/logo.png", domain.SeverityInfo, map[string]any{
+			"relative_path": "wp-content/uploads/logo.png",
+			"sha256":        "static",
+		}),
+	}, 30*time.Minute)
 }
 
 func evaluateWordPressAdminRoleFixture(now time.Time) []RuleEvaluationSignal {

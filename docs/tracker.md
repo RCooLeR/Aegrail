@@ -105,7 +105,7 @@ Last updated: 2026-05-13
 - [x] Add DB snapshot diff findings from Hub event history.
 - [x] Define rule interface and registry.
 - [x] Define versioned rule metadata.
-- [ ] Add generic suspicious path rules.
+- [x] Add generic suspicious path rules.
 - [ ] Add admin request anomaly rules.
 - [ ] Add traffic spike rules.
 - [ ] Add risk scoring.

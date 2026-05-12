@@ -14,6 +14,7 @@ const (
 	RuleCategoryCorrelation      RuleCategory = "correlation"
 	RuleCategoryDatabaseSnapshot RuleCategory = "database_snapshot"
 	RuleCategoryBrowserScript    RuleCategory = "browser_script"
+	RuleCategoryFilePath         RuleCategory = "file_path"
 	RuleCategoryFileBaseline     RuleCategory = "file_baseline"
 )
 
@@ -190,6 +191,11 @@ func defaultRuleDefinitions() []RuleDefinition {
 		"browser-inline-script-changed",
 		"browser-tag-manager-id-new",
 		"browser-script-drift",
+		"file-php-in-writable-path",
+		"file-sensitive-config-changed",
+		"file-suspicious-path-pattern",
+		"file-plugin-theme-module-changed",
+		"file-php-changed",
 		"file-baseline-drift",
 	}
 	definitions := make([]RuleDefinition, 0, len(ids))
@@ -214,6 +220,11 @@ func inferRuleDefinition(id string) RuleDefinition {
 	case id == "file-baseline-drift":
 		definition.Category = RuleCategoryFileBaseline
 		definition.Platforms = []string{"generic_php"}
+		definition.EvidenceTypes = []string{"file"}
+		definition.ActionHints = []RuleActionHint{RuleActionAcknowledge, RuleActionMarkFalsePositive, RuleActionInspectTimeline, RuleActionInspectFiles, RuleActionInspectDeployment}
+	case isFilePathRuleID(id):
+		definition.Category = RuleCategoryFilePath
+		definition.Platforms = []string{"generic_php", "wordpress", "prestashop"}
 		definition.EvidenceTypes = []string{"file"}
 		definition.ActionHints = []RuleActionHint{RuleActionAcknowledge, RuleActionMarkFalsePositive, RuleActionInspectTimeline, RuleActionInspectFiles, RuleActionInspectDeployment}
 	case strings.HasPrefix(id, "wordpress-"):
@@ -312,4 +323,17 @@ func ruleActionStrings(actions []RuleActionHint) []string {
 		values = append(values, string(action))
 	}
 	return values
+}
+
+func isFilePathRuleID(id string) bool {
+	switch id {
+	case "file-php-in-writable-path",
+		"file-sensitive-config-changed",
+		"file-suspicious-path-pattern",
+		"file-plugin-theme-module-changed",
+		"file-php-changed":
+		return true
+	default:
+		return false
+	}
 }

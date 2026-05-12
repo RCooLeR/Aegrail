@@ -242,6 +242,89 @@ func TestCorrelateEventsSavesAndDeduplicatesFindings(t *testing.T) {
 	}
 }
 
+func TestCorrelateEventsBuildsSuspiciousFilePathChains(t *testing.T) {
+	now := time.Date(2026, 5, 12, 13, 0, 0, 0, time.UTC)
+	chains := correlateTimelineEvents([]domain.TimelineEvent{
+		{
+			ID:        "evt-upload-php",
+			EventTime: now,
+			EventType: "file.created",
+			Target:    "wp-content/uploads/avatar.php",
+			Severity:  domain.SeverityInfo,
+			HostSlug:  "web-01",
+			Payload:   map[string]any{"relative_path": "wp-content/uploads/avatar.php", "sha256": "upload-php"},
+		},
+		{
+			ID:        "evt-config",
+			EventTime: now.Add(time.Minute),
+			EventType: "file.modified",
+			Target:    "wp-config.php",
+			Severity:  domain.SeverityInfo,
+			HostSlug:  "web-01",
+			Payload:   map[string]any{"relative_path": "wp-config.php", "sha256": "config"},
+		},
+		{
+			ID:        "evt-plugin",
+			EventTime: now.Add(2 * time.Minute),
+			EventType: "file.modified",
+			Target:    "wp-content/plugins/shop/plugin.php",
+			Severity:  domain.SeverityInfo,
+			HostSlug:  "web-01",
+			Payload:   map[string]any{"relative_path": "wp-content/plugins/shop/plugin.php", "sha256": "plugin"},
+		},
+		{
+			ID:        "evt-php",
+			EventTime: now.Add(3 * time.Minute),
+			EventType: "file.modified",
+			Target:    "public/index.php",
+			Severity:  domain.SeverityInfo,
+			HostSlug:  "web-01",
+			Payload:   map[string]any{"relative_path": "public/index.php", "sha256": "php"},
+		},
+		{
+			ID:        "evt-shell-name",
+			EventTime: now.Add(4 * time.Minute),
+			EventType: "file.created",
+			Target:    "assets/shell.txt",
+			Severity:  domain.SeverityInfo,
+			HostSlug:  "web-01",
+			Payload:   map[string]any{"relative_path": "assets/shell.txt", "sha256": "shell-name"},
+		},
+		{
+			ID:        "evt-static",
+			EventTime: now.Add(5 * time.Minute),
+			EventType: "file.created",
+			Target:    "wp-content/uploads/logo.png",
+			Severity:  domain.SeverityInfo,
+			HostSlug:  "web-01",
+			Payload:   map[string]any{"relative_path": "wp-content/uploads/logo.png", "sha256": "static"},
+		},
+	}, 30*time.Minute)
+
+	byRule := map[string]CorrelationChain{}
+	for _, chain := range chains {
+		byRule[chain.RuleID] = chain
+	}
+	for _, ruleID := range []string{
+		"file-php-in-writable-path",
+		"file-sensitive-config-changed",
+		"file-plugin-theme-module-changed",
+		"file-php-changed",
+		"file-suspicious-path-pattern",
+	} {
+		if _, ok := byRule[ruleID]; !ok {
+			t.Fatalf("chains = %#v, missing %s", chains, ruleID)
+		}
+	}
+	if len(chains) != 5 {
+		t.Fatalf("chains = %#v, want five suspicious file path findings", chains)
+	}
+	if byRule["file-php-in-writable-path"].Severity != domain.SeverityHigh ||
+		byRule["file-sensitive-config-changed"].Severity != domain.SeverityHigh {
+		t.Fatalf("chains = %#v, want high severity upload PHP and config findings", chains)
+	}
+}
+
 func TestListTimelineEventsResolvesEnvironmentAndOptionalApp(t *testing.T) {
 	inventory := newMemoryInventoryRepository()
 	ingest := &memoryIngestRepository{}

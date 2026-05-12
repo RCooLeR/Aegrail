@@ -17,10 +17,10 @@ func TestEvaluateBuiltInRuleFixturesPass(t *testing.T) {
 	if summary.Failed != 0 {
 		t.Fatalf("summary = %#v, want all fixtures passing", summary)
 	}
-	if summary.Passed != 8 || len(summary.Fixtures) != 8 {
-		t.Fatalf("fixture counts = passed %d total %d, want 8", summary.Passed, len(summary.Fixtures))
+	if summary.Passed != 9 || len(summary.Fixtures) != 9 {
+		t.Fatalf("fixture counts = passed %d total %d, want 9", summary.Passed, len(summary.Fixtures))
 	}
-	if summary.Signals < 10 {
+	if summary.Signals < 15 {
 		t.Fatalf("signals = %d, want first-wave evaluation signals", summary.Signals)
 	}
 
@@ -37,6 +37,11 @@ func TestEvaluateBuiltInRuleFixturesPass(t *testing.T) {
 	deploy := byID["deploy-window-browser-drift"]
 	if len(deploy.Actual) != 1 || deploy.Actual[0].ID != "browser-script-domain-new" || deploy.Actual[0].Severity != domain.SeverityLow {
 		t.Fatalf("deploy fixture = %#v, want lowered browser drift", deploy)
+	}
+
+	filePaths := byID["generic-suspicious-file-paths"]
+	if len(filePaths.Actual) != 5 || !filePaths.Passed {
+		t.Fatalf("generic file path fixture = %#v, want five expected file path signals", filePaths)
 	}
 
 	drift := byID["multi-host-file-drift"]

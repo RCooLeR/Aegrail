@@ -119,6 +119,7 @@ func correlateTimelineEvents(events []domain.TimelineEvent, window time.Duration
 	var chains []CorrelationChain
 	seen := map[string]struct{}{}
 	suppressedFollowups := map[string]struct{}{}
+	coveredFileEvents := map[string]struct{}{}
 	for i, event := range events {
 		if isDatabaseSnapshotDiffEvent(event) {
 			addCorrelationChain(&chains, seen, buildDatabaseSnapshotDiffChain(event))
@@ -139,6 +140,7 @@ func correlateTimelineEvents(events []domain.TimelineEvent, window time.Duration
 					title = "Probable incident chain"
 					suppressedFollowups[correlationPairKey(fileEvent, tail)] = struct{}{}
 				}
+				coveredFileEvents[correlationEventKey(fileEvent)] = struct{}{}
 				chain := buildCorrelationChain(ruleID, title, chainEvents)
 				addCorrelationChain(&chains, seen, chain)
 			}
@@ -159,9 +161,20 @@ func correlateTimelineEvents(events []domain.TimelineEvent, window time.Duration
 					ruleID = "file-change-to-persistence"
 					title = "File change followed by persistence signal"
 				}
+				coveredFileEvents[correlationEventKey(event)] = struct{}{}
 				addCorrelationChain(&chains, seen, buildCorrelationChain(ruleID, title, []domain.TimelineEvent{event, next}))
 			}
 		}
+	}
+	for _, event := range events {
+		if _, covered := coveredFileEvents[correlationEventKey(event)]; covered {
+			continue
+		}
+		chain, ok := buildSuspiciousFilePathChain(event)
+		if !ok {
+			continue
+		}
+		addCorrelationChain(&chains, seen, chain)
 	}
 	slices.SortFunc(chains, func(a CorrelationChain, b CorrelationChain) int {
 		if severityRank(a.Severity) != severityRank(b.Severity) {

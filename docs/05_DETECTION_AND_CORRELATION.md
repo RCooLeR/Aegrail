@@ -42,6 +42,16 @@ High-signal findings:
 - unexpected cron or worker script
 - web request followed by local file creation
 
+Current deterministic generic file path rules:
+
+- `file-php-in-writable-path`
+- `file-sensitive-config-changed`
+- `file-suspicious-path-pattern`
+- `file-plugin-theme-module-changed`
+- `file-php-changed`
+
+These rules are generated from normalized file timeline events. They are emitted for standalone suspicious file changes, but the same file event is not duplicated as a standalone path finding when it is already part of a stronger web-to-file or file-to-sensitive-follow-up chain.
+
 ### WordPress
 
 High-signal findings:
@@ -193,7 +203,7 @@ Current behavior:
 
 - deployment windows include a small padding before and after the recorded deployment time
 - unfinished deployment markers are treated as active for a short default window
-- medium browser-script drift and medium database snapshot noise can be reduced to low
+- medium browser-script drift, database snapshot noise, and expected file path drift can be reduced to low
 - low expected-change noise can be reduced to info
 - high and critical findings are never lowered only because a deployment was active
 - correlation-chain findings keep their severity; the deployment context is attached for operator review
@@ -284,6 +294,7 @@ Aegrail needs fixture-based evaluation sets:
 - clean WordPress install
 - compromised WordPress uploads
 - WordPress administrator role change
+- generic suspicious file paths
 - PrestaShop module drift
 - PrestaShop employee privilege escalation
 - browser script injection

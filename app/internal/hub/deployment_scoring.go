@@ -151,7 +151,9 @@ func deploymentCanLowerFinding(finding domain.HubFinding) bool {
 	if !ok {
 		return false
 	}
-	return definition.Category == RuleCategoryDatabaseSnapshot || definition.Category == RuleCategoryBrowserScript
+	return definition.Category == RuleCategoryDatabaseSnapshot ||
+		definition.Category == RuleCategoryBrowserScript ||
+		definition.Category == RuleCategoryFilePath
 }
 
 func deploymentMetadataRecords(deployments []domain.DeploymentMarker) []map[string]any {
