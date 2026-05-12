@@ -152,6 +152,78 @@ func TestCorrelateEventsSavesWordPressAdminEntityFinding(t *testing.T) {
 	}
 }
 
+func TestCorrelateEventsBuildsWordPressPluginAndOptionEntityChains(t *testing.T) {
+	now := time.Date(2026, 5, 12, 12, 45, 0, 0, time.UTC)
+	chains := correlateTimelineEvents([]domain.TimelineEvent{
+		{
+			ID:        "evt-wp-plugin",
+			EventTime: now,
+			EventType: "db.entity.added",
+			Target:    "wordpress:wordpress_plugin:bad-builder/bad-builder.php",
+			Severity:  domain.SeverityMedium,
+			HostSlug:  "web-01",
+			Labels: map[string]string{
+				"db_profile":     "wordpress",
+				"db_entity_type": "wordpress_plugin",
+			},
+			Payload: map[string]any{
+				"profile":     "wordpress",
+				"entity_type": "wordpress_plugin",
+				"entity_key":  "wordpress_plugin:abc",
+				"current": map[string]any{
+					"type":      "wordpress_plugin",
+					"key":       "wordpress_plugin:abc",
+					"label":     "bad-builder/bad-builder.php",
+					"signature": "sig-plugin",
+					"attributes": map[string]any{
+						"active":      true,
+						"plugin_slug": "bad-builder",
+					},
+				},
+			},
+		},
+		{
+			ID:        "evt-wp-registration",
+			EventTime: now.Add(time.Minute),
+			EventType: "db.entity.changed",
+			Target:    "wordpress:wordpress_option:site:default_role",
+			Severity:  domain.SeverityHigh,
+			HostSlug:  "web-01",
+			Labels: map[string]string{
+				"db_profile":     "wordpress",
+				"db_entity_type": "wordpress_option",
+			},
+			Payload: map[string]any{
+				"profile":     "wordpress",
+				"entity_type": "wordpress_option",
+				"entity_key":  "wordpress_option:def",
+				"current": map[string]any{
+					"type":      "wordpress_option",
+					"key":       "wordpress_option:def",
+					"label":     "site:default_role",
+					"signature": "sig-option",
+					"attributes": map[string]any{
+						"option_name": "default_role",
+					},
+				},
+			},
+		},
+	}, 30*time.Minute)
+	if len(chains) != 2 {
+		t.Fatalf("chains = %#v, want plugin and option chains", chains)
+	}
+	byRule := map[string]CorrelationChain{}
+	for _, chain := range chains {
+		byRule[chain.RuleID] = chain
+	}
+	if _, ok := byRule["wordpress-active-plugin-added"]; !ok {
+		t.Fatalf("chains = %#v, want active plugin added", chains)
+	}
+	if byRule["wordpress-registration-option-changed"].Severity != domain.SeverityHigh {
+		t.Fatalf("registration chain = %#v, want high severity", byRule["wordpress-registration-option-changed"])
+	}
+}
+
 func TestCorrelateEventsBuildsPrestaShopDatabaseDiffChain(t *testing.T) {
 	now := time.Date(2026, 5, 12, 13, 0, 0, 0, time.UTC)
 	chains := correlateTimelineEvents([]domain.TimelineEvent{

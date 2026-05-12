@@ -242,6 +242,54 @@ func TestCorrelateEventsSavesAndDeduplicatesFindings(t *testing.T) {
 	}
 }
 
+func TestListTimelineEventsResolvesEnvironmentAndOptionalApp(t *testing.T) {
+	inventory := newMemoryInventoryRepository()
+	ingest := &memoryIngestRepository{}
+	hub := New(Dependencies{Inventory: inventory, Ingest: ingest})
+	ctx := context.Background()
+
+	environment, app, host, agent := bootstrapDatabaseDiffInventory(t, ctx, hub, "wordpress")
+	now := time.Date(2026, 5, 12, 14, 0, 0, 0, time.UTC)
+	ingest.timelineEvents = []domain.TimelineEvent{
+		{
+			ID:              "evt-old",
+			EnvironmentID:   environment.ID,
+			AppID:           app.ID,
+			HostID:          host.ID,
+			HostSlug:        host.Slug,
+			AgentID:         agent.ID,
+			AgentExternalID: agent.AgentID,
+			EventTime:       now.Add(-2 * time.Hour),
+			EventType:       "file.modified",
+		},
+		{
+			ID:              "evt-current",
+			EnvironmentID:   environment.ID,
+			AppID:           app.ID,
+			HostID:          host.ID,
+			HostSlug:        host.Slug,
+			AgentID:         agent.ID,
+			AgentExternalID: agent.AgentID,
+			EventTime:       now,
+			EventType:       "db.entity.changed",
+		},
+	}
+
+	events, err := hub.ListTimelineEvents(ctx, ListTimelineEventsInput{
+		OrganizationSlug: "acme",
+		ProjectSlug:      "customer-site",
+		EnvironmentSlug:  "production",
+		AppSlug:          "main-web",
+		Since:            now.Add(-time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("ListTimelineEvents returned error: %v", err)
+	}
+	if len(events) != 1 || events[0].ID != "evt-current" {
+		t.Fatalf("events = %#v, want current app event", events)
+	}
+}
+
 type memoryHubFindingRepository struct {
 	byKey map[string]domain.HubFinding
 }

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -54,7 +55,51 @@ func NewHubRouter(meta domain.AppMeta, hub *hubapp.Hub, options HubOptions) http
 		})
 	})
 	router.Post("/api/v1/ingest/events", ingestEventsHandler(hub, options))
+	router.Get("/api/v1/findings", listFindingsHandler(hub))
+	router.Get("/api/v1/timeline", listTimelineHandler(hub))
 	return router
+}
+
+type hubFindingResponse struct {
+	ID           string         `json:"id"`
+	RuleID       string         `json:"rule_id"`
+	RuleVersion  string         `json:"rule_version"`
+	DedupeKey    string         `json:"dedupe_key"`
+	Severity     string         `json:"severity"`
+	Confidence   string         `json:"confidence"`
+	Title        string         `json:"title"`
+	Summary      string         `json:"summary"`
+	Description  string         `json:"description"`
+	EventIDs     []string       `json:"event_ids"`
+	FirstEventAt time.Time      `json:"first_event_at"`
+	LastEventAt  time.Time      `json:"last_event_at"`
+	Metadata     map[string]any `json:"metadata"`
+	CreatedAt    time.Time      `json:"created_at"`
+	UpdatedAt    time.Time      `json:"updated_at"`
+}
+
+type timelineEventResponse struct {
+	ID              string            `json:"id"`
+	BatchID         string            `json:"batch_id"`
+	AppID           string            `json:"app_id,omitempty"`
+	AppSlug         string            `json:"app,omitempty"`
+	ServiceID       string            `json:"service_id,omitempty"`
+	ServiceSlug     string            `json:"service,omitempty"`
+	HostID          string            `json:"host_id"`
+	HostSlug        string            `json:"host"`
+	Hostname        string            `json:"hostname"`
+	AgentID         string            `json:"agent_id"`
+	AgentExternalID string            `json:"agent"`
+	EventTime       time.Time         `json:"event_time"`
+	ReceivedAt      time.Time         `json:"received_time"`
+	EventType       string            `json:"type"`
+	Target          string            `json:"target"`
+	Severity        string            `json:"severity"`
+	Message         string            `json:"message"`
+	Region          string            `json:"region,omitempty"`
+	Labels          map[string]string `json:"labels"`
+	Payload         map[string]any    `json:"payload"`
+	CreatedAt       time.Time         `json:"created_at"`
 }
 
 type ingestEventsRequest struct {
@@ -126,6 +171,78 @@ func ingestEventsHandler(hub *hubapp.Hub, options HubOptions) http.HandlerFunc {
 	}
 }
 
+func listFindingsHandler(hub *hubapp.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		limit, err := parseQueryLimit(r, 100)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		findings, err := hub.ListHubFindings(r.Context(), hubapp.ListHubFindingsInput{
+			OrganizationSlug: r.URL.Query().Get("org"),
+			ProjectSlug:      r.URL.Query().Get("project"),
+			EnvironmentSlug:  r.URL.Query().Get("environment"),
+			AppSlug:          r.URL.Query().Get("app"),
+			Limit:            limit,
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		records := make([]hubFindingResponse, 0, len(findings))
+		for _, finding := range findings {
+			records = append(records, hubFindingRecord(finding))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"count":    len(records),
+			"findings": records,
+		})
+	}
+}
+
+func listTimelineHandler(hub *hubapp.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		limit, err := parseQueryLimit(r, 500)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		since, err := parseQueryTime(r.URL.Query().Get("since"), "since")
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		events, err := hub.ListTimelineEvents(r.Context(), hubapp.ListTimelineEventsInput{
+			OrganizationSlug: r.URL.Query().Get("org"),
+			ProjectSlug:      r.URL.Query().Get("project"),
+			EnvironmentSlug:  r.URL.Query().Get("environment"),
+			AppSlug:          r.URL.Query().Get("app"),
+			Since:            since,
+			Limit:            limit,
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		records := make([]timelineEventResponse, 0, len(events))
+		for _, event := range events {
+			records = append(records, timelineEventRecord(event))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"count":  len(records),
+			"events": records,
+		})
+	}
+}
+
 func (r ingestEventsRequest) toInput(signature string) (hubapp.IngestEventsInput, error) {
 	events := make([]hubapp.IngestEventInput, 0, len(r.Events))
 	for _, event := range r.Events {
@@ -175,6 +292,101 @@ func parseEventTime(value string) (time.Time, error) {
 		return time.Time{}, fmt.Errorf("event time %q must be RFC3339: %w", value, err)
 	}
 	return parsed.UTC(), nil
+}
+
+func parseQueryTime(value string, name string) (time.Time, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, nil
+	}
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("%s %q must be RFC3339: %w", name, value, err)
+	}
+	return parsed.UTC(), nil
+}
+
+func parseQueryLimit(r *http.Request, fallback int) (int, error) {
+	raw := strings.TrimSpace(r.URL.Query().Get("limit"))
+	if raw == "" {
+		return fallback, nil
+	}
+	limit, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("limit %q must be an integer", raw)
+	}
+	if limit <= 0 {
+		return fallback, nil
+	}
+	return limit, nil
+}
+
+func hubFindingRecord(finding domain.HubFinding) hubFindingResponse {
+	return hubFindingResponse{
+		ID:           string(finding.ID),
+		RuleID:       finding.RuleID,
+		RuleVersion:  finding.RuleVersion,
+		DedupeKey:    finding.DedupeKey,
+		Severity:     string(finding.Severity),
+		Confidence:   string(finding.Confidence),
+		Title:        finding.Title,
+		Summary:      finding.Summary,
+		Description:  finding.Description,
+		EventIDs:     stringDomainIDs(finding.EventIDs),
+		FirstEventAt: finding.FirstEventAt,
+		LastEventAt:  finding.LastEventAt,
+		Metadata:     nonNilResponseMap(finding.Metadata),
+		CreatedAt:    finding.CreatedAt,
+		UpdatedAt:    finding.UpdatedAt,
+	}
+}
+
+func timelineEventRecord(event domain.TimelineEvent) timelineEventResponse {
+	return timelineEventResponse{
+		ID:              string(event.ID),
+		BatchID:         string(event.BatchID),
+		AppID:           string(event.AppID),
+		AppSlug:         event.AppSlug,
+		ServiceID:       string(event.ServiceID),
+		ServiceSlug:     event.ServiceSlug,
+		HostID:          string(event.HostID),
+		HostSlug:        event.HostSlug,
+		Hostname:        event.Hostname,
+		AgentID:         string(event.AgentID),
+		AgentExternalID: event.AgentExternalID,
+		EventTime:       event.EventTime,
+		ReceivedAt:      event.ReceivedAt,
+		EventType:       event.EventType,
+		Target:          event.Target,
+		Severity:        string(event.Severity),
+		Message:         event.Message,
+		Region:          event.Region,
+		Labels:          nonNilResponseStringMap(event.Labels),
+		Payload:         nonNilResponseMap(event.Payload),
+		CreatedAt:       event.CreatedAt,
+	}
+}
+
+func stringDomainIDs(ids []domain.ID) []string {
+	values := make([]string, 0, len(ids))
+	for _, id := range ids {
+		values = append(values, string(id))
+	}
+	return values
+}
+
+func nonNilResponseMap(values map[string]any) map[string]any {
+	if values == nil {
+		return map[string]any{}
+	}
+	return values
+}
+
+func nonNilResponseStringMap(values map[string]string) map[string]string {
+	if values == nil {
+		return map[string]string{}
+	}
+	return values
 }
 
 func verifyIngestSignature(r *http.Request, body []byte, options HubOptions) error {

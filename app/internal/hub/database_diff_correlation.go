@@ -109,7 +109,8 @@ func databaseEntityRuleForEvent(event domain.TimelineEvent) databaseSnapshotRule
 }
 
 func wordpressDatabaseEntityRule(event domain.TimelineEvent, entityType string, current map[string]any, previous map[string]any) databaseSnapshotRule {
-	if entityType == "wordpress_user" {
+	switch entityType {
+	case "wordpress_user":
 		currentAdmin := payloadBool(current, "administrator")
 		previousAdmin := payloadBool(previous, "administrator")
 		switch {
@@ -149,12 +150,104 @@ func wordpressDatabaseEntityRule(event domain.TimelineEvent, entityType string, 
 				Confidence: domain.ConfidenceMedium,
 			}
 		}
+	case "wordpress_plugin":
+		switch event.EventType {
+		case "db.entity.added":
+			return databaseSnapshotRule{
+				RuleID:     "wordpress-active-plugin-added",
+				Title:      "WordPress active plugin added",
+				Severity:   domain.SeverityMedium,
+				Confidence: domain.ConfidenceHigh,
+			}
+		case "db.entity.removed":
+			return databaseSnapshotRule{
+				RuleID:     "wordpress-active-plugin-removed",
+				Title:      "WordPress active plugin removed",
+				Severity:   domain.SeverityLow,
+				Confidence: domain.ConfidenceMedium,
+			}
+		default:
+			return databaseSnapshotRule{
+				RuleID:     "wordpress-active-plugin-changed",
+				Title:      "WordPress active plugin changed",
+				Severity:   domain.SeverityMedium,
+				Confidence: domain.ConfidenceMedium,
+			}
+		}
+	case "wordpress_theme":
+		return databaseSnapshotRule{
+			RuleID:     "wordpress-active-theme-changed",
+			Title:      "WordPress active theme changed",
+			Severity:   domain.SeverityMedium,
+			Confidence: domain.ConfidenceHigh,
+		}
+	case "wordpress_option":
+		return wordpressOptionEntityRule(event, current, previous)
 	}
 	return databaseSnapshotRule{
 		RuleID:     "wordpress-database-entity-changed",
 		Title:      "WordPress database entity changed",
 		Severity:   maxSeverity(event.Severity, domain.SeverityLow),
 		Confidence: domain.ConfidenceMedium,
+	}
+}
+
+func wordpressOptionEntityRule(event domain.TimelineEvent, current map[string]any, previous map[string]any) databaseSnapshotRule {
+	optionName := strings.ToLower(firstNonEmpty(
+		payloadStringAny(current, "option_name", ""),
+		payloadStringAny(previous, "option_name", ""),
+	))
+	switch optionName {
+	case "active_plugins", "active_sitewide_plugins":
+		return databaseSnapshotRule{
+			RuleID:     "wordpress-active-plugins-option-changed",
+			Title:      "WordPress active plugins option changed",
+			Severity:   domain.SeverityHigh,
+			Confidence: domain.ConfidenceHigh,
+		}
+	case "stylesheet", "template":
+		return databaseSnapshotRule{
+			RuleID:     "wordpress-theme-option-changed",
+			Title:      "WordPress active theme option changed",
+			Severity:   domain.SeverityMedium,
+			Confidence: domain.ConfidenceHigh,
+		}
+	case "default_role", "users_can_register", "registration":
+		return databaseSnapshotRule{
+			RuleID:     "wordpress-registration-option-changed",
+			Title:      "WordPress registration option changed",
+			Severity:   domain.SeverityHigh,
+			Confidence: domain.ConfidenceHigh,
+		}
+	case "site_admins":
+		return databaseSnapshotRule{
+			RuleID:     "wordpress-network-admins-option-changed",
+			Title:      "WordPress network admins option changed",
+			Severity:   domain.SeverityHigh,
+			Confidence: domain.ConfidenceHigh,
+		}
+	case "siteurl", "home", "admin_email":
+		return databaseSnapshotRule{
+			RuleID:     "wordpress-identity-option-changed",
+			Title:      "WordPress site identity option changed",
+			Severity:   domain.SeverityMedium,
+			Confidence: domain.ConfidenceHigh,
+		}
+	default:
+		if strings.HasSuffix(optionName, "user_roles") {
+			return databaseSnapshotRule{
+				RuleID:     "wordpress-user-roles-option-changed",
+				Title:      "WordPress user roles option changed",
+				Severity:   domain.SeverityHigh,
+				Confidence: domain.ConfidenceHigh,
+			}
+		}
+		return databaseSnapshotRule{
+			RuleID:     "wordpress-option-entity-changed",
+			Title:      "WordPress tracked option changed",
+			Severity:   maxSeverity(event.Severity, domain.SeverityMedium),
+			Confidence: domain.ConfidenceMedium,
+		}
 	}
 }
 

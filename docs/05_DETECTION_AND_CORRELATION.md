@@ -75,6 +75,16 @@ Current deterministic DB diff finding rules:
 - `wordpress-user-became-admin`
 - `wordpress-user-capabilities-changed`
 - `wordpress-admin-user-removed`
+- `wordpress-active-plugin-added`
+- `wordpress-active-plugin-removed`
+- `wordpress-active-plugin-changed`
+- `wordpress-active-plugins-option-changed`
+- `wordpress-active-theme-changed`
+- `wordpress-registration-option-changed`
+- `wordpress-network-admins-option-changed`
+- `wordpress-identity-option-changed`
+- `wordpress-user-roles-option-changed`
+- `wordpress-option-entity-changed`
 - `wordpress-admin-users-changed`
 - `wordpress-users-changed`
 - `wordpress-active-plugins-changed`
@@ -93,7 +103,7 @@ Current deterministic DB diff finding rules:
 - `prestashop-hooks-changed`
 - `prestashop-tabs-changed`
 
-These rules operate on redacted snapshot diff events: counts, byte lengths, SHA-256 digests, and entity fingerprints. User and employee names/emails are hashed; module names may be kept when they are operational evidence rather than credentials. Raw option/config values are not exposed in findings.
+These rules operate on redacted snapshot diff events: counts, byte lengths, SHA-256 digests, and entity fingerprints. User and employee names/emails are hashed; module names, WordPress plugin basenames, and theme slugs may be kept when they are operational evidence rather than credentials. Raw option/config values are not exposed in findings.
 
 ### Browser JavaScript
 

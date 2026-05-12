@@ -241,8 +241,10 @@ Current implementation:
 - If `dsn_env` is missing at runtime, the agent queues `db.coverage.warning` instead of failing the whole scan.
 - Events are emitted under `source=agent.database` and `service=database`.
 - Sensitive DB values are not queued raw. Aegrail records counts, value byte lengths, and SHA-256 digests for selected option/config values.
-- Aegrail also records redacted entity fingerprints for WordPress users/capabilities and PrestaShop employees/modules.
-- User and employee emails/logins are hashed; PrestaShop module names may be retained because they are operational security evidence.
+- Aegrail also records redacted entity fingerprints for WordPress users/capabilities/options/plugins/themes and PrestaShop employees/modules.
+- User and employee emails/logins are hashed; PrestaShop module names, WordPress plugin basenames, and theme slugs may be retained because they are operational security evidence.
+- WordPress `active_plugins` and `active_sitewide_plugins` are parsed into individual active plugin entities. `stylesheet` and `template` become active theme entities.
+- WordPress Multisite network options are collected from `<prefix>sitemeta` when the table exists.
 - The first successful snapshot creates a per-site, per-database JSON baseline in `runtime.state_dir`.
 - Later snapshots compare against that state and emit `db.snapshot.check_changed`, `db.entity.added`, `db.entity.changed`, or `db.entity.removed` events when counts, digests, or redacted entities change.
 - Failed or warning-only snapshots do not overwrite the previous good DB state.
@@ -266,6 +268,13 @@ Implemented WordPress check events:
 - `wordpress.cron.digest`
 - `wordpress.theme_stylesheet.digest`
 - `wordpress.theme_template.digest`
+
+Implemented WordPress entity events:
+
+- `wordpress_user`
+- `wordpress_option`
+- `wordpress_plugin`
+- `wordpress_theme`
 
 Minimum PrestaShop database checks:
 
@@ -376,9 +385,9 @@ Done:
 8. Run database collectors from configured `databases`.
 9. Persist DB snapshot state and emit redacted DB diff events.
 10. Turn first-wave DB diff events into deterministic Hub findings.
-11. Add redacted entity-level snapshots for WordPress users and PrestaShop employees/modules.
+11. Add redacted entity-level snapshots for WordPress users/options/plugins/themes and PrestaShop employees/modules.
 
 Next:
 
 1. Report config coverage to the Hub for dashboard views.
-2. Add exact plugin/option/config parsers so findings can identify the specific plugin, option, module setting, or cron entry that changed.
+2. Add exact cron, post, widget, builder-content, and PrestaShop configuration parsers.

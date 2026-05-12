@@ -74,14 +74,14 @@ Last updated: 2026-05-12
 - [~] Add WordPress DB snapshot importer or collector.
 - [x] Snapshot redacted WordPress users.
 - [x] Snapshot redacted WordPress usermeta capabilities.
-- [~] Snapshot WordPress options.
-- [~] Snapshot WordPress active plugins and themes.
+- [x] Snapshot tracked WordPress options as redacted entities.
+- [x] Snapshot WordPress active plugins and themes as entities.
 - [~] Snapshot WordPress cron tasks.
 - [x] Emit redacted WordPress DB snapshot diff events.
 - [x] Detect new WordPress administrators.
 - [x] Detect changed WordPress capabilities.
-- [~] Detect suspicious WordPress option values.
-- [~] Detect new or changed WordPress plugins/themes.
+- [x] Detect suspicious tracked WordPress option changes.
+- [x] Detect new or changed WordPress plugins/themes.
 - [~] Add PrestaShop DB snapshot importer or collector.
 - [x] Snapshot redacted PrestaShop employees.
 - [x] Snapshot PrestaShop modules.
@@ -114,8 +114,8 @@ Last updated: 2026-05-12
 
 - [x] Document dashboard information architecture and API direction.
 - [ ] Add Hub read API for inventory.
-- [ ] Add Hub read API for events/timeline.
-- [ ] Add Hub read API for findings.
+- [x] Add Hub read API for events/timeline.
+- [x] Add Hub read API for findings.
 - [ ] Add Hub read API for agents and config coverage.
 - [ ] Add Hub read API for deployments.
 - [ ] Add Hub read API for browser script observations.

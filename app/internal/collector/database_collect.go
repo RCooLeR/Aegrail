@@ -190,13 +190,34 @@ func collectDatabaseEntities(ctx context.Context, db *sql.DB, profile string, ta
 
 func collectWordPressDatabaseEntities(ctx context.Context, db *sql.DB, tablePrefix string) ([]DatabaseEntityObservation, []string) {
 	prefix, warning := sanitizeDatabasePrefix(tablePrefix, "wp_")
+	var entities []DatabaseEntityObservation
+	var warnings []string
+	warnings = append(warnings, optionalWarning(warning)...)
+
+	userEntities, userWarnings := collectWordPressUserEntities(ctx, db, prefix)
+	entities = append(entities, userEntities...)
+	warnings = append(warnings, userWarnings...)
+
+	optionEntities, optionWarnings := collectWordPressOptionEntities(ctx, db, prefix)
+	entities = append(entities, optionEntities...)
+	warnings = append(warnings, optionWarnings...)
+
+	networkEntities, networkWarnings := collectWordPressNetworkOptionEntities(ctx, db, prefix)
+	entities = append(entities, networkEntities...)
+	warnings = append(warnings, networkWarnings...)
+
+	sortDatabaseEntities(entities)
+	return entities, warnings
+}
+
+func collectWordPressUserEntities(ctx context.Context, db *sql.DB, prefix string) ([]DatabaseEntityObservation, []string) {
 	users := quoteDatabaseIdentifier(prefix + "users")
 	usermeta := quoteDatabaseIdentifier(prefix + "usermeta")
 	query := "SELECT u.ID, COALESCE(u.user_login, ''), COALESCE(u.user_email, ''), COALESCE(um.meta_value, '') FROM " +
 		users + " u LEFT JOIN " + usermeta + " um ON um.user_id = u.ID AND um.meta_key = ? ORDER BY u.ID LIMIT 1000"
 	rows, err := db.QueryContext(ctx, query, prefix+"capabilities")
 	if err != nil {
-		return nil, append(optionalWarning(warning), fmt.Sprintf("wordpress user entity query failed: %v", err))
+		return nil, []string{fmt.Sprintf("wordpress user entity query failed: %v", err)}
 	}
 	defer rows.Close()
 
@@ -207,7 +228,7 @@ func collectWordPressDatabaseEntities(ctx context.Context, db *sql.DB, tablePref
 		var email string
 		var capabilities string
 		if err := rows.Scan(&id, &login, &email, &capabilities); err != nil {
-			return entities, append(optionalWarning(warning), fmt.Sprintf("wordpress user entity scan failed: %v", err))
+			return entities, []string{fmt.Sprintf("wordpress user entity scan failed: %v", err)}
 		}
 		admin := strings.Contains(strings.ToLower(capabilities), "administrator")
 		capabilitiesHash := databaseSHA256Hex(capabilities)
@@ -231,10 +252,291 @@ func collectWordPressDatabaseEntities(ctx context.Context, db *sql.DB, tablePref
 		entities = append(entities, entity)
 	}
 	if err := rows.Err(); err != nil {
-		return entities, append(optionalWarning(warning), fmt.Sprintf("wordpress user entity rows failed: %v", err))
+		return entities, []string{fmt.Sprintf("wordpress user entity rows failed: %v", err)}
 	}
-	sortDatabaseEntities(entities)
-	return entities, optionalWarning(warning)
+	return entities, nil
+}
+
+func collectWordPressOptionEntities(ctx context.Context, db *sql.DB, prefix string) ([]DatabaseEntityObservation, []string) {
+	options := quoteDatabaseIdentifier(prefix + "options")
+	names := wordpressTrackedSiteOptionNames(prefix)
+	rows, err := db.QueryContext(ctx, "SELECT option_name, COALESCE(option_value, '') FROM "+options+" WHERE option_name IN ("+databasePlaceholders(len(names))+") ORDER BY option_name LIMIT 100", stringArgs(names)...)
+	if err != nil {
+		return nil, []string{fmt.Sprintf("wordpress option entity query failed: %v", err)}
+	}
+	defer rows.Close()
+
+	var entities []DatabaseEntityObservation
+	for rows.Next() {
+		var name string
+		var value string
+		if err := rows.Scan(&name, &value); err != nil {
+			return entities, []string{fmt.Sprintf("wordpress option entity scan failed: %v", err)}
+		}
+		entities = append(entities, wordpressEntitiesFromOption("site", name, value)...)
+	}
+	if err := rows.Err(); err != nil {
+		return entities, []string{fmt.Sprintf("wordpress option entity rows failed: %v", err)}
+	}
+	return entities, nil
+}
+
+func collectWordPressNetworkOptionEntities(ctx context.Context, db *sql.DB, prefix string) ([]DatabaseEntityObservation, []string) {
+	table := prefix + "sitemeta"
+	exists, err := databaseTableExists(ctx, db, table)
+	if err != nil {
+		return nil, []string{fmt.Sprintf("wordpress network option table check failed: %v", err)}
+	}
+	if !exists {
+		return nil, nil
+	}
+
+	names := wordpressTrackedNetworkOptionNames()
+	query := "SELECT meta_key, COALESCE(meta_value, '') FROM " + quoteDatabaseIdentifier(table) +
+		" WHERE meta_key IN (" + databasePlaceholders(len(names)) + ") ORDER BY meta_key LIMIT 100"
+	rows, err := db.QueryContext(ctx, query, stringArgs(names)...)
+	if err != nil {
+		return nil, []string{fmt.Sprintf("wordpress network option entity query failed: %v", err)}
+	}
+	defer rows.Close()
+
+	var entities []DatabaseEntityObservation
+	for rows.Next() {
+		var name string
+		var value string
+		if err := rows.Scan(&name, &value); err != nil {
+			return entities, []string{fmt.Sprintf("wordpress network option entity scan failed: %v", err)}
+		}
+		entities = append(entities, wordpressEntitiesFromOption("network", name, value)...)
+	}
+	if err := rows.Err(); err != nil {
+		return entities, []string{fmt.Sprintf("wordpress network option entity rows failed: %v", err)}
+	}
+	return entities, nil
+}
+
+func wordpressTrackedSiteOptionNames(prefix string) []string {
+	return []string{
+		"active_plugins",
+		"admin_email",
+		"blog_public",
+		"cron",
+		"default_role",
+		"home",
+		"permalink_structure",
+		"siteurl",
+		"stylesheet",
+		"template",
+		"users_can_register",
+		prefix + "user_roles",
+	}
+}
+
+func wordpressTrackedNetworkOptionNames() []string {
+	return []string{
+		"active_sitewide_plugins",
+		"admin_email",
+		"registration",
+		"site_admins",
+		"siteurl",
+		"upload_space_check_disabled",
+	}
+}
+
+func wordpressEntitiesFromOption(scope string, name string, value string) []DatabaseEntityObservation {
+	scope = strings.ToLower(strings.TrimSpace(scope))
+	if scope == "" {
+		scope = "site"
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+
+	entities := []DatabaseEntityObservation{wordpressOptionEntity(scope, name, value)}
+	switch name {
+	case "active_plugins":
+		for _, plugin := range parseWordPressActivePlugins(value) {
+			entities = append(entities, wordpressPluginEntity(scope, name, plugin))
+		}
+	case "active_sitewide_plugins":
+		for _, plugin := range parseWordPressActivePlugins(value) {
+			entities = append(entities, wordpressPluginEntity("network", name, plugin))
+		}
+	case "stylesheet", "template":
+		if theme := strings.TrimSpace(value); theme != "" {
+			entities = append(entities, wordpressThemeEntity(scope, name, theme))
+		}
+	}
+	return entities
+}
+
+func wordpressOptionEntity(scope string, name string, value string) DatabaseEntityObservation {
+	valueBytes := len([]byte(value))
+	entity := DatabaseEntityObservation{
+		Type:       "wordpress_option",
+		Key:        databaseEntityKey("wordpress_option", scope+"\x00"+name),
+		Label:      scope + ":" + name,
+		Privileged: isWordPressSensitiveOption(name),
+		Attributes: map[string]any{
+			"scope":        scope,
+			"option_name":  name,
+			"value_sha256": databaseSHA256Hex(value),
+			"value_bytes":  valueBytes,
+			"empty":        strings.TrimSpace(value) == "",
+			"sensitive":    isWordPressSensitiveOption(name),
+		},
+	}
+	entity.Signature = databaseEntitySignature(entity)
+	return entity
+}
+
+func wordpressPluginEntity(scope string, sourceOption string, pluginFile string) DatabaseEntityObservation {
+	pluginFile = normalizeWordPressPluginFile(pluginFile)
+	slug := wordpressPluginSlug(pluginFile)
+	entity := DatabaseEntityObservation{
+		Type:       "wordpress_plugin",
+		Key:        databaseEntityKey("wordpress_plugin", scope+"\x00"+pluginFile),
+		Label:      pluginFile,
+		Privileged: false,
+		Attributes: map[string]any{
+			"scope":              scope,
+			"source_option":      sourceOption,
+			"plugin_file":        pluginFile,
+			"plugin_slug":        slug,
+			"plugin_file_sha256": databaseSHA256Hex(pluginFile),
+			"active":             true,
+			"network_active":     scope == "network",
+		},
+	}
+	entity.Signature = databaseEntitySignature(entity)
+	return entity
+}
+
+func wordpressThemeEntity(scope string, sourceOption string, theme string) DatabaseEntityObservation {
+	theme = strings.Trim(strings.ReplaceAll(theme, "\\", "/"), "/")
+	entity := DatabaseEntityObservation{
+		Type:       "wordpress_theme",
+		Key:        databaseEntityKey("wordpress_theme", scope+"\x00"+sourceOption+"\x00"+theme),
+		Label:      theme,
+		Privileged: false,
+		Attributes: map[string]any{
+			"scope":         scope,
+			"source_option": sourceOption,
+			"theme_slug":    theme,
+			"theme_sha256":  databaseSHA256Hex(theme),
+			"active":        true,
+		},
+	}
+	entity.Signature = databaseEntitySignature(entity)
+	return entity
+}
+
+func parseWordPressActivePlugins(value string) []string {
+	plugins, ok := parsePHPSerializedStrings(value)
+	if !ok {
+		plugins = splitWordPressOptionList(value)
+	}
+	seen := map[string]bool{}
+	normalized := make([]string, 0, len(plugins))
+	for _, plugin := range plugins {
+		plugin = normalizeWordPressPluginFile(plugin)
+		if plugin == "" || seen[plugin] {
+			continue
+		}
+		seen[plugin] = true
+		normalized = append(normalized, plugin)
+	}
+	sort.Strings(normalized)
+	return normalized
+}
+
+func parsePHPSerializedStrings(value string) ([]string, bool) {
+	var items []string
+	foundMarker := false
+	for i := 0; i < len(value); i++ {
+		if value[i] != 's' || i+2 >= len(value) || value[i+1] != ':' {
+			continue
+		}
+		foundMarker = true
+		lengthStart := i + 2
+		lengthEnd := lengthStart
+		for lengthEnd < len(value) && value[lengthEnd] >= '0' && value[lengthEnd] <= '9' {
+			lengthEnd++
+		}
+		if lengthEnd == lengthStart || lengthEnd+2 >= len(value) || value[lengthEnd] != ':' || value[lengthEnd+1] != '"' {
+			continue
+		}
+		length, err := strconv.Atoi(value[lengthStart:lengthEnd])
+		if err != nil || length < 0 {
+			continue
+		}
+		contentStart := lengthEnd + 2
+		contentEnd := contentStart + length
+		if contentEnd >= len(value) || value[contentEnd] != '"' {
+			continue
+		}
+		items = append(items, value[contentStart:contentEnd])
+		i = contentEnd
+	}
+	return items, foundMarker
+}
+
+func splitWordPressOptionList(value string) []string {
+	fields := strings.FieldsFunc(value, func(r rune) bool {
+		return r == ',' || r == '\n' || r == '\r' || r == '\t'
+	})
+	items := make([]string, 0, len(fields))
+	for _, field := range fields {
+		field = strings.TrimSpace(field)
+		if field != "" {
+			items = append(items, field)
+		}
+	}
+	return items
+}
+
+func normalizeWordPressPluginFile(value string) string {
+	value = strings.TrimSpace(strings.ReplaceAll(value, "\\", "/"))
+	value = strings.Trim(value, "/")
+	if !strings.Contains(value, ".php") {
+		return ""
+	}
+	return value
+}
+
+func wordpressPluginSlug(pluginFile string) string {
+	pluginFile = normalizeWordPressPluginFile(pluginFile)
+	if pluginFile == "" {
+		return ""
+	}
+	parts := strings.Split(pluginFile, "/")
+	if len(parts) == 0 {
+		return pluginFile
+	}
+	return parts[0]
+}
+
+func isWordPressSensitiveOption(name string) bool {
+	switch strings.TrimSpace(name) {
+	case "active_plugins",
+		"active_sitewide_plugins",
+		"admin_email",
+		"blog_public",
+		"cron",
+		"default_role",
+		"home",
+		"registration",
+		"site_admins",
+		"siteurl",
+		"stylesheet",
+		"template",
+		"upload_space_check_disabled",
+		"users_can_register":
+		return true
+	default:
+		return strings.HasSuffix(name, "user_roles")
+	}
 }
 
 func collectPrestaShopDatabaseEntities(ctx context.Context, db *sql.DB, tablePrefix string) ([]DatabaseEntityObservation, []string) {
@@ -362,6 +664,15 @@ func queryDatabaseString(ctx context.Context, db *sql.DB, spec databaseCheckSpec
 		return "", true, nil
 	}
 	return value.String, true, nil
+}
+
+func databaseTableExists(ctx context.Context, db *sql.DB, table string) (bool, error) {
+	var count int64
+	err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?", table).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 func databaseCheckSpecs(profile string, tablePrefix string) ([]databaseCheckSpec, []string) {
@@ -524,6 +835,25 @@ func sanitizeDatabasePrefix(value string, fallback string) (string, string) {
 
 func quoteDatabaseIdentifier(value string) string {
 	return "`" + value + "`"
+}
+
+func databasePlaceholders(count int) string {
+	if count <= 0 {
+		return "NULL"
+	}
+	values := make([]string, count)
+	for i := range values {
+		values[i] = "?"
+	}
+	return strings.Join(values, ", ")
+}
+
+func stringArgs(values []string) []any {
+	args := make([]any, 0, len(values))
+	for _, value := range values {
+		args = append(args, value)
+	}
+	return args
 }
 
 func optionalWarning(value string) []string {

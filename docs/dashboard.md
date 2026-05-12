@@ -10,3 +10,10 @@ The dashboard plan now lives in:
 - [Delivery Plan](08_DELIVERY_PLAN.md): dashboard implementation phase
 
 The target dashboard remains TypeScript, React, and Bootstrap, backed by Hub HTTP APIs.
+
+Current Hub read API slice:
+
+- `GET /api/v1/findings?org=...&project=...&environment=...&app=...&limit=...`
+- `GET /api/v1/timeline?org=...&project=...&environment=...&app=...&since=...&limit=...`
+
+These endpoints are the first backend surface for the future Findings and Timeline views. Inventory, coverage, deployments, browser-script observations, and finding actions are still planned.

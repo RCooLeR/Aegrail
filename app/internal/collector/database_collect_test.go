@@ -70,3 +70,39 @@ func TestBuildDatabaseSnapshotEventsRedactsDigestValues(t *testing.T) {
 		t.Fatalf("labels = %#v, want database and site context", check.Labels)
 	}
 }
+
+func TestParseWordPressActivePluginsFromSerializedOption(t *testing.T) {
+	value := `a:2:{i:0;s:19:"akismet/akismet.php";i:1;s:27:"woocommerce/woocommerce.php";}`
+	plugins := parseWordPressActivePlugins(value)
+	if got, want := len(plugins), 2; got != want {
+		t.Fatalf("plugins = %#v, want %d", plugins, want)
+	}
+	if plugins[0] != "akismet/akismet.php" || plugins[1] != "woocommerce/woocommerce.php" {
+		t.Fatalf("plugins = %#v, want normalized plugin files", plugins)
+	}
+}
+
+func TestWordPressOptionEntitiesIncludeDerivedPluginAndTheme(t *testing.T) {
+	pluginEntities := wordpressEntitiesFromOption("site", "active_plugins", `a:1:{i:0;s:19:"akismet/akismet.php";}`)
+	if len(pluginEntities) != 2 {
+		t.Fatalf("plugin entities = %#v, want option plus plugin", pluginEntities)
+	}
+	if pluginEntities[0].Type != "wordpress_option" || !pluginEntities[0].Privileged {
+		t.Fatalf("option entity = %#v, want privileged redacted option", pluginEntities[0])
+	}
+	if _, ok := pluginEntities[0].Attributes["value"]; ok {
+		t.Fatalf("option entity leaked raw value: %#v", pluginEntities[0].Attributes)
+	}
+	plugin := pluginEntities[1]
+	if plugin.Type != "wordpress_plugin" || plugin.Label != "akismet/akismet.php" || plugin.Attributes["plugin_slug"] != "akismet" {
+		t.Fatalf("plugin entity = %#v, want derived plugin identity", plugin)
+	}
+
+	themeEntities := wordpressEntitiesFromOption("site", "stylesheet", "twentytwentysix")
+	if len(themeEntities) != 2 {
+		t.Fatalf("theme entities = %#v, want option plus theme", themeEntities)
+	}
+	if themeEntities[1].Type != "wordpress_theme" || themeEntities[1].Attributes["theme_slug"] != "twentytwentysix" {
+		t.Fatalf("theme entity = %#v, want active theme identity", themeEntities[1])
+	}
+}

@@ -25,6 +25,8 @@ Aegrail already has:
 - dashboard and multi-site agent config plans
 - multi-site Agent YAML config loading, validation, file watching, log tailing, database checks with local diff state, browser crawling, and continuous `agent run`
 - deterministic Hub findings for first-wave WordPress and PrestaShop DB diff and entity events
+- Hub read APIs for findings and timelines
+- WordPress option, active plugin, active theme, and Multisite network option entity snapshots
 
 ## Phase 0: Product Foundation
 
@@ -110,7 +112,7 @@ Deliverables:
 Exit criteria:
 
 - initial WordPress and PrestaShop DB checks emit counts, redacted digests, entity fingerprints, local diff events, and Hub findings
-- WordPress admin/user capability entity changes plus plugin, theme, cron, user, and option count changes produce deterministic findings
+- WordPress admin/user capability, tracked option, active plugin, and active theme entity changes plus cron/user/option count changes produce deterministic findings
 - PrestaShop employee/module entity changes plus configuration, access, hook, and tab count changes produce deterministic findings
 - fixtures cover clean and suspicious cases
 
@@ -152,6 +154,11 @@ Exit criteria:
 - dashboard reads from Hub APIs only
 - operators can triage findings and inspect timelines
 - agent/site coverage gaps are visible
+
+Current API slice:
+
+- `GET /api/v1/findings`
+- `GET /api/v1/timeline`
 
 ## Phase 6: Reports And AI
 

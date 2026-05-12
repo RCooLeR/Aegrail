@@ -337,7 +337,7 @@ func databaseEntityDiffSeverity(entity DatabaseEntityState) string {
 		return "high"
 	}
 	switch entity.Type {
-	case "wordpress_user", "prestashop_employee", "prestashop_module":
+	case "wordpress_user", "wordpress_plugin", "wordpress_theme", "wordpress_option", "prestashop_employee", "prestashop_module":
 		return "medium"
 	default:
 		return "low"
