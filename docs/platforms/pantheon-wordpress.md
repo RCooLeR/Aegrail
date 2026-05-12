@@ -3,6 +3,12 @@
 Status: planned
 Date: 2026-05-12
 
+Canonical context:
+
+- [Architecture](../02_ARCHITECTURE.md)
+- [Evidence Collection](../04_EVIDENCE_COLLECTION.md)
+- [Delivery Plan](../08_DELIVERY_PLAN.md)
+
 ## Goal
 
 Aegrail should support Pantheon-hosted WordPress sites as a first-class deployment target. This includes both single WordPress installations and Pantheon WordPress Multisite networks.

@@ -3,6 +3,12 @@
 Status: in progress; static and rendered script inventory implemented
 Date: 2026-05-12
 
+Canonical context:
+
+- [Evidence Collection](../04_EVIDENCE_COLLECTION.md)
+- [Detection And Correlation](../05_DETECTION_AND_CORRELATION.md)
+- [Delivery Plan](../08_DELIVERY_PLAN.md)
+
 ## Goal
 
 Aegrail should include a lightweight browser crawler collector that renders selected public pages and records the JavaScript actually loaded by the browser. This is needed for WordPress page builders, injected widgets, tag managers, compromised options, and malicious third-party scripts that are not visible from server-side file or database snapshots alone.

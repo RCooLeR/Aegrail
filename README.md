@@ -1,155 +1,52 @@
 # Aegrail
 
-Aegrail is a CLI-first security audit and incident triage tool for small websites, ecommerce shops, and self-hosted applications. The original product sketch is preserved in `idea.md`; new implementation work uses `aegrail` as the product and binary name.
+Aegrail is an evidence-first monitoring and incident triage platform for WordPress, PrestaShop, and PHP application estates.
+
+It is built around one `aegrail` binary, local agents, a central Hub, CMS-aware collectors, deterministic findings, browser JavaScript monitoring, and reports grounded in stored evidence.
 
 ![Aegrail overview](./docs/banner.png)
 
-## Current Documents
+## Documentation
 
-- [Architecture](docs/architecture.md): module boundaries, runtime pipeline, storage strategy, and Ollama integration.
-- [Distributed Architecture](docs/distributed-architecture.md): Agent, DB Collector, Hub, inventory, and cross-host correlation model.
-- [Implementation Plan](docs/implementation-plan.md): phased delivery plan from repository foundation to reports.
-- [Dashboard Plan](docs/dashboard.md): planned Hub UI, views, API surface, and safety model.
-- [Agent Multi-Site Configuration](docs/configuration/agent-multi-site.md): planned server-level agent config for monitoring many hosted sites.
-- [Pantheon WordPress Monitoring Plan](docs/platforms/pantheon-wordpress.md): planned support for Pantheon-hosted single WordPress and WordPress Multisite networks.
-- [Browser Crawler And JavaScript Monitoring Plan](docs/collectors/browser-crawler.md): static and rendered-page crawler direction for script inventory, tag managers, and JavaScript drift.
-- [Tracker](docs/tracker.md): living task board for MVP work.
-- [Architecture Decision 0001](docs/decisions/0001-modular-monolith.md): why the first implementation should be a modular monolith.
-- [Architecture Decision 0002](docs/decisions/0002-aegrail-binary-name.md): why the binary is named `aegrail`.
-- [Architecture Decision 0003](docs/decisions/0003-local-postgres18-pgvector.md): local PostgreSQL 18 and pgvector service choice.
-- [Architecture Decision 0004](docs/decisions/0004-pgx-and-goose.md): PostgreSQL driver and migration tool choice.
-- [Architecture Decision 0005](docs/decisions/0005-local-evidence-archive.md): local immutable evidence archive choice.
-- [Architecture Decision 0006](docs/decisions/0006-first-wave-target-modules.md): WordPress and PrestaShop first-wave target choice.
-- [Architecture Decision 0007](docs/decisions/0007-agent-hub-architecture.md): Agent plus Hub distributed architecture.
-- [Architecture Decision 0008](docs/decisions/0008-one-repo-multiple-runtime-apps.md): one repo structured as Local, Hub, Agent, and Collector apps.
-- [Brand Assets](docs/brand/README.md): existing visual identity and generated brand files.
-- [Services](services/README.md): local Docker services for development.
+- [Product Vision](docs/01_PRODUCT_VISION.md)
+- [Architecture](docs/02_ARCHITECTURE.md)
+- [Domain Model](docs/03_DOMAIN_MODEL.md)
+- [Evidence Collection](docs/04_EVIDENCE_COLLECTION.md)
+- [Detection And Correlation](docs/05_DETECTION_AND_CORRELATION.md)
+- [AI And LLM Strategy](docs/06_AI_AND_LLM_STRATEGY.md)
+- [Operations And Security](docs/07_OPERATIONS_AND_SECURITY.md)
+- [Delivery Plan](docs/08_DELIVERY_PLAN.md)
+- [Developer Experience](docs/09_DEVELOPER_EXPERIENCE.md)
+
+Supporting specs:
+
+- [Agent Multi-Site Configuration](docs/configuration/agent-multi-site.md)
+- [Browser Crawler And JavaScript Monitoring](docs/collectors/browser-crawler.md)
+- [Pantheon WordPress Monitoring](docs/platforms/pantheon-wordpress.md)
+- [Tracker](docs/tracker.md)
+- [Architecture Decisions](docs/decisions)
+- [Brand Assets](docs/brand/README.md)
+- [Local Services](services/README.md)
+
+## Core Principles
+
+- Evidence-first: collect and store deterministic evidence before generating analysis.
+- Modular: Local, Hub, Agent, Collector, Dashboard, rules, reports, and AI are separate modules.
+- Distributed: every event carries org, project, environment, app, service, host, agent, region, and labels where known.
+- CMS-aware: WordPress and PrestaShop are first-wave targets, with Mautic, Yii2, and Laravel planned later.
+- Explainable: findings must cite rules, versions, event context, and evidence refs.
+- Offline tolerant: agents queue locally and replay when the Hub is reachable.
+- Secure by default: secrets are redacted before reports, dashboard views, embeddings, or LLM prompts.
+- Local-first AI: Ollama can summarize evidence, but deterministic rules remain the source of truth.
 
 ## Quick Start
 
 ```powershell
+docker compose -f services/compose.yaml up -d postgres18
 cd app
 go run ./cmd/aegrail --help
-go run ./cmd/aegrail init --data-dir ../data
-```
-
-Runtime app groups:
-
-```powershell
-go run ./cmd/aegrail hub --help
-go run ./cmd/aegrail agent --help
-go run ./cmd/aegrail collector --help
-go run ./cmd/aegrail collector browser crawl --url https://example.com --format json
-go run ./cmd/aegrail collector browser crawl --url https://example.com --rendered --wait-tag-manager --timeout 30s --format json
-go run ./cmd/aegrail collector browser crawl --url https://example.com --rendered --ingest --org acme --project customer-site --env production --app main-web --service frontend --host web-01 --agent-id agt_web_01
-go run ./cmd/aegrail hub correlate browser-scripts --org acme --project customer-site --env production --app main-web --baseline 30d --since 24h --save
-go run ./cmd/aegrail hub browser-scripts allow --org acme --project customer-site --env production --app main-web --page https://example.com --kind domain --value trusted-chat.example --reason "approved chat vendor"
-```
-
-Start local infrastructure:
-
-```powershell
-docker compose -f services/compose.yaml up -d postgres18
-```
-
-Apply migrations and create a site:
-
-```powershell
-cd app
 go run ./cmd/aegrail db migrate
-go run ./cmd/aegrail site add --name "Petlink Demo" --url https://petlink.example petlink
-go run ./cmd/aegrail site list
-$env:AEGRAIL_DATA_DIR="../data"
-go run ./cmd/aegrail import logs --site petlink --path testdata/evidence-sample
+go test ./...
 ```
 
-Create a distributed Hub inventory path:
-
-```powershell
-cd app
-go run ./cmd/aegrail inventory bootstrap single-site --kind wordpress --org acme --org-name "Acme" --project customer-site --project-name "Customer Site" --host web-01 --agent-id agt_web_01 --fingerprint SHA256:test --region eu-central --label role=web
-```
-
-For less common topologies, create each inventory object directly:
-
-```powershell
-cd app
-go run ./cmd/aegrail inventory org add --name "Acme" acme
-go run ./cmd/aegrail inventory project add --org acme --name "Customer Site" customer-site
-go run ./cmd/aegrail inventory env add --org acme --project customer-site --name Production production
-go run ./cmd/aegrail inventory app add --org acme --project customer-site --env production --name "Main Web" --kind wordpress main-web
-go run ./cmd/aegrail inventory host add --org acme --project customer-site --env production --hostname web-01 --region eu-central web-01
-go run ./cmd/aegrail inventory agent register --org acme --project customer-site --env production --host web-01 --agent-id agt_web_01 --fingerprint SHA256:test --version dev
-go run ./cmd/aegrail inventory deploy add --org acme --project customer-site --env production --app main-web --version v1.8.2 --commit a91f72c --actor github-actions
-```
-
-Smoke-test Hub event ingest:
-
-```powershell
-cd app
-go run ./cmd/aegrail hub ingest event --org acme --project customer-site --env production --app main-web --service frontend --host web-01 --agent-id agt_web_01 --batch-id smoke-001 --source cli --type file.created --target /var/www/app/uploads/avatar.php --severity high
-go run ./cmd/aegrail hub ingest batch list --org acme --project customer-site --env production
-go run ./cmd/aegrail hub baseline compare-files --org acme --project customer-site --env production --app main-web --since 24h
-go run ./cmd/aegrail hub correlate events --org acme --project customer-site --env production --app main-web --since 24h --save
-go run ./cmd/aegrail hub findings list --org acme --project customer-site --env production --app main-web
-go run ./cmd/aegrail report hub-findings --org acme --project customer-site --env production --app main-web --output ../data/reports/hub-findings.json
-```
-
-Run the signed Hub HTTP API:
-
-```powershell
-$env:AEGRAIL_HUB_INGEST_SECRET="change-me"
-go run ./cmd/aegrail hub serve
-```
-
-Signed ingest endpoint: `POST /api/v1/ingest/events`.
-
-Smoke-test Agent queue and replay:
-
-```powershell
-cd app
-$env:AEGRAIL_HUB_INGEST_SECRET="change-me"
-go run ./cmd/aegrail agent install --hub-url http://127.0.0.1:8787 --org acme --project customer-site --env production --app main-web --service frontend --host web-01 --agent-id agt_web_01 --region eu-central
-go run ./cmd/aegrail agent enqueue event --type file.created --target /var/www/app/uploads/avatar.php --severity high
-go run ./cmd/aegrail agent status
-go run ./cmd/aegrail agent send
-```
-
-Smoke-test Agent filesystem watching:
-
-```powershell
-cd app
-go run ./cmd/aegrail agent start --once --root /var/www/site --profile wordpress
-go run ./cmd/aegrail agent start --once --root /var/www/site --profile wordpress --secret $env:AEGRAIL_HUB_INGEST_SECRET
-go run ./cmd/aegrail agent start --root /var/www/shop --profile prestashop --interval 30s
-```
-
-The first `agent start` scan creates a local baseline. Later scans enqueue file events and, when `--secret` is provided, replay pending batches to the Hub.
-
-Planned multi-site agent configuration:
-
-```powershell
-cd app
-Get-Content configs/agent.multi-site.yaml.example
-```
-
-The target runtime is one host-level agent config with many site entries, so a server can monitor `example.com`, `example2.com`, and other hosted apps while sending clean per-site context to the Hub.
-
-Smoke-test Agent log tailing:
-
-```powershell
-cd app
-go run ./cmd/aegrail agent start --once --log /var/log/nginx/access.log --log /var/log/php-fpm/error.log
-go run ./cmd/aegrail agent start --once --log /var/log/nginx/access.log --secret $env:AEGRAIL_HUB_INGEST_SECRET
-```
-
-The first log scan records offsets without replaying historical lines. Later scans enqueue redacted log events.
-Common Nginx and Apache access lines are promoted to structured `log.access` events. PHP error lines are promoted to `log.php_error` events. The original redacted line and line hash stay in the payload.
-
-## Working Principles
-
-- Deterministic detection comes before LLM analysis.
-- Raw evidence is immutable and local by default.
-- Sensitive fields are redacted before reports, exports, embeddings, or LLM calls.
-- CLI and HTTP workflows must share the same runtime use-case packages.
-- Modules such as PrestaShop, WordPress, Mautic, Yii2, and Laravel plug into the core without changing it.
+See [Developer Experience](docs/09_DEVELOPER_EXPERIENCE.md) for local commands and test strategy.

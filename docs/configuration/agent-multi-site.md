@@ -3,6 +3,13 @@
 Status: planned
 Date: 2026-05-12
 
+Canonical context:
+
+- [Domain Model](../03_DOMAIN_MODEL.md)
+- [Evidence Collection](../04_EVIDENCE_COLLECTION.md)
+- [Operations And Security](../07_OPERATIONS_AND_SECURITY.md)
+- [Delivery Plan](../08_DELIVERY_PLAN.md)
+
 This document defines the target operator-facing configuration for running one Aegrail Agent on a server that hosts multiple sites or applications.
 
 The goal is simple:

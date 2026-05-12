@@ -1,42 +1,38 @@
 # Aegrail Docs
 
-Aegrail is the product and binary name for the security audit and incident triage tool described in `../idea.md`.
+Aegrail is an evidence-first monitoring and incident triage platform for WordPress, PrestaShop, and PHP application estates.
 
-## Current Documents
+## Canonical Documents
 
-- [Architecture](architecture.md): module boundaries, runtime pipeline, storage strategy, and Ollama integration.
-- [Distributed Architecture](distributed-architecture.md): Agent, DB Collector, Hub, inventory, and cross-host correlation model.
-- [Implementation Plan](implementation-plan.md): phased delivery plan from repository foundation to reports.
-- [Dashboard Plan](dashboard.md): planned Hub UI, views, API surface, and safety model.
-- [Agent Multi-Site Configuration](configuration/agent-multi-site.md): planned server-level agent config for monitoring many hosted sites.
-- [Pantheon WordPress Monitoring Plan](platforms/pantheon-wordpress.md): planned support for Pantheon-hosted single WordPress and WordPress Multisite networks.
-- [Browser Crawler And JavaScript Monitoring Plan](collectors/browser-crawler.md): static and rendered-page crawler direction for script inventory, tag managers, and JavaScript drift.
-- [Tracker](tracker.md): living task board for MVP work.
-- [Architecture Decision 0001](decisions/0001-modular-monolith.md): why the first implementation should be a modular monolith.
-- [Architecture Decision 0002](decisions/0002-aegrail-binary-name.md): why the binary is named `aegrail`.
-- [Architecture Decision 0003](decisions/0003-local-postgres18-pgvector.md): local PostgreSQL 18 and pgvector service choice.
-- [Architecture Decision 0004](decisions/0004-pgx-and-goose.md): PostgreSQL driver and migration tool choice.
-- [Architecture Decision 0005](decisions/0005-local-evidence-archive.md): local immutable evidence archive choice.
-- [Architecture Decision 0006](decisions/0006-first-wave-target-modules.md): WordPress and PrestaShop first-wave target choice.
-- [Architecture Decision 0007](decisions/0007-agent-hub-architecture.md): Agent plus Hub distributed architecture.
-- [Architecture Decision 0008](decisions/0008-one-repo-multiple-runtime-apps.md): one repo structured as Local, Hub, Agent, and Collector apps.
-- [Brand Assets](brand/README.md): existing visual identity and generated brand files.
-- [Services](../services/README.md): local Docker services for development.
+- [Product Vision](01_PRODUCT_VISION.md)
+- [Architecture](02_ARCHITECTURE.md)
+- [Domain Model](03_DOMAIN_MODEL.md)
+- [Evidence Collection](04_EVIDENCE_COLLECTION.md)
+- [Detection And Correlation](05_DETECTION_AND_CORRELATION.md)
+- [AI And LLM Strategy](06_AI_AND_LLM_STRATEGY.md)
+- [Operations And Security](07_OPERATIONS_AND_SECURITY.md)
+- [Delivery Plan](08_DELIVERY_PLAN.md)
+- [Developer Experience](09_DEVELOPER_EXPERIENCE.md)
 
-## Working Principles
+## Supporting Specs
 
-- Deterministic detection comes before LLM analysis.
-- Raw evidence is immutable and local by default.
-- Sensitive fields are redacted before reports, exports, embeddings, or LLM calls.
-- CLI and HTTP workflows must share the same runtime use-case packages.
-- Modules such as PrestaShop, WordPress, Mautic, Yii2, and Laravel plug into the core without changing it.
+- [Agent Multi-Site Configuration](configuration/agent-multi-site.md)
+- [Browser Crawler And JavaScript Monitoring](collectors/browser-crawler.md)
+- [Pantheon WordPress Monitoring](platforms/pantheon-wordpress.md)
+- [Tracker](tracker.md)
+- [Architecture Decisions](decisions)
+- [Brand Assets](brand/README.md)
+- [Services](../services/README.md)
 
-## Documentation Discipline
+## Documentation Principles
 
-- Keep `architecture.md` focused on durable boundaries and package responsibilities.
-- Keep `distributed-architecture.md` focused on Agent, Collector, Hub, inventory, and correlation behavior.
-- Keep `dashboard.md` focused on the Hub UI and API contract.
-- Keep `configuration/agent-multi-site.md` focused on operator-facing agent configuration.
-- Keep `implementation-plan.md` focused on phases, current status, and exit criteria.
-- Keep `tracker.md` as the task-level source of truth.
-- Add or update an ADR when a decision changes the shape of the system.
+- Keep product intent in `01_PRODUCT_VISION.md`.
+- Keep durable module boundaries in `02_ARCHITECTURE.md`.
+- Keep entities and relationships in `03_DOMAIN_MODEL.md`.
+- Keep collectors, agents, queues, and source behavior in `04_EVIDENCE_COLLECTION.md`.
+- Keep rules, findings, baselines, and dashboard triage in `05_DETECTION_AND_CORRELATION.md`.
+- Keep model behavior and prompt contracts in `06_AI_AND_LLM_STRATEGY.md`.
+- Keep deployment, secrets, auth, backups, and failure modes in `07_OPERATIONS_AND_SECURITY.md`.
+- Keep phases and MVP guardrails in `08_DELIVERY_PLAN.md`.
+- Keep local commands, testing, and repo conventions in `09_DEVELOPER_EXPERIENCE.md`.
+- Use supporting specs only for deeper topic detail.
