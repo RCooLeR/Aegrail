@@ -52,16 +52,14 @@ func (r *IngestRepository) SaveIngestBatch(ctx context.Context, batch domain.Ing
 			nullif($6::text, '')::uuid,
 			$7, $8, $9, $10, $11, $12, $13, $14, $15
 		)
-		ON CONFLICT (agent_id, external_id) DO UPDATE
-		SET external_id = hub_ingest_batches.external_id
+		ON CONFLICT (agent_id, external_id) DO NOTHING
 		RETURNING id::text, external_id, organization_id::text, project_id::text,
 			environment_id::text, coalesce(app_id::text, ''), coalesce(service_id::text, ''),
 			host_id::text, agent_id::text, source, body_sha256, signature, status,
-			event_count, received_at, metadata, created_at, (xmax = 0) AS created
+			event_count, received_at, metadata, created_at
 	`
 
 	var savedBatch domain.IngestBatch
-	var created bool
 	err = tx.QueryRow(
 		ctx,
 		insertBatch,
@@ -98,7 +96,6 @@ func (r *IngestRepository) SaveIngestBatch(ctx context.Context, batch domain.Ing
 		&savedBatch.ReceivedAt,
 		&savedBatch.Metadata,
 		&savedBatch.CreatedAt,
-		&created,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		existingBatch, existingEvents, err := r.findIngestBatch(ctx, tx, batch.AgentID, batch.ExternalID)
@@ -112,16 +109,6 @@ func (r *IngestRepository) SaveIngestBatch(ctx context.Context, batch domain.Ing
 	}
 	if err != nil {
 		return domain.IngestBatch{}, nil, false, err
-	}
-	if !created {
-		existingBatch, existingEvents, err := r.findIngestBatch(ctx, tx, batch.AgentID, batch.ExternalID)
-		if err != nil {
-			return domain.IngestBatch{}, nil, false, err
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return domain.IngestBatch{}, nil, false, err
-		}
-		return existingBatch, existingEvents, false, nil
 	}
 
 	savedEvents := make([]domain.IngestEvent, 0, len(events))

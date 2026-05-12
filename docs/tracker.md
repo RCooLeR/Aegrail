@@ -202,4 +202,5 @@ Last updated: 2026-05-12
 - [ ] FUT-011 Tag-manager and third-party script allowlist/baseline support.
 - [x] FUT-012 Initial browser crawler for static HTML script inventory.
 - [x] FUT-013 Rendered browser crawl mode with bounded network and tag-manager waits.
-- [ ] FUT-014 Emit browser crawl observations into Hub event storage.
+- [x] FUT-014 Emit browser crawl observations into Hub event storage.
+- [ ] FUT-015 Browser script drift findings from Hub event history.

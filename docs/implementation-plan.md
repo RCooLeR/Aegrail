@@ -142,6 +142,7 @@ Current browser crawler direction:
 - `aegrail collector browser crawl` can fetch supplied URLs, parse initial HTML, inventory scripts, redact script URLs, hash inline scripts, and detect obvious tag-manager IDs.
 - `--rendered` uses an installed Chrome/Chromium browser so dynamic scripts injected by page builders, widgets, consent tools, and tag managers are visible.
 - Rendered mode waits for browser readiness, network quiet, optional tag-manager settling, and a bounded extra settle delay.
+- `--ingest` saves browser crawl observations into Hub ingest events for timelines, correlation, and later findings.
 - Compare script domains and hashes against per-page baselines.
 - See [Browser Crawler And JavaScript Monitoring Plan](collectors/browser-crawler.md).
 
@@ -279,6 +280,7 @@ Current status:
 - `aegrail agent install`, `agent enqueue event`, `agent status`, and `agent send` support offline queue/replay.
 - `aegrail agent start` can baseline and poll filesystem paths, including WordPress and PrestaShop watch profiles, then queue and optionally replay signed events.
 - `aegrail agent start --log` can baseline and tail web/PHP log files or directories, enqueue redacted structured log events, and optionally replay signed events.
+- `aegrail collector browser crawl --ingest ...` stores static/rendered page and script observations as Hub events.
 - `aegrail inventory bootstrap single-site` creates the first common WordPress or PrestaShop Hub topology in one idempotent step.
 - Tailed Nginx/Apache access logs and PHP error logs now produce structured `log.access` and `log.php_error` events while retaining redacted raw line evidence.
 - `aegrail hub baseline compare-files` compares recent app-relative file observations across reporting hosts.

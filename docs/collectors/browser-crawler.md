@@ -37,6 +37,7 @@ The collector should live under the generic `collector` runtime app, with WordPr
 ```text
 aegrail collector browser crawl --url https://example.com --format json
 aegrail collector browser crawl --url https://example.com --rendered --wait-tag-manager --timeout 30s --format json
+aegrail collector browser crawl --url https://example.com --rendered --ingest --org acme --project customer-site --env production --app main-web --service frontend --host web-01 --agent-id agt_web_01
 aegrail collector browser crawl --url https://example.com --url https://example.com/contact --max-pages 10
 ```
 
@@ -51,11 +52,11 @@ Current implementation:
 - detects obvious Google Tag Manager and Google tag IDs
 - records browser network metadata for rendered script responses when available
 - supports bounded rendered waits with `--network-idle`, `--settle`, and `--wait-tag-manager`
+- can save crawl observations as normalized Hub ingest events with `--ingest`
 - outputs table or JSON
 
 Next rendered-browser work:
 
-- Store crawl results as normalized Hub events.
 - Store only normalized script evidence by default, not full page content.
 - Hash inline script bodies and fetched script responses.
 - Redact query strings and obvious tokens from URLs.
@@ -184,11 +185,14 @@ Initial event types:
 
 - `browser.crawl.completed`
 - `browser.script.observed`
+- `browser.tag_manager.detected`
+- `browser.coverage.warning`
+
+Planned baseline/drift event types:
+
 - `browser.script_domain.new`
 - `browser.inline_script.changed`
-- `browser.tag_manager.detected`
 - `browser.tag_manager_vendor.new`
-- `browser.coverage.warning`
 
 These events should carry the normal Hub labels:
 
