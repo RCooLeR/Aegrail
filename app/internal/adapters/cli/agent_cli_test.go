@@ -53,6 +53,78 @@ sites:
 	}
 }
 
+func TestAgentRunConfigQueuesBrowserCrawlEvents(t *testing.T) {
+	pageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<!doctype html><html><head><title>Example</title><script src="/app.js"></script></head><body></body></html>`))
+	}))
+	defer pageServer.Close()
+
+	root := t.TempDir()
+	configPath := filepath.Join(root, "agent.yaml")
+	content := fmt.Sprintf(`schema: aegrail.agent.server_config.v1
+hub:
+  url: http://127.0.0.1:8787
+identity:
+  org: acme
+  project: hosted-sites
+  environment: production
+  host: web-01
+  agent_id: agt_web_01
+runtime:
+  queue_dir: %q
+  state_dir: %q
+  interval: 30s
+sites:
+  - slug: example-com
+    domain: example.com
+    kind: wordpress
+    app: example-com
+    service: frontend
+    root: %q
+    browser_crawl:
+      enabled: true
+      rendered: false
+      max_pages: 1
+      timeout: 5s
+      urls:
+        - %q
+`, filepath.Join(root, "queue"), filepath.Join(root, "state"), filepath.Join(root, "site"), pageServer.URL)
+	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+
+	stdout := runCLICapture(t, "aegrail", "agent", "run", "--once", "--config", configPath)
+	if !strings.Contains(stdout, "Browser crawled 1 page(s)") {
+		t.Fatalf("stdout = %q, want browser crawl summary", stdout)
+	}
+
+	entries, err := os.ReadDir(filepath.Join(root, "queue", "pending"))
+	if err != nil {
+		t.Fatalf("ReadDir returned error: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("pending files = %d, want 1", len(entries))
+	}
+	contentBytes, err := os.ReadFile(filepath.Join(root, "queue", "pending", entries[0].Name()))
+	if err != nil {
+		t.Fatalf("ReadFile returned error: %v", err)
+	}
+	var batch agent.QueuedBatch
+	if err := json.Unmarshal(contentBytes, &batch); err != nil {
+		t.Fatalf("Unmarshal returned error: %v", err)
+	}
+	if batch.Source != "agent.browser" || batch.App != "example-com" {
+		t.Fatalf("batch source/app = %s/%s, want agent.browser/example-com", batch.Source, batch.App)
+	}
+	if batch.Labels["site_slug"] != "example-com" || batch.Labels["domain"] != "example.com" {
+		t.Fatalf("batch labels = %#v, want site context", batch.Labels)
+	}
+	if len(batch.Events) < 2 {
+		t.Fatalf("events = %d, want crawl and script events", len(batch.Events))
+	}
+}
+
 func TestAgentStartOnceSendsOneRequestForOneQueuedChange(t *testing.T) {
 	var requests int32
 	var mu sync.Mutex

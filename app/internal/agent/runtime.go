@@ -68,6 +68,16 @@ type EnqueueEventInput struct {
 	Payload   map[string]any
 }
 
+type EnqueueEventsInput struct {
+	BatchID string
+	App     string
+	Service string
+	Source  string
+	Region  string
+	Labels  map[string]string
+	Events  []EnqueueEventInput
+}
+
 type QueuedBatch struct {
 	Schema      string            `json:"schema"`
 	QueuedAt    time.Time         `json:"queued_at"`
@@ -214,6 +224,17 @@ func (r *Runtime) Status(ctx context.Context) (QueueStatus, error) {
 }
 
 func (r *Runtime) EnqueueEvent(ctx context.Context, input EnqueueEventInput) (QueuedBatch, string, error) {
+	return r.EnqueueEvents(ctx, EnqueueEventsInput{
+		BatchID: input.BatchID,
+		App:     input.App,
+		Service: input.Service,
+		Region:  input.Region,
+		Labels:  input.Labels,
+		Events:  []EnqueueEventInput{input},
+	})
+}
+
+func (r *Runtime) EnqueueEvents(ctx context.Context, input EnqueueEventsInput) (QueuedBatch, string, error) {
 	identity, err := r.LoadIdentity(ctx)
 	if err != nil {
 		return QueuedBatch{}, "", err
@@ -221,21 +242,9 @@ func (r *Runtime) EnqueueEvent(ctx context.Context, input EnqueueEventInput) (Qu
 	if err := ensureQueueDirs(identity.QueueDir); err != nil {
 		return QueuedBatch{}, "", err
 	}
-	eventType := strings.TrimSpace(input.Type)
-	if eventType == "" {
-		return QueuedBatch{}, "", errors.New("event type is required")
-	}
-	severity := strings.TrimSpace(input.Severity)
-	if severity == "" {
-		severity = string(domain.SeverityInfo)
-	}
 	batchID := strings.TrimSpace(input.BatchID)
 	if batchID == "" {
 		batchID = newBatchID(r.now)
-	}
-	eventTime := input.EventTime
-	if eventTime.IsZero() {
-		eventTime = r.now().UTC()
 	}
 	region := strings.TrimSpace(input.Region)
 	if region == "" {
@@ -256,9 +265,41 @@ func (r *Runtime) EnqueueEvent(ctx context.Context, input EnqueueEventInput) (Qu
 			labels[key] = strings.TrimSpace(value)
 		}
 	}
-	payload := input.Payload
-	if payload == nil {
-		payload = map[string]any{}
+	if len(input.Events) == 0 {
+		return QueuedBatch{}, "", errors.New("at least one event is required")
+	}
+	source := strings.TrimSpace(input.Source)
+	if source == "" {
+		source = "agent-queue"
+	}
+	events := make([]QueuedEvent, 0, len(input.Events))
+	for _, eventInput := range input.Events {
+		eventType := strings.TrimSpace(eventInput.Type)
+		if eventType == "" {
+			return QueuedBatch{}, "", errors.New("event type is required")
+		}
+		severity := strings.TrimSpace(eventInput.Severity)
+		if severity == "" {
+			severity = string(domain.SeverityInfo)
+		}
+		eventTime := eventInput.EventTime
+		if eventTime.IsZero() {
+			eventTime = r.now().UTC()
+		}
+		payload := eventInput.Payload
+		if payload == nil {
+			payload = map[string]any{}
+		}
+		events = append(events, QueuedEvent{
+			Time:     eventTime.UTC(),
+			Type:     eventType,
+			Target:   strings.TrimSpace(eventInput.Target),
+			Severity: severity,
+			Message:  strings.TrimSpace(eventInput.Message),
+			Region:   region,
+			Labels:   cloneStringMap(eventInput.Labels),
+			Payload:  payload,
+		})
 	}
 	batch := QueuedBatch{
 		Schema:      QueueSchema,
@@ -271,21 +312,10 @@ func (r *Runtime) EnqueueEvent(ctx context.Context, input EnqueueEventInput) (Qu
 		Host:        identity.Host,
 		AgentID:     identity.AgentID,
 		BatchID:     batchID,
-		Source:      "agent-queue",
+		Source:      source,
 		Region:      region,
 		Labels:      labels,
-		Events: []QueuedEvent{
-			{
-				Time:     eventTime.UTC(),
-				Type:     eventType,
-				Target:   strings.TrimSpace(input.Target),
-				Severity: severity,
-				Message:  strings.TrimSpace(input.Message),
-				Region:   region,
-				Labels:   cloneStringMap(input.Labels),
-				Payload:  payload,
-			},
-		},
+		Events:      events,
 	}
 	content, err := json.MarshalIndent(batch, "", "  ")
 	if err != nil {

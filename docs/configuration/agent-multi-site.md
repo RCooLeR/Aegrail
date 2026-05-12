@@ -1,6 +1,6 @@
 # Aegrail Agent Multi-Site Configuration
 
-Status: in progress; validation plus file/log multi-site runs implemented
+Status: in progress; validation plus file/log/browser multi-site runs implemented
 Date: 2026-05-12
 
 Canonical context:
@@ -57,7 +57,7 @@ go run ./cmd/aegrail agent config validate --config configs/agent.multi-site.yam
 go run ./cmd/aegrail agent run --config configs/agent.multi-site.yaml.example
 ```
 
-The current implementation uses the config for file watching, log tailing, queueing, replay, and per-site app/service labels. Database collectors and browser crawls are represented in the config but still need to be wired into `agent run`.
+The current implementation uses the config for file watching, log tailing, browser crawls, queueing, replay, and per-site app/service labels. Database collectors are represented in the config but still need to be wired into `agent run`.
 
 ## Configuration Shape
 
@@ -326,9 +326,9 @@ Done:
 4. Add `aegrail agent config validate`.
 5. Add `aegrail agent run --config ... --once`.
 6. Extend `agent run` to continuously scan every configured site and replay queued batches.
+7. Run browser crawls from configured `browser_crawl`.
 
 Next:
 
 1. Run database collectors from configured `databases`.
-2. Run browser crawls from configured `browser_crawl`.
-3. Report config coverage to the Hub for dashboard views.
+2. Report config coverage to the Hub for dashboard views.

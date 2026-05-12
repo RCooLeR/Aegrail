@@ -62,7 +62,7 @@ Last updated: 2026-05-12
 - [x] Add continuous multi-site agent runner.
 - [ ] Report config coverage to Hub.
 - [ ] Run database collectors from multi-site agent config.
-- [ ] Run browser crawls from multi-site agent config.
+- [x] Run browser crawls from multi-site agent config.
 
 ## Phase 3: WordPress And PrestaShop Evidence
 

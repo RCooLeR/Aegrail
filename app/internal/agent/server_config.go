@@ -315,6 +315,9 @@ func ValidateServerConfig(config ServerConfig) error {
 				}
 			}
 		}
+		if site.BrowserCrawl.Enabled && len(site.BrowserCrawl.URLs) == 0 {
+			issues = append(issues, prefix+".browser_crawl.urls is required when browser_crawl.enabled is true")
+		}
 		if site.BrowserCrawl.Timeout != "" {
 			if _, err := time.ParseDuration(site.BrowserCrawl.Timeout); err != nil {
 				issues = append(issues, prefix+".browser_crawl.timeout must be a valid duration")
@@ -455,6 +458,10 @@ func siteEventLabels(site ServerSiteConfig) map[string]string {
 		labels["site_kind"] = site.Kind
 	}
 	return labels
+}
+
+func SiteEventLabels(site ServerSiteConfig) map[string]string {
+	return siteEventLabels(NormalizeServerConfig(ServerConfig{Sites: []ServerSiteConfig{site}}).Sites[0])
 }
 
 func siteStateDir(config ServerConfig, site ServerSiteConfig) string {

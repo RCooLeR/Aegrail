@@ -23,7 +23,7 @@ Aegrail already has:
 - browser script drift findings and allowlist workflow
 - Pantheon WordPress monitoring plan
 - dashboard and multi-site agent config plans
-- multi-site Agent YAML config loading, validation, file watching, log tailing, and continuous `agent run`
+- multi-site Agent YAML config loading, validation, file watching, log tailing, browser crawling, and continuous `agent run`
 
 ## Phase 0: Product Foundation
 
@@ -50,7 +50,7 @@ Exit criteria:
 
 Goal: make distributed evidence collection real.
 
-Status: in progress, functional for files, logs, queue, ingest, and multi-site agent config runs.
+Status: in progress, functional for files, logs, browser crawls, queue, ingest, and multi-site agent config runs.
 
 Deliverables:
 
@@ -70,7 +70,7 @@ Exit criteria:
 - Hub can store signed event batches
 - events carry distributed context
 - findings can be persisted and listed
-- one agent can emit site-scoped file and log events from many configured sites
+- one agent can emit site-scoped file, log, and browser crawl events from many configured sites
 
 ## Phase 2: Multi-Site Agent Configuration
 
@@ -85,7 +85,7 @@ Deliverables:
 - per-site app/service/label event context
 - per-site file and log state paths
 - config coverage reporting to Hub
-- database and browser collectors attached to the same config
+- database collectors attached to the same config
 
 Exit criteria:
 

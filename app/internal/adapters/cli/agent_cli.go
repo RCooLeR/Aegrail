@@ -1,13 +1,16 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os/signal"
+	"strings"
 	"syscall"
 	"text/tabwriter"
 	"time"
 
 	"github.com/rcooler/aegrail/internal/agent"
+	"github.com/rcooler/aegrail/internal/collector"
 	"github.com/rcooler/aegrail/internal/domain"
 	urfavecli "github.com/urfave/cli/v2"
 )
@@ -180,9 +183,29 @@ func agentRunCommand() *urfavecli.Command {
 
 			runOnce := func(config agent.ServerConfig) error {
 				secret := agent.ResolveServerConfigSecret(config, c.String("secret"))
-				result, err := runtime.RunServerConfigOnce(ctx, config, secret, sendLimit)
+				result, err := runtime.RunServerConfigOnce(ctx, config, "", sendLimit)
 				if err != nil {
 					return err
+				}
+				browserResult, err := runConfiguredBrowserCrawls(ctx, runtime, config)
+				if err != nil {
+					return err
+				}
+				result.Queued += browserResult.Queued
+				if secret != "" {
+					send, err := runtime.SendQueued(ctx, secret, sendLimit)
+					if err != nil {
+						return err
+					}
+					result.Sent = send.Sent
+					result.Failed = send.Failed
+					result.Pending = send.PendingAfter
+				} else {
+					status, err := runtime.Status(ctx)
+					if err != nil {
+						return err
+					}
+					result.Pending = status.Pending
 				}
 				fmt.Fprintf(c.App.Writer, "Scanned %d site(s); queued %d event(s); sent %d; failed %d; pending %d\n", len(result.Sites), result.Queued, result.Sent, result.Failed, result.Pending)
 				for _, site := range result.Sites {
@@ -197,6 +220,12 @@ func agentRunCommand() *urfavecli.Command {
 						site.Queued,
 						site.StateDir,
 					)
+				}
+				if browserResult.Pages > 0 || browserResult.Queued > 0 {
+					fmt.Fprintf(c.App.Writer, "Browser crawled %d page(s); queued %d event(s)\n", browserResult.Pages, browserResult.Queued)
+					for _, site := range browserResult.Sites {
+						fmt.Fprintf(c.App.Writer, "  %s browser_pages=%d queued=%d\n", site.Slug, site.Pages, site.Queued)
+					}
 				}
 				return nil
 			}
@@ -228,6 +257,113 @@ func agentRunCommand() *urfavecli.Command {
 			}
 		},
 	}
+}
+
+type agentBrowserRunResult struct {
+	Sites  []agentBrowserSiteRunResult
+	Pages  int
+	Queued int
+}
+
+type agentBrowserSiteRunResult struct {
+	Slug   string
+	Pages  int
+	Queued int
+}
+
+func runConfiguredBrowserCrawls(ctx context.Context, runtime *agent.Runtime, config agent.ServerConfig) (agentBrowserRunResult, error) {
+	collectorRuntime := collector.NewRuntime(collector.Config{Name: "browser"})
+	summary := agentBrowserRunResult{}
+	for _, site := range config.Sites {
+		crawl := site.BrowserCrawl
+		if !crawl.Enabled || len(crawl.URLs) == 0 {
+			continue
+		}
+		timeout, err := parseOptionalDuration(crawl.Timeout)
+		if err != nil {
+			return agentBrowserRunResult{}, fmt.Errorf("site %s browser timeout: %w", site.Slug, err)
+		}
+		crawlResult, err := collectorRuntime.CrawlBrowserPages(ctx, collector.BrowserCrawlInput{
+			URLs:           crawl.URLs,
+			MaxPages:       crawl.MaxPages,
+			Timeout:        timeout,
+			SameHostOnly:   true,
+			Rendered:       crawl.Rendered,
+			WaitTagManager: crawl.WaitTagManager,
+		})
+		if err != nil {
+			return agentBrowserRunResult{}, fmt.Errorf("site %s browser crawl: %w", site.Slug, err)
+		}
+		labels := agent.SiteEventLabels(site)
+		events := collector.BuildBrowserCrawlEvents(crawlResult, labels)
+		if len(events) == 0 {
+			summary.Sites = append(summary.Sites, agentBrowserSiteRunResult{Slug: site.Slug, Pages: len(crawlResult.Pages)})
+			summary.Pages += len(crawlResult.Pages)
+			continue
+		}
+		inputEvents := make([]agent.EnqueueEventInput, 0, len(events))
+		for _, event := range events {
+			inputEvents = append(inputEvents, agent.EnqueueEventInput{
+				EventTime: event.EventTime,
+				Type:      event.Type,
+				Target:    event.Target,
+				Severity:  event.Severity,
+				Message:   event.Message,
+				Labels:    event.Labels,
+				Payload:   event.Payload,
+			})
+		}
+		if _, _, err := runtime.EnqueueEvents(ctx, agent.EnqueueEventsInput{
+			BatchID: browserQueueBatchID(site, crawlResult),
+			App:     site.App,
+			Service: site.Service,
+			Source:  "agent.browser",
+			Region:  config.Identity.Region,
+			Labels:  labels,
+			Events:  inputEvents,
+		}); err != nil {
+			return agentBrowserRunResult{}, fmt.Errorf("site %s browser enqueue: %w", site.Slug, err)
+		}
+		summary.Pages += len(crawlResult.Pages)
+		summary.Queued += len(events)
+		summary.Sites = append(summary.Sites, agentBrowserSiteRunResult{
+			Slug:   site.Slug,
+			Pages:  len(crawlResult.Pages),
+			Queued: len(events),
+		})
+	}
+	return summary, nil
+}
+
+func parseOptionalDuration(value string) (time.Duration, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, nil
+	}
+	return time.ParseDuration(value)
+}
+
+func browserQueueBatchID(site agent.ServerSiteConfig, result collector.BrowserCrawlResult) string {
+	timestamp := result.FinishedAt
+	if timestamp.IsZero() {
+		timestamp = time.Now().UTC()
+	}
+	return "browser-" + cliSafeID(site.Slug) + "-" + timestamp.UTC().Format("20060102T150405.000000000Z")
+}
+
+func cliSafeID(value string) string {
+	var builder strings.Builder
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
+			builder.WriteRune(r)
+			continue
+		}
+		builder.WriteByte('_')
+	}
+	if builder.Len() == 0 {
+		return "site"
+	}
+	return builder.String()
 }
 
 func agentSendCommand(name string, usage string) *urfavecli.Command {
