@@ -71,7 +71,7 @@ Last updated: 2026-05-13
 - [x] Add WordPress module spec package.
 - [x] Add PrestaShop module spec package.
 - [x] Document Pantheon WordPress and Multisite monitoring.
-- [~] Add WordPress DB snapshot importer or collector.
+- [x] Add WordPress DB snapshot importer or collector.
 - [x] Snapshot redacted WordPress users.
 - [x] Snapshot redacted WordPress usermeta capabilities.
 - [x] Snapshot tracked WordPress options as redacted entities.
@@ -85,12 +85,13 @@ Last updated: 2026-05-13
 - [x] Detect new or changed WordPress plugins/themes.
 - [x] Detect suspicious WordPress cron task changes.
 - [x] Detect script-bearing WordPress content changes.
-- [~] Add PrestaShop DB snapshot importer or collector.
+- [x] Add PrestaShop DB snapshot importer or collector.
 - [x] Snapshot redacted PrestaShop employees.
 - [x] Snapshot PrestaShop modules.
 - [x] Snapshot PrestaShop configuration.
 - [x] Cover common PrestaShop payment and mail module configuration keys.
-- [~] Snapshot PrestaShop tabs, hooks, and access.
+- [x] Snapshot PrestaShop tab, hook, and access counts.
+- [ ] Add entity-level PrestaShop tab, hook, and access snapshots.
 - [x] Emit redacted PrestaShop DB snapshot diff events.
 - [x] Detect new PrestaShop employees and SuperAdmin accounts.
 - [x] Detect suspicious PrestaShop configuration values.
@@ -154,7 +155,8 @@ Last updated: 2026-05-13
 - [x] Add rendered browser crawl mode with bounded waits.
 - [x] Emit browser crawl observations into Hub event storage.
 - [ ] Add SSH/SFTP collector.
-- [~] Add MySQL read-only collector.
+- [x] Add MySQL/MariaDB read-only collector for configured sites.
+- [ ] Add standalone remote MySQL collector workflow.
 - [ ] Add Pantheon provider collector for SFTP logs and DB snapshots.
 - [ ] Add Pantheon WordPress Multisite network inventory and snapshot support.
 - [ ] Add scheduled daily health reports.

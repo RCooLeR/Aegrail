@@ -22,6 +22,7 @@ Supporting specs:
 
 - [Agent Multi-Site Configuration](docs/configuration/agent-multi-site.md)
 - [Browser Crawler And JavaScript Monitoring](docs/collectors/browser-crawler.md)
+- [Dashboard API Pointer](docs/dashboard.md)
 - [Pantheon WordPress Monitoring](docs/platforms/pantheon-wordpress.md)
 - [Tracker](docs/tracker.md)
 - [Architecture Decisions](docs/decisions)

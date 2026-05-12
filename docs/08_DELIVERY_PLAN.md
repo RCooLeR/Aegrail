@@ -26,7 +26,7 @@ Aegrail already has:
 - browser drift finding-to-allowlist handoff command and API
 - versioned Hub rule registry with categories, platforms, evidence types, and action hints
 - deployment-aware finding scoring for browser drift and database snapshot findings
-- built-in rule fixture evaluation sets for clean, suspicious, browser drift, deployment-window, and multi-host drift cases
+- ten built-in rule fixture evaluation cases covering clean, suspicious, file path, admin request, database snapshot, browser drift, deployment-window, and multi-host drift signals
 - generic suspicious file path findings for PHP/webroot tampering
 - admin request anomaly findings for suspicious login/admin traffic
 - Pantheon WordPress monitoring plan
@@ -37,6 +37,7 @@ Aegrail already has:
 - WordPress option, active plugin, active theme, and Multisite network option entity snapshots
 - WordPress cron and script-bearing content entity snapshots
 - PrestaShop configuration entity snapshots
+- MySQL/MariaDB read-only site database collector for configured WordPress and PrestaShop sites
 - Agent config coverage events and Hub coverage read API
 - Hub inventory read APIs for apps, services, hosts, agents, and topology
 - Hub deployment and browser script observation read APIs
@@ -153,7 +154,7 @@ Exit criteria:
 - suspicious file paths can produce standalone findings without duplicating stronger incident chains
 - admin/login access-log anomalies can produce standalone findings without raw IPs in summaries
 - deployment windows influence risk without hiding suspicious changes
-- built-in fixtures verify clean, suspicious, browser, deployment, and multi-host drift behavior
+- built-in fixtures verify clean, suspicious, file path, admin request, database snapshot, browser, deployment, and multi-host drift behavior
 - finding triage status can be updated without losing deterministic evidence refreshes
 
 ## Phase 5: Hub API And Dashboard

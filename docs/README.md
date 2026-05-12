@@ -18,6 +18,7 @@ Aegrail is an evidence-first monitoring and incident triage platform for WordPre
 
 - [Agent Multi-Site Configuration](configuration/agent-multi-site.md)
 - [Browser Crawler And JavaScript Monitoring](collectors/browser-crawler.md)
+- [Dashboard API Pointer](dashboard.md)
 - [Pantheon WordPress Monitoring](platforms/pantheon-wordpress.md)
 - [Tracker](tracker.md)
 - [Architecture Decisions](decisions)

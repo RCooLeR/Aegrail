@@ -148,7 +148,7 @@ Current implementation:
 - Later snapshots emit redacted diff events such as `db.snapshot.check_changed`, `db.entity.added`, and `db.entity.changed`.
 - Warning-only snapshots do not replace the previous known-good DB state.
 - Hub correlation turns first-wave WordPress and PrestaShop DB diff events into deterministic findings.
-- Full row snapshots, richer WordPress cron scheduling details, broader builder coverage, more PrestaShop module fixture sets, and PostgreSQL collector support are still planned.
+- Full row snapshots, richer WordPress cron scheduling details, broader builder coverage, entity-level PrestaShop tab/hook/access snapshots, more PrestaShop module fixture sets, PostgreSQL collector support, and standalone remote DB collector workflows are still planned.
 
 Minimum WordPress checks:
 

@@ -6,7 +6,7 @@ This directory contains the Go module for the `aegrail` binary and runtime apps.
 
 - Local: local imports, investigation, and reports.
 - Hub: signed ingest, inventory, timelines, findings, reports, and dashboard APIs.
-- Agent: per-server monitoring, local queueing, file watching, log tailing, and planned multi-site config.
+- Agent: per-server monitoring, local queueing, file watching, log tailing, database checks, browser crawls, and multi-site config.
 - Collector: database, browser, and provider-specific collection.
 
 ## Layout
@@ -39,6 +39,7 @@ go run ./cmd/aegrail db migrate
 go run ./cmd/aegrail inventory bootstrap single-site --kind wordpress --org acme --project customer-site --host web-01 --agent-id agt_web_01 --fingerprint SHA256:test
 go run ./cmd/aegrail hub serve
 go run ./cmd/aegrail hub findings list --org acme --project customer-site --env production --app main-web
+go run ./cmd/aegrail hub rules evaluate --fail-on-mismatch
 go run ./cmd/aegrail agent status
 go run ./cmd/aegrail agent start --once --root /var/www/site --profile wordpress
 go run ./cmd/aegrail agent start --once --log /var/log/nginx/access.log

@@ -68,12 +68,12 @@ Current implementation:
 - can approve browser drift findings directly with `hub browser-scripts allow-finding`
 - outputs table or JSON
 
-Next rendered-browser work:
+Remaining rendered-browser work:
 
-- Store only normalized script evidence by default, not full page content.
-- Hash inline script bodies and fetched script responses.
-- Redact query strings and obvious tokens from URLs.
+- Hash fetched script response bodies when browser/network metadata makes the body safely available.
 - Add richer browser drift fixture sets.
+- Decide whether crawl observations need snapshot tables in addition to Hub ingest events.
+- Design authenticated-page crawling without storing unsafe browser cookies.
 
 ## What To Capture
 
