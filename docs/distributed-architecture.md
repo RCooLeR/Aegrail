@@ -54,6 +54,18 @@ Responsibilities:
 - detect role, permission, API key, webhook, payment, email, and admin table changes
 - send DB events to the Hub with the same labels as host agents
 
+### Aegrail Browser Crawler Collector
+
+Renders selected public pages in a real browser and records JavaScript evidence that is only visible after client-side execution.
+
+Responsibilities:
+
+- crawl a bounded set of seed URLs
+- wait for page load, network quiet, and optional tag-manager settling
+- inventory external scripts, inline script hashes, dynamically injected scripts, and script domains
+- identify new or changed script domains compared with a baseline
+- emit browser evidence events to the Hub for correlation with WordPress DB, file, log, and deployment events
+
 ### Aegrail Hub
 
 Receives agent and collector data.
@@ -244,6 +256,7 @@ When `--save` is used, each chain becomes a `hub_findings` row keyed by environm
 8. Add cross-host file observation comparison.
 9. Add first correlation rules across hosts, apps, services, and DB events.
 10. Persist and deduplicate Hub findings from deterministic correlation runs.
+11. Add browser crawler collector for rendered JavaScript and tag-manager script drift.
 
 Current signed ingest endpoint:
 

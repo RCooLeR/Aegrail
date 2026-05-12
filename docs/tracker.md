@@ -32,6 +32,7 @@ Last updated: 2026-05-12
 - [x] A-009 Shape Aegrail as Agent plus Hub for distributed monitoring.
 - [x] A-010 Keep one repo while structuring code as Local, Hub, Agent, and Collector apps.
 - [x] A-011 Add Pantheon WordPress hosting to the first-wave monitoring plan.
+- [x] A-012 Add browser crawler JavaScript monitoring to the collector plan.
 - [?] A-005 Decide credential encryption approach for local deployments.
 - [?] A-006 Decide whether scheduled jobs live in the main binary or a worker command.
 
@@ -136,6 +137,7 @@ Last updated: 2026-05-12
 
 - [x] WP-001 Add `internal/modules/wordpress`.
 - [x] WP-013 Document Pantheon WordPress and Multisite monitoring plan.
+- [x] WP-014 Document browser crawler monitoring for page builders and tag managers.
 - [ ] WP-002 Import WordPress DB dump or structured export.
 - [ ] WP-003 Snapshot users.
 - [ ] WP-004 Snapshot usermeta capabilities.
@@ -165,6 +167,7 @@ Last updated: 2026-05-12
 - [ ] R-006 Add admin request anomaly rules.
 - [ ] R-007 Add traffic spike rules.
 - [ ] R-008 Add risk scoring.
+- [ ] R-009 Add suspicious rendered JavaScript drift rules.
 
 ## Ollama and Embeddings
 
@@ -195,3 +198,5 @@ Last updated: 2026-05-12
 - [ ] FUT-007 Slack, Teams, or email alerts.
 - [ ] FUT-008 Pantheon provider collector for SFTP logs and DB snapshots.
 - [ ] FUT-009 Pantheon WordPress Multisite network inventory and snapshot support.
+- [ ] FUT-010 Browser crawler collector for rendered-page JavaScript inventory.
+- [ ] FUT-011 Tag-manager and third-party script allowlist/baseline support.

@@ -10,6 +10,7 @@ Aegrail is a CLI-first security audit and incident triage tool for small website
 - [Distributed Architecture](docs/distributed-architecture.md): Agent, DB Collector, Hub, inventory, and cross-host correlation model.
 - [Implementation Plan](docs/implementation-plan.md): phased delivery plan from repository foundation to reports.
 - [Pantheon WordPress Monitoring Plan](docs/platforms/pantheon-wordpress.md): planned support for Pantheon-hosted single WordPress and WordPress Multisite networks.
+- [Browser Crawler And JavaScript Monitoring Plan](docs/collectors/browser-crawler.md): planned rendered-page crawler for script inventory, tag managers, and JavaScript drift.
 - [Tracker](docs/tracker.md): living task board for MVP work.
 - [Architecture Decision 0001](docs/decisions/0001-modular-monolith.md): why the first implementation should be a modular monolith.
 - [Architecture Decision 0002](docs/decisions/0002-aegrail-binary-name.md): why the binary is named `aegrail`.

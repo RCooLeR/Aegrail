@@ -1,0 +1,195 @@
+# Browser Crawler And JavaScript Monitoring Plan
+
+Status: planned
+Date: 2026-05-12
+
+## Goal
+
+Aegrail should include a lightweight browser crawler collector that renders selected public pages and records the JavaScript actually loaded by the browser. This is needed for WordPress page builders, injected widgets, tag managers, compromised options, and malicious third-party scripts that are not visible from server-side file or database snapshots alone.
+
+The first version should be small and practical:
+
+```text
+seed URLs
+  -> render in headless browser
+  -> wait for page and tag-manager scripts to settle
+  -> collect script inventory and network evidence
+  -> compare against baseline
+  -> emit Hub events/findings
+```
+
+## Why A Simple HTTP Fetch Is Not Enough
+
+Many risky scripts are added after the initial HTML response:
+
+- Google Tag Manager or another tag manager injects scripts.
+- WordPress page builders render late widgets.
+- consent/cookie tools inject marketing scripts after startup.
+- compromised options/widgets add inline JavaScript.
+- third-party checkout, chat, analytics, or ad code loads follow-up scripts.
+
+Aegrail needs a real browser mode, not only `GET /page` parsing.
+
+## Collector Shape
+
+The collector should live under the generic `collector` runtime app, with WordPress-aware presets:
+
+```text
+aegrail collector browser crawl --url https://example.com --preset wordpress
+aegrail collector browser crawl --url https://example.com --url https://example.com/contact --wait-tag-manager --save-baseline
+```
+
+Planned implementation approach:
+
+- Use a headless browser through a Go adapter such as Chrome DevTools Protocol.
+- Keep browser automation behind a port so the collector can be tested with fake page results.
+- Store only normalized script evidence by default, not full page content.
+- Hash inline script bodies and fetched script responses.
+- Redact query strings and obvious tokens from URLs.
+
+## What To Capture
+
+Per crawl run:
+
+- crawl ID
+- page URL
+- final URL after redirects
+- status code
+- page title
+- canonical URL when present
+- detected CMS/page-builder hints
+- timing milestones
+- evidence coverage warnings
+
+Per script:
+
+- source type: `html`, `dom`, `network`, `inline`, `eval-like`
+- script URL when external
+- normalized domain
+- redacted query
+- response status and content type when fetched by browser
+- SHA-256 of script response when available
+- SHA-256 of inline script body
+- script tag attributes such as `async`, `defer`, `type`, `integrity`, `nonce`, `crossorigin`
+- initiator when available
+- whether the script was present in initial HTML or injected later
+- first observed time relative to navigation start
+
+Per tag manager:
+
+- detected container ID such as `GTM-...`
+- scripts injected after tag manager load
+- `dataLayer` events observed during the crawl when safe to record
+- warning when the container is present but scripts did not settle before timeout
+
+## Waiting Strategy
+
+Yes: Aegrail should wait for tag-manager-loaded scripts, but bounded and configurable.
+
+Default browser wait plan:
+
+1. Navigate and wait for `DOMContentLoaded`.
+2. Wait for browser `load`.
+3. Wait for network quiet, for example no relevant network activity for 2 seconds.
+4. If tag-manager mode is enabled, wait for known tag-manager activity to settle.
+5. Apply an extra settle delay, for example 3 to 5 seconds.
+6. Stop at a hard timeout, for example 30 seconds, and record a coverage warning.
+
+Suggested flags:
+
+```text
+--timeout 30s
+--network-idle 2s
+--settle 5s
+--wait-tag-manager
+--max-pages 10
+--same-host-only
+```
+
+The collector should not wait forever. A timeout is still useful evidence if it says which scripts were seen before the cutoff.
+
+## Baseline And Drift
+
+The crawler should support baselines per app/environment/page:
+
+```text
+page: https://example.com/
+expected script domains:
+  - example.com
+  - www.googletagmanager.com
+  - www.google-analytics.com
+  - trusted-chat.example
+```
+
+Suspicious changes:
+
+- new script domain
+- new inline script hash
+- known plugin/page-builder script changed outside deployment
+- script loaded from typo-squatted domain
+- script loaded from raw IP address
+- script loaded over plain HTTP on an HTTPS page
+- script URL contains suspicious encoded payload
+- tag-manager container changed
+- tag-manager injected a new unapproved vendor
+- same page differs between web nodes or environments
+
+Baseline comparison should use normalized domains and hashes. Reports should show enough evidence to review the change without dumping full script bodies by default.
+
+## WordPress-Specific Value
+
+WordPress-specific presets should seed:
+
+- home page
+- login page if intentionally allowed
+- checkout/cart/account pages for WooCommerce when configured
+- top menu URLs from a sitemap or user-provided list
+- representative page-builder pages
+- high-value landing pages
+
+The crawler should look for hints from:
+
+- Elementor
+- Divi
+- WPBakery/Visual Composer
+- Gutenberg blocks
+- WooCommerce
+- common consent/tag/chat plugins
+
+Findings should connect browser evidence back to WordPress DB/file evidence when possible. For example:
+
+```text
+wp_options changed active plugin
+  -> browser crawl now loads new vendor script
+  -> finding: plugin activation introduced new third-party JavaScript
+```
+
+## Hub Events
+
+Initial event types:
+
+- `browser.crawl.completed`
+- `browser.script.observed`
+- `browser.script_domain.new`
+- `browser.inline_script.changed`
+- `browser.tag_manager.detected`
+- `browser.tag_manager_vendor.new`
+- `browser.coverage.warning`
+
+These events should carry the normal Hub labels:
+
+- org
+- project
+- environment
+- app
+- service
+- host or collector identity
+- page URL
+- region
+
+## Open Questions
+
+- Should the first implementation use a bundled Chromium dependency, an installed Chrome, or a remote browser endpoint?
+- Should crawl results be stored as Hub ingest events only, or also as snapshot tables for faster baseline comparisons?
+- How should authenticated pages be handled without storing browser cookies unsafely?
+- Should Aegrail support customer-provided allowlists before the first crawl, or learn an initial baseline first and require review?

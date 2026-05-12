@@ -131,7 +131,7 @@ internal/agent
 
 internal/collector
   Collector runtime: database and app-specific state collection for WordPress,
-  PrestaShop, and later Mautic/Yii2/Laravel.
+  PrestaShop, browser-rendered pages, and later Mautic/Yii2/Laravel.
 
 internal/ports
   Interfaces for storage, collectors, parsers, redactors, rule engines,
@@ -303,6 +303,8 @@ A module can register:
 - Rules.
 - Report fragments.
 - Suggested next checks.
+
+Browser crawling is a collector capability rather than a CMS module. The collector should render a small set of pages, wait for dynamic scripts to settle, inventory external and inline JavaScript, and feed script-domain/hash drift back into the normal Hub event and findings pipeline. WordPress modules can provide presets and interpretation for page builders, WooCommerce, widgets, and tag-manager-driven scripts.
 
 The core rule engine should treat module rules and generic rules the same way.
 

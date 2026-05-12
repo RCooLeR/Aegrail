@@ -99,6 +99,7 @@ Deliverables:
 - WordPress module package.
 - SQL dump or CSV snapshot importer for initial MVP.
 - Pantheon WordPress monitoring plan for access logs and database snapshots.
+- Browser crawler monitoring plan for rendered JavaScript and tag-manager-loaded scripts.
 - PrestaShop snapshot builders for employees, sessions, logs, modules, configuration, tabs, hooks, and access.
 - WordPress snapshot builders for users, usermeta capabilities, options, active plugins, themes, cron, posts/pages with scripts, and file inventory.
 - Baseline diff engine for two snapshots.
@@ -115,8 +116,9 @@ Deliverables:
   - suspicious option value
   - new or changed plugin/theme
   - unexpected `wp-cron` task
-  - suspicious JavaScript in posts, widgets, or options
-  - PHP files added under writable folders
+- suspicious JavaScript in posts, widgets, or options
+- new or changed rendered JavaScript domains and inline script hashes
+- PHP files added under writable folders
 
 Exit criteria:
 
@@ -125,6 +127,7 @@ Exit criteria:
 - `aegrail diff db --from ... --to ...` produces deterministic findings.
 - Fixtures cover clean and suspicious PrestaShop and WordPress diffs.
 - Pantheon-hosted WordPress single installs and Multisite networks have a documented collector path for access logs and DB snapshots.
+- Rendered-page JavaScript monitoring has a documented collector path, including bounded waits for tag managers and dynamic page-builder scripts.
 
 Current Pantheon direction:
 
@@ -132,6 +135,14 @@ Current Pantheon direction:
 - Minimum viable collection is SFTP application/database logs plus backup-based or read-only MySQL database snapshots.
 - WordPress Multisite networks are represented as one monitored app with logical network sites under it.
 - See [Pantheon WordPress Monitoring Plan](platforms/pantheon-wordpress.md).
+
+Current browser crawler direction:
+
+- Treat browser crawling as a generic collector with WordPress-aware presets.
+- Use a real browser mode so dynamic scripts injected by page builders, widgets, consent tools, and tag managers are visible.
+- Wait for `DOMContentLoaded`, `load`, network quiet, optional tag-manager settling, and a bounded extra settle delay.
+- Compare script domains and hashes against per-page baselines.
+- See [Browser Crawler And JavaScript Monitoring Plan](collectors/browser-crawler.md).
 
 ## Phase 4B: Secondary PHP Targets
 
@@ -282,6 +293,7 @@ Deliverables:
 - SSH/SFTP collector.
 - MySQL read-only collector.
 - Pantheon provider collector using SFTP logs and Terminus or dashboard-derived connection metadata.
+- Browser crawler collector for rendered-page JavaScript inventory and drift detection.
 - Signed HTTP endpoint collector.
 - PostgreSQL-backed job queue.
 - Scheduling model for daily health reports.
