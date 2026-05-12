@@ -180,7 +180,7 @@ Last updated: 2026-05-12
 
 - [ ] REP-001 Markdown technical report.
 - [ ] REP-002 Markdown manager summary.
-- [ ] REP-003 JSON findings export.
+- [x] REP-003 JSON findings export.
 - [ ] REP-004 CSV timeline export.
 - [ ] REP-005 Golden tests for report rendering.
 

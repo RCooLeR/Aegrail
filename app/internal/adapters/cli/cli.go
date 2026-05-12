@@ -450,7 +450,13 @@ func scanCommand(meta domain.AppMeta) *urfavecli.Command {
 }
 
 func reportCommand(meta domain.AppMeta) *urfavecli.Command {
-	return placeholderCommand(meta, "report", "generate reports from findings")
+	return &urfavecli.Command{
+		Name:  "report",
+		Usage: "generate reports from findings",
+		Subcommands: []*urfavecli.Command{
+			hubFindingsReportCommand(meta),
+		},
+	}
 }
 
 func serveCommand(meta domain.AppMeta) *urfavecli.Command {

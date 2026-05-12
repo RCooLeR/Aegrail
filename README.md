@@ -84,6 +84,7 @@ go run ./cmd/aegrail hub ingest batch list --org acme --project customer-site --
 go run ./cmd/aegrail hub baseline compare-files --org acme --project customer-site --env production --app main-web --since 24h
 go run ./cmd/aegrail hub correlate events --org acme --project customer-site --env production --app main-web --since 24h --save
 go run ./cmd/aegrail hub findings list --org acme --project customer-site --env production --app main-web
+go run ./cmd/aegrail report hub-findings --org acme --project customer-site --env production --app main-web --output ../data/reports/hub-findings.json
 ```
 
 Run the signed Hub HTTP API:

@@ -173,6 +173,7 @@ Current status:
 
 - Hub correlation chains can be saved into `hub_findings` with a stable dedupe key.
 - `aegrail hub findings list` can inspect persisted distributed findings.
+- `aegrail report hub-findings` exports persisted Hub findings as JSON.
 
 ## Phase 6: Ollama Investigation Layer
 
@@ -212,6 +213,7 @@ Deliverables:
 
 Exit criteria:
 
+- `aegrail report hub-findings --org ... --project ... --env ...` writes JSON findings to stdout or `--output`.
 - `aegrail report --site ... --format md` writes a report.
 - Report includes tool version, rule versions, model name, prompt version, and evidence refs.
 - Reports do not include unredacted secrets.

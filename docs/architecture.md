@@ -358,6 +358,7 @@ aegrail hub ingest batch list
 aegrail hub baseline compare-files
 aegrail hub correlate events --save
 aegrail hub findings list
+aegrail report hub-findings
 aegrail agent install
 aegrail agent start
 aegrail agent start --log /var/log/nginx/access.log
