@@ -17,10 +17,10 @@ func TestEvaluateBuiltInRuleFixturesPass(t *testing.T) {
 	if summary.Failed != 0 {
 		t.Fatalf("summary = %#v, want all fixtures passing", summary)
 	}
-	if summary.Passed != 10 || len(summary.Fixtures) != 10 {
-		t.Fatalf("fixture counts = passed %d total %d, want 10", summary.Passed, len(summary.Fixtures))
+	if summary.Passed != 11 || len(summary.Fixtures) != 11 {
+		t.Fatalf("fixture counts = passed %d total %d, want 11", summary.Passed, len(summary.Fixtures))
 	}
-	if summary.Signals < 18 {
+	if summary.Signals < 23 {
 		t.Fatalf("signals = %d, want first-wave evaluation signals", summary.Signals)
 	}
 
@@ -47,6 +47,11 @@ func TestEvaluateBuiltInRuleFixturesPass(t *testing.T) {
 	adminRequests := byID["admin-request-anomalies"]
 	if len(adminRequests.Actual) != 3 || !adminRequests.Passed {
 		t.Fatalf("admin request fixture = %#v, want three expected web request signals", adminRequests)
+	}
+
+	webTraffic := byID["web-request-traffic-and-tor"]
+	if len(webTraffic.Actual) != 5 || !webTraffic.Passed {
+		t.Fatalf("web traffic fixture = %#v, want five expected web request signals", webTraffic)
 	}
 
 	drift := byID["multi-host-file-drift"]

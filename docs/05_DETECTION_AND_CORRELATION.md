@@ -61,6 +61,16 @@ Current deterministic admin request anomaly rules:
 
 These rules are generated from normalized access-log timeline events. They use request method, redacted path, status code, and a remote-address fingerprint. Raw remote addresses should not be surfaced in finding summaries.
 
+Current deterministic traffic and network context rules:
+
+- `web-request-volume-spike`
+- `web-error-rate-spike`
+- `web-admin-post-volume-spike`
+- `web-tor-admin-request`
+- `web-tor-request-observed`
+
+Traffic spike rules currently use bounded windows over normalized access-log events. They detect high request volume from one remote fingerprint, server-error bursts by path family, and distributed admin POST volume across multiple remote fingerprints. Tor rules consume normalized enrichment fields such as `remote_is_tor`, `remote_network=tor_exit`, or Tor tags; the live Tor exit-node feed updater is a separate planned enrichment path.
+
 ### WordPress
 
 High-signal findings:
@@ -305,6 +315,7 @@ Aegrail needs fixture-based evaluation sets:
 - WordPress administrator role change
 - generic suspicious file paths
 - admin request anomalies
+- web request traffic and Tor context
 - PrestaShop module drift
 - PrestaShop employee privilege escalation
 - browser script injection

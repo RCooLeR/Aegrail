@@ -108,7 +108,8 @@ Last updated: 2026-05-13
 - [x] Define versioned rule metadata.
 - [x] Add generic suspicious path rules.
 - [x] Add admin request anomaly rules.
-- [ ] Add traffic spike rules.
+- [x] Add traffic spike rules.
+- [x] Add Tor network context detector for normalized access-log events.
 - [ ] Add risk scoring.
 - [x] Add finding status lifecycle.
 - [x] Add finding-to-allowlist handoff command.
@@ -157,6 +158,7 @@ Last updated: 2026-05-13
 - [ ] Add SSH/SFTP collector.
 - [x] Add MySQL/MariaDB read-only collector for configured sites.
 - [ ] Add standalone remote MySQL collector workflow.
+- [ ] Add Tor exit-node feed enrichment for access-log events.
 - [ ] Add Pantheon provider collector for SFTP logs and DB snapshots.
 - [ ] Add Pantheon WordPress Multisite network inventory and snapshot support.
 - [ ] Add scheduled daily health reports.

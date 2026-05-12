@@ -196,6 +196,11 @@ func defaultRuleDefinitions() []RuleDefinition {
 		"web-admin-failed-request-burst",
 		"web-admin-login-post-burst",
 		"web-admin-tool-probe",
+		"web-request-volume-spike",
+		"web-error-rate-spike",
+		"web-admin-post-volume-spike",
+		"web-tor-admin-request",
+		"web-tor-request-observed",
 		"file-php-in-writable-path",
 		"file-sensitive-config-changed",
 		"file-suspicious-path-pattern",
@@ -353,7 +358,12 @@ func isWebRequestRuleID(id string) bool {
 	case "web-admin-success-after-failures",
 		"web-admin-failed-request-burst",
 		"web-admin-login-post-burst",
-		"web-admin-tool-probe":
+		"web-admin-tool-probe",
+		"web-request-volume-spike",
+		"web-error-rate-spike",
+		"web-admin-post-volume-spike",
+		"web-tor-admin-request",
+		"web-tor-request-observed":
 		return true
 	default:
 		return false

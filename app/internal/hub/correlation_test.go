@@ -380,6 +380,51 @@ func TestCorrelateEventsBuildsAdminRequestAnomalyChains(t *testing.T) {
 	}
 }
 
+func TestCorrelateEventsBuildsTrafficAndTorWebRequestChains(t *testing.T) {
+	now := time.Date(2026, 5, 12, 14, 30, 0, 0, time.UTC)
+	var events []domain.TimelineEvent
+	for index := range 20 {
+		events = append(events, accessEvent(fmt.Sprintf("evt-volume-%02d", index), now.Add(time.Duration(index)*10*time.Second), "GET", "/catalog?page=1", 200, "198.51.100.10", nil))
+	}
+	for index := range 6 {
+		events = append(events, accessEvent(fmt.Sprintf("evt-error-%02d", index), now.Add(time.Minute+time.Duration(index)*10*time.Second), "GET", "/checkout", 500, fmt.Sprintf("198.51.100.%d", 20+index), nil))
+	}
+	for index := range 10 {
+		events = append(events, accessEvent(fmt.Sprintf("evt-admin-post-%02d", index), now.Add(2*time.Minute+time.Duration(index)*10*time.Second), "POST", "/wp-login.php", 200, fmt.Sprintf("203.0.113.%d", 10+index), nil))
+	}
+	events = append(events,
+		accessEvent("evt-tor-admin", now.Add(4*time.Minute), "GET", "/wp-admin/", 403, "203.0.113.200", map[string]any{"remote_is_tor": true}),
+		accessEvent("evt-tor-public", now.Add(5*time.Minute), "GET", "/", 200, "203.0.113.201", map[string]any{"remote_network": "tor_exit"}),
+	)
+
+	chains := correlateTimelineEvents(events, 30*time.Minute)
+	byRule := map[string]CorrelationChain{}
+	for _, chain := range chains {
+		byRule[chain.RuleID] = chain
+	}
+	for _, ruleID := range []string{
+		"web-request-volume-spike",
+		"web-error-rate-spike",
+		"web-admin-post-volume-spike",
+		"web-tor-admin-request",
+		"web-tor-request-observed",
+	} {
+		if _, ok := byRule[ruleID]; !ok {
+			t.Fatalf("chains = %#v, missing %s", chains, ruleID)
+		}
+	}
+	if len(chains) != 5 {
+		t.Fatalf("chains = %#v, want five web request traffic findings", chains)
+	}
+	if byRule["web-error-rate-spike"].Confidence != domain.ConfidenceHigh ||
+		byRule["web-tor-admin-request"].Severity != domain.SeverityMedium {
+		t.Fatalf("chains = %#v, want high-confidence errors and medium tor admin finding", chains)
+	}
+	if len(byRule["web-request-volume-spike"].Events) != 20 {
+		t.Fatalf("volume spike = %#v, want 20 events", byRule["web-request-volume-spike"])
+	}
+}
+
 func TestListTimelineEventsResolvesEnvironmentAndOptionalApp(t *testing.T) {
 	inventory := newMemoryInventoryRepository()
 	ingest := &memoryIngestRepository{}
@@ -491,6 +536,19 @@ func (r *memoryHubFindingRepository) GetHubFinding(ctx context.Context, findingI
 }
 
 func adminAccessEvent(id string, eventTime time.Time, method string, path string, status int, remoteAddr string) domain.TimelineEvent {
+	return accessEvent(id, eventTime, method, path, status, remoteAddr, nil)
+}
+
+func accessEvent(id string, eventTime time.Time, method string, path string, status int, remoteAddr string, extraPayload map[string]any) domain.TimelineEvent {
+	payload := map[string]any{
+		"method":      method,
+		"path":        path,
+		"status_code": status,
+		"remote_addr": remoteAddr,
+	}
+	for key, value := range extraPayload {
+		payload[key] = value
+	}
 	return domain.TimelineEvent{
 		ID:        domain.ID(id),
 		HostSlug:  "web-01",
@@ -499,12 +557,7 @@ func adminAccessEvent(id string, eventTime time.Time, method string, path string
 		Target:    "access.log",
 		Severity:  domain.SeverityInfo,
 		Message:   fmt.Sprintf("HTTP %d %s %s", status, method, path),
-		Payload: map[string]any{
-			"method":      method,
-			"path":        path,
-			"status_code": status,
-			"remote_addr": remoteAddr,
-		},
+		Payload:   payload,
 	}
 }
 

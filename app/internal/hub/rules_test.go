@@ -24,6 +24,8 @@ func TestDefaultRuleRegistryIncludesCurrentRuleMetadata(t *testing.T) {
 		"prestashop-payment-configuration-changed",
 		"browser-script-domain-new",
 		"web-admin-success-after-failures",
+		"web-request-volume-spike",
+		"web-tor-admin-request",
 		"file-php-in-writable-path",
 	} {
 		if _, ok := seen[id]; !ok {

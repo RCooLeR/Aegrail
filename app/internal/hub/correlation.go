@@ -181,6 +181,9 @@ func correlateTimelineEvents(events []domain.TimelineEvent, window time.Duration
 	for _, chain := range buildAdminRequestAnomalyChains(events, coveredWebEvents) {
 		addCorrelationChain(&chains, seen, chain)
 	}
+	for _, chain := range buildWebRequestTrafficChains(events, coveredWebEvents) {
+		addCorrelationChain(&chains, seen, chain)
+	}
 	slices.SortFunc(chains, func(a CorrelationChain, b CorrelationChain) int {
 		if severityRank(a.Severity) != severityRank(b.Severity) {
 			return severityRank(b.Severity) - severityRank(a.Severity)

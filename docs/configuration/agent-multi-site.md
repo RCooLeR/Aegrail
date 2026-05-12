@@ -414,7 +414,8 @@ Done:
 16. Add fixture-based rule evaluation sets for clean, compromised, file-path, admin-request, database-snapshot, browser-injected, multi-host drift, and deploy-window cases.
 17. Add generic suspicious path rules for PHP/webroot tampering.
 18. Add admin request anomaly rules for suspicious login/admin traffic patterns.
+19. Add traffic spike and Tor network context rules for normalized access-log events.
 
 Next:
 
-1. Add traffic spike rules for request-volume and error-rate anomalies.
+1. Add risk scoring across deterministic finding families.

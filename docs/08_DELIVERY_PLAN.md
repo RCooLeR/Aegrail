@@ -26,9 +26,10 @@ Aegrail already has:
 - browser drift finding-to-allowlist handoff command and API
 - versioned Hub rule registry with categories, platforms, evidence types, and action hints
 - deployment-aware finding scoring for browser drift and database snapshot findings
-- ten built-in rule fixture evaluation cases covering clean, suspicious, file path, admin request, database snapshot, browser drift, deployment-window, and multi-host drift signals
+- eleven built-in rule fixture evaluation cases covering clean, suspicious, file path, admin request, traffic/Tor, database snapshot, browser drift, deployment-window, and multi-host drift signals
 - generic suspicious file path findings for PHP/webroot tampering
 - admin request anomaly findings for suspicious login/admin traffic
+- traffic spike and Tor-marked request findings from normalized access-log events
 - Pantheon WordPress monitoring plan
 - dashboard and multi-site agent config plans
 - multi-site Agent YAML config loading, validation, file watching, log tailing, database checks with local diff state, browser crawling, and continuous `agent run`
@@ -146,6 +147,7 @@ Deliverables:
 - fixture-based rule evaluation sets
 - generic suspicious path rules
 - admin request anomaly rules
+- traffic spike and Tor network context rules
 
 Exit criteria:
 
@@ -153,6 +155,7 @@ Exit criteria:
 - repeated scans do not flood duplicate findings
 - suspicious file paths can produce standalone findings without duplicating stronger incident chains
 - admin/login access-log anomalies can produce standalone findings without raw IPs in summaries
+- request volume, server-error, distributed admin POST, and Tor-marked request findings can be produced from normalized access-log events
 - deployment windows influence risk without hiding suspicious changes
 - built-in fixtures verify clean, suspicious, file path, admin request, database snapshot, browser, deployment, and multi-host drift behavior
 - finding triage status can be updated without losing deterministic evidence refreshes
@@ -223,6 +226,7 @@ Deliverables:
 
 - SSH/SFTP collector
 - MySQL read-only collector
+- Tor exit-node feed enrichment for access-log events
 - Pantheon provider collector
 - scheduled browser crawls
 - scheduled database snapshots

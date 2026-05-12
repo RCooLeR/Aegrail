@@ -130,6 +130,8 @@ The first log scan records offsets. Later scans emit redacted events such as:
 
 The payload should keep useful details such as path, method, status, IP hash where appropriate, user agent, and line hash while redacting secrets from query strings, cookies, tokens, and credentials.
 
+Network reputation enrichment can add fields such as `remote_is_tor`, `remote_network`, or `remote_tags` to access-log events. Detection should consume those normalized labels without exposing raw remote addresses in finding summaries. A live Tor exit-node feed updater is planned separately from the first deterministic rule support.
+
 ## Database Snapshots
 
 Database collectors should use read-only credentials where possible.

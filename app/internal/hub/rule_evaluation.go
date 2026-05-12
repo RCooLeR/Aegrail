@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -148,6 +149,22 @@ func builtInRuleEvaluationCases() []ruleEvaluationCase {
 				{ID: "web-admin-tool-probe", Severity: domain.SeverityLow, Confidence: domain.ConfidenceMedium},
 			},
 			evaluate: evaluateAdminRequestAnomalyFixture,
+		},
+		{
+			fixture: RuleEvaluationFixture{
+				ID:          "web-request-traffic-and-tor",
+				Name:        "Web Request Traffic And Tor",
+				Kind:        "web_request",
+				Description: "Traffic spikes, server-error spikes, distributed admin POSTs, and Tor-marked requests should produce deterministic web request findings.",
+			},
+			expected: []RuleEvaluationExpectedSignal{
+				{ID: "web-request-volume-spike", Severity: domain.SeverityMedium, Confidence: domain.ConfidenceMedium},
+				{ID: "web-error-rate-spike", Severity: domain.SeverityMedium, Confidence: domain.ConfidenceHigh},
+				{ID: "web-admin-post-volume-spike", Severity: domain.SeverityMedium, Confidence: domain.ConfidenceHigh},
+				{ID: "web-tor-admin-request", Severity: domain.SeverityMedium, Confidence: domain.ConfidenceHigh},
+				{ID: "web-tor-request-observed", Severity: domain.SeverityLow, Confidence: domain.ConfidenceMedium},
+			},
+			evaluate: evaluateWebRequestTrafficAndTorFixture,
 		},
 		{
 			fixture: RuleEvaluationFixture{
@@ -339,6 +356,24 @@ func evaluateAdminRequestAnomalyFixture(now time.Time) []RuleEvaluationSignal {
 		evaluationAdminAccessEvent("evt-tool-probe", now.Add(20*time.Minute), "GET", "/phpmyadmin/index.php", 404, "203.0.113.30"),
 		evaluationAdminAccessEvent("evt-admin-ajax", now.Add(21*time.Minute), "POST", "/wp-admin/admin-ajax.php", 200, "203.0.113.40"),
 	}, 30*time.Minute)
+}
+
+func evaluateWebRequestTrafficAndTorFixture(now time.Time) []RuleEvaluationSignal {
+	events := make([]domain.TimelineEvent, 0, 38)
+	for index := range 20 {
+		events = append(events, evaluationAccessEvent(fmt.Sprintf("evt-volume-%02d", index), now.Add(time.Duration(index)*10*time.Second), "GET", "/catalog?page=1", 200, "198.51.100.10", nil))
+	}
+	for index := range 6 {
+		events = append(events, evaluationAccessEvent(fmt.Sprintf("evt-error-%02d", index), now.Add(time.Minute+time.Duration(index)*10*time.Second), "GET", "/checkout", 500, fmt.Sprintf("198.51.100.%d", 20+index), nil))
+	}
+	for index := range 10 {
+		events = append(events, evaluationAccessEvent(fmt.Sprintf("evt-admin-post-%02d", index), now.Add(2*time.Minute+time.Duration(index)*10*time.Second), "POST", "/wp-login.php", 200, fmt.Sprintf("203.0.113.%d", 10+index), nil))
+	}
+	events = append(events,
+		evaluationAccessEvent("evt-tor-admin", now.Add(4*time.Minute), "GET", "/wp-admin/", 403, "203.0.113.200", map[string]any{"remote_is_tor": true}),
+		evaluationAccessEvent("evt-tor-public", now.Add(5*time.Minute), "GET", "/", 200, "203.0.113.201", map[string]any{"remote_network": "tor_exit"}),
+	)
+	return correlationEvaluationSignals(events, 30*time.Minute)
 }
 
 func evaluateWordPressAdminRoleFixture(now time.Time) []RuleEvaluationSignal {
@@ -596,12 +631,20 @@ func evaluationBrowserScriptEvent(id string, eventTime time.Time, pageURL string
 }
 
 func evaluationAdminAccessEvent(id string, eventTime time.Time, method string, path string, status int, remoteAddr string) domain.TimelineEvent {
-	return evaluationTimelineEvent(id, eventTime, "log.access", "access.log", domain.SeverityInfo, map[string]any{
+	return evaluationAccessEvent(id, eventTime, method, path, status, remoteAddr, nil)
+}
+
+func evaluationAccessEvent(id string, eventTime time.Time, method string, path string, status int, remoteAddr string, extraPayload map[string]any) domain.TimelineEvent {
+	payload := map[string]any{
 		"method":      method,
 		"path":        path,
 		"status_code": status,
 		"remote_addr": remoteAddr,
-	})
+	}
+	for key, value := range extraPayload {
+		payload[key] = value
+	}
+	return evaluationTimelineEvent(id, eventTime, "log.access", "access.log", domain.SeverityInfo, payload)
 }
 
 func evaluationOrganization() domain.Organization {

@@ -83,6 +83,7 @@ Evaluation tests:
 - compromised WordPress fixture
 - generic suspicious file path fixture
 - admin request anomaly fixture
+- web request traffic and Tor fixture
 - WordPress administrator role change fixture
 - PrestaShop module drift fixture
 - PrestaShop employee privilege escalation fixture
