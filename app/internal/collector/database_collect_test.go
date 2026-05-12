@@ -182,3 +182,29 @@ func TestPrestaShopConfigurationEntityClassifiesPaymentSecrets(t *testing.T) {
 		t.Fatalf("entity leaked raw payment secret: %#v", entity.Attributes)
 	}
 }
+
+func TestPrestaShopConfigurationEntityClassifiesCommonModuleConfigs(t *testing.T) {
+	cases := []struct {
+		name     string
+		value    string
+		category string
+	}{
+		{name: "MOLLIE_API_KEY", value: "test_x", category: "payment"},
+		{name: "PAYPLUG_SECRET_KEY", value: "sk_live_x", category: "payment"},
+		{name: "ADYEN_MERCHANT_ACCOUNT", value: "merchant", category: "payment"},
+		{name: "MAILCHIMP_API_KEY", value: "mail-x", category: "mail"},
+		{name: "BREVO_API_KEY", value: "brevo-x", category: "mail"},
+	}
+	for _, tc := range cases {
+		entity, ok := prestashopConfigurationEntity(tc.name, tc.value)
+		if !ok {
+			t.Fatalf("%s returned ok=false", tc.name)
+		}
+		if entity.Attributes["category"] != tc.category {
+			t.Fatalf("%s category = %#v, want %s", tc.name, entity.Attributes["category"], tc.category)
+		}
+		if _, ok := entity.Attributes["value"]; ok {
+			t.Fatalf("%s leaked raw value: %#v", tc.name, entity.Attributes)
+		}
+	}
+}

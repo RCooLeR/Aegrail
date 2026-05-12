@@ -1060,7 +1060,26 @@ func prestashopConfigurationEntity(name string, value string) (DatabaseEntityObs
 
 func prestashopTrackedConfigurationNames() []string {
 	return []string{
+		"ADYEN_API_KEY",
+		"ADYEN_MERCHANT_ACCOUNT",
+		"AMAZON_PAY_CLIENT_ID",
+		"AMAZON_PAY_CLIENT_SECRET",
+		"AUTHORIZE_AIM_LOGIN_ID",
+		"AUTHORIZE_AIM_KEY",
+		"BRAINTREE_MERCHANT_ID",
+		"BRAINTREE_PRIVATE_KEY",
+		"BREVO_API_KEY",
+		"MAILCHIMP_API_KEY",
+		"MOLLIE_API_KEY",
+		"PAYPAL_API_PASSWORD",
+		"PAYPAL_API_SIGNATURE",
+		"PAYPAL_API_USER",
+		"PAYPLUG_LIVE_MODE",
+		"PAYPLUG_SECRET_KEY",
 		"PS_CANONICAL_REDIRECT",
+		"PS_CHECKOUT_CLIENT_ID",
+		"PS_CHECKOUT_CLIENT_SECRET",
+		"PS_CHECKOUT_ENVIRONMENT",
 		"PS_COOKIE_CHECKIP",
 		"PS_COOKIE_SAMESITE",
 		"PS_CURRENCY_DEFAULT",
@@ -1086,15 +1105,36 @@ func prestashopTrackedConfigurationNames() []string {
 		"PS_TOKEN_ENABLE",
 		"PS_WEBSERVICE",
 		"PS_WEBSERVICE_CGI_HOST",
+		"REDSYS_SECRET_KEY",
+		"SENDINBLUE_API_KEY",
+		"STRIPE_PUBLIC_KEY",
+		"STRIPE_SECRET_KEY",
 	}
 }
 
 func prestashopTrackedConfigurationPatterns() []string {
 	return []string{
+		"%ADYEN%",
+		"%AMAZONPAY%",
+		"%AMAZON_PAY%",
+		"%AUTHORIZE%",
+		"%BRAINTREE%",
+		"%BREVO%",
 		"%CHECKOUT%",
+		"%HIPAY%",
+		"%KLARNA%",
+		"%MAILCHIMP%",
+		"%MOLLIE%",
 		"%PAYMENT%",
 		"%PAYPAL%",
+		"%PAYPLUG%",
+		"%REDSYS%",
+		"%SENDINBLUE%",
+		"%SQUARE%",
 		"%STRIPE%",
+		"%VIVA%",
+		"%WEBHOOK%",
+		"EMAIL%",
 		"PS_DEBUG%",
 		"PS_DEV%",
 		"PS_DISPLAY%",
@@ -1104,6 +1144,7 @@ func prestashopTrackedConfigurationPatterns() []string {
 		"PS_SHOP_%",
 		"PS_SSL%",
 		"PS_WEBSERVICE%",
+		"SMTP%",
 	}
 }
 
@@ -1141,9 +1182,28 @@ func classifyPrestaShopConfiguration(name string, value string) (string, bool, b
 
 func prestashopConfigurationCategory(upperName string) string {
 	switch {
-	case strings.Contains(upperName, "PAYMENT") || strings.Contains(upperName, "PAYPAL") || strings.Contains(upperName, "STRIPE") || strings.Contains(upperName, "CHECKOUT"):
+	case strings.Contains(upperName, "PAYMENT") ||
+		strings.Contains(upperName, "PAYPAL") ||
+		strings.Contains(upperName, "STRIPE") ||
+		strings.Contains(upperName, "CHECKOUT") ||
+		strings.Contains(upperName, "PAYPLUG") ||
+		strings.Contains(upperName, "MOLLIE") ||
+		strings.Contains(upperName, "KLARNA") ||
+		strings.Contains(upperName, "ADYEN") ||
+		strings.Contains(upperName, "BRAINTREE") ||
+		strings.Contains(upperName, "AUTHORIZE") ||
+		strings.Contains(upperName, "AMAZONPAY") ||
+		strings.Contains(upperName, "AMAZON_PAY") ||
+		strings.Contains(upperName, "REDSYS") ||
+		strings.Contains(upperName, "SQUARE") ||
+		strings.Contains(upperName, "VIVA") ||
+		strings.Contains(upperName, "HIPAY"):
 		return "payment"
-	case strings.HasPrefix(upperName, "PS_MAIL_"):
+	case strings.HasPrefix(upperName, "PS_MAIL_") ||
+		strings.Contains(upperName, "SMTP") ||
+		strings.Contains(upperName, "MAILCHIMP") ||
+		strings.Contains(upperName, "SENDINBLUE") ||
+		strings.Contains(upperName, "BREVO"):
 		return "mail"
 	case strings.Contains(upperName, "SSL") || strings.Contains(upperName, "COOKIE") || strings.Contains(upperName, "TOKEN"):
 		return "security"

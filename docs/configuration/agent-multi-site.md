@@ -243,7 +243,7 @@ Current implementation:
 - Sensitive DB values are not queued raw. Aegrail records counts, value byte lengths, and SHA-256 digests for selected option/config values.
 - Aegrail also records redacted entity fingerprints for WordPress users/capabilities/options/cron hooks/plugins/themes/script-bearing content and PrestaShop employees/modules/configuration values.
 - User and employee emails/logins are hashed; PrestaShop module names, WordPress plugin basenames, and theme slugs may be retained because they are operational security evidence.
-- PrestaShop configuration values are not emitted raw. Aegrail stores config names, categories, byte lengths, SHA-256 digests, safe boolean interpretations, sensitivity, and risk reasons.
+- PrestaShop configuration values are not emitted raw. Aegrail stores config names, categories, byte lengths, SHA-256 digests, safe boolean interpretations, sensitivity, and risk reasons. The first module-specific coverage includes common payment and mail modules such as PrestaShop Checkout, PayPal, Stripe, PayPlug, Mollie, Adyen, Braintree, Mailchimp, Sendinblue, and Brevo.
 - WordPress `active_plugins` and `active_sitewide_plugins` are parsed into individual active plugin entities. `stylesheet` and `template` become active theme entities.
 - WordPress Multisite network options are collected from `<prefix>sitemeta` when the table exists.
 - WordPress cron hooks and script-bearing posts, widgets, and selected page-builder metadata become redacted entities for baseline diffing.
@@ -413,5 +413,4 @@ Done:
 
 Next:
 
-1. Broaden PrestaShop module-specific configuration coverage with fixtures from common payment/mail modules.
-2. Add finding lifecycle actions for dashboard triage.
+1. Add finding lifecycle actions for dashboard triage.

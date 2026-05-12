@@ -89,6 +89,7 @@ Last updated: 2026-05-12
 - [x] Snapshot redacted PrestaShop employees.
 - [x] Snapshot PrestaShop modules.
 - [x] Snapshot PrestaShop configuration.
+- [x] Cover common PrestaShop payment and mail module configuration keys.
 - [~] Snapshot PrestaShop tabs, hooks, and access.
 - [x] Emit redacted PrestaShop DB snapshot diff events.
 - [x] Detect new PrestaShop employees and SuperAdmin accounts.
