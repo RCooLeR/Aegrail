@@ -224,7 +224,7 @@ Hub rules are registered with versioned metadata:
 - evidence types
 - dashboard/action hints
 
-Current categories are `correlation`, `database_snapshot`, and `browser_script`. Findings copy the matching rule metadata into their own metadata, and the Hub exposes the registry through `GET /api/v1/rules`. This lets the CLI, dashboard, and reports use the same rule labels and actions.
+Current categories are `correlation`, `database_snapshot`, `browser_script`, and `file_baseline`. Findings copy the matching rule metadata into their own metadata, and the Hub exposes the registry through `GET /api/v1/rules`. This lets the CLI, dashboard, and reports use the same rule labels and actions.
 
 ## Finding Lifecycle
 
@@ -290,4 +290,12 @@ Aegrail needs fixture-based evaluation sets:
 - multi-host file drift
 - deploy-window false-positive case
 
-Every rule change should be testable against known clean and suspicious fixtures.
+The Hub has a built-in fixture evaluator for these first-wave cases. It compares expected deterministic signals against actual rule output, including severity and confidence.
+
+Run it locally:
+
+```bash
+aegrail hub rules evaluate --fail-on-mismatch
+```
+
+Every rule change should be testable against known clean and suspicious fixtures. Fixture failures should be treated like test failures unless the expected rule behavior intentionally changed.

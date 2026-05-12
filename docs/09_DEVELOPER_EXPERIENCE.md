@@ -87,6 +87,12 @@ Evaluation tests:
 - deployment-window false positive fixture
 - multi-host file drift fixture
 
+Current fixture command:
+
+```powershell
+go run ./cmd/aegrail hub rules evaluate --fail-on-mismatch
+```
+
 ## Local Commands
 
 Useful commands:
@@ -101,6 +107,7 @@ go run ./cmd/aegrail hub serve
 go run ./cmd/aegrail agent status
 go run ./cmd/aegrail agent start --once --root /var/www/site --profile wordpress
 go run ./cmd/aegrail collector browser crawl --url https://example.com --rendered --wait-tag-manager --timeout 30s --format json
+go run ./cmd/aegrail hub rules evaluate --fail-on-mismatch
 go test ./...
 ```
 

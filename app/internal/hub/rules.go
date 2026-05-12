@@ -14,6 +14,7 @@ const (
 	RuleCategoryCorrelation      RuleCategory = "correlation"
 	RuleCategoryDatabaseSnapshot RuleCategory = "database_snapshot"
 	RuleCategoryBrowserScript    RuleCategory = "browser_script"
+	RuleCategoryFileBaseline     RuleCategory = "file_baseline"
 )
 
 type RuleActionHint string
@@ -189,6 +190,7 @@ func defaultRuleDefinitions() []RuleDefinition {
 		"browser-inline-script-changed",
 		"browser-tag-manager-id-new",
 		"browser-script-drift",
+		"file-baseline-drift",
 	}
 	definitions := make([]RuleDefinition, 0, len(ids))
 	for _, id := range ids {
@@ -209,6 +211,11 @@ func inferRuleDefinition(id string) RuleDefinition {
 		definition.Platforms = []string{"web"}
 		definition.EvidenceTypes = []string{"browser"}
 		definition.ActionHints = []RuleActionHint{RuleActionAcknowledge, RuleActionMarkFalsePositive, RuleActionInspectDeployment, RuleActionAllowBrowserScript}
+	case id == "file-baseline-drift":
+		definition.Category = RuleCategoryFileBaseline
+		definition.Platforms = []string{"generic_php"}
+		definition.EvidenceTypes = []string{"file"}
+		definition.ActionHints = []RuleActionHint{RuleActionAcknowledge, RuleActionMarkFalsePositive, RuleActionInspectTimeline, RuleActionInspectFiles, RuleActionInspectDeployment}
 	case strings.HasPrefix(id, "wordpress-"):
 		definition.Category = RuleCategoryDatabaseSnapshot
 		definition.Platforms = []string{"wordpress"}
