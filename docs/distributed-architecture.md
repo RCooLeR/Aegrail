@@ -108,6 +108,8 @@ aegrail inventory bootstrap single-site --kind wordpress --org acme --project cu
 
 This creates the organization, project, `production` environment, `main-web` monitored app, `frontend` service, host, and agent identity. Larger topologies can still use the individual inventory commands so multi-node and database-owned collectors stay explicit.
 
+Pantheon-hosted WordPress should use the same hierarchy with provider labels. A Pantheon site environment maps naturally to an Aegrail environment, while Pantheon appserver and dbserver log sources become hosts or collector sources under that environment. WordPress Multisite should be modeled as one monitored app with logical network sites attached through labels or future child entities.
+
 ## Event Timing
 
 Store both event time and Hub receive time:
@@ -312,3 +314,16 @@ Initial severity remains conservative:
 - HTTP `5xx` and generic PHP errors are `medium`.
 - HTTP `4xx`, PHP warnings, notices, and deprecations are `low`.
 - everything else is `info`.
+
+## Pantheon WordPress Provider Plan
+
+Pantheon support is planned as a provider collector for WordPress rather than a new CMS module. The first collector path should retrieve environment logs over SFTP and database state through backup download or read-only MySQL connection metadata. For Pantheon WordPress Multisite, Aegrail should snapshot network-wide tables and per-site options/capabilities while keeping the shared database model explicit in the Hub timeline.
+
+Minimum provider events:
+
+- `platform.log.access` or normalized `log.access` from Pantheon appserver nginx logs
+- `log.php_error`, `log.php_slow`, and PHP-FPM errors from appserver logs
+- `db.snapshot.created` for backup or read-only MySQL snapshot acquisition
+- `db.user_changed`, `db.option_changed`, `db.plugin_changed`, and Multisite network events from WordPress snapshot diffs
+
+Known constraint: Pantheon nginx logs do not represent every CDN-served request. Aegrail should mark those logs as appserver evidence and add CDN/Fastly log support later when complete edge visibility is required.

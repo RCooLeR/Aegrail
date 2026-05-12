@@ -31,6 +31,7 @@ Last updated: 2026-05-12
 - [x] A-008 Prioritize WordPress and PrestaShop as first-wave target modules.
 - [x] A-009 Shape Aegrail as Agent plus Hub for distributed monitoring.
 - [x] A-010 Keep one repo while structuring code as Local, Hub, Agent, and Collector apps.
+- [x] A-011 Add Pantheon WordPress hosting to the first-wave monitoring plan.
 - [?] A-005 Decide credential encryption approach for local deployments.
 - [?] A-006 Decide whether scheduled jobs live in the main binary or a worker command.
 
@@ -134,6 +135,7 @@ Last updated: 2026-05-12
 ## WordPress MVP
 
 - [x] WP-001 Add `internal/modules/wordpress`.
+- [x] WP-013 Document Pantheon WordPress and Multisite monitoring plan.
 - [ ] WP-002 Import WordPress DB dump or structured export.
 - [ ] WP-003 Snapshot users.
 - [ ] WP-004 Snapshot usermeta capabilities.
@@ -191,3 +193,5 @@ Last updated: 2026-05-12
 - [ ] FUT-005 Signed HTTP endpoint collector.
 - [ ] FUT-006 Scheduled daily health reports.
 - [ ] FUT-007 Slack, Teams, or email alerts.
+- [ ] FUT-008 Pantheon provider collector for SFTP logs and DB snapshots.
+- [ ] FUT-009 Pantheon WordPress Multisite network inventory and snapshot support.

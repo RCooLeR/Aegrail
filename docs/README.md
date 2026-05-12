@@ -7,6 +7,7 @@ Aegrail is the product and binary name for the security audit and incident triag
 - [Architecture](architecture.md): module boundaries, runtime pipeline, storage strategy, and Ollama integration.
 - [Distributed Architecture](distributed-architecture.md): Agent, DB Collector, Hub, inventory, and cross-host correlation model.
 - [Implementation Plan](implementation-plan.md): phased delivery plan from repository foundation to reports.
+- [Pantheon WordPress Monitoring Plan](platforms/pantheon-wordpress.md): planned support for Pantheon-hosted single WordPress and WordPress Multisite networks.
 - [Tracker](tracker.md): living task board for MVP work.
 - [Architecture Decision 0001](decisions/0001-modular-monolith.md): why the first implementation should be a modular monolith.
 - [Architecture Decision 0002](decisions/0002-aegrail-binary-name.md): why the binary is named `aegrail`.

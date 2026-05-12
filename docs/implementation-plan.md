@@ -98,6 +98,7 @@ Deliverables:
 - PrestaShop module package.
 - WordPress module package.
 - SQL dump or CSV snapshot importer for initial MVP.
+- Pantheon WordPress monitoring plan for access logs and database snapshots.
 - PrestaShop snapshot builders for employees, sessions, logs, modules, configuration, tabs, hooks, and access.
 - WordPress snapshot builders for users, usermeta capabilities, options, active plugins, themes, cron, posts/pages with scripts, and file inventory.
 - Baseline diff engine for two snapshots.
@@ -123,6 +124,14 @@ Exit criteria:
 - `aegrail import wordpress-db` creates a snapshot.
 - `aegrail diff db --from ... --to ...` produces deterministic findings.
 - Fixtures cover clean and suspicious PrestaShop and WordPress diffs.
+- Pantheon-hosted WordPress single installs and Multisite networks have a documented collector path for access logs and DB snapshots.
+
+Current Pantheon direction:
+
+- Treat Pantheon as a hosting provider adapter around WordPress, not as a separate CMS module.
+- Minimum viable collection is SFTP application/database logs plus backup-based or read-only MySQL database snapshots.
+- WordPress Multisite networks are represented as one monitored app with logical network sites under it.
+- See [Pantheon WordPress Monitoring Plan](platforms/pantheon-wordpress.md).
 
 ## Phase 4B: Secondary PHP Targets
 
@@ -270,6 +279,7 @@ Deliverables:
 
 - SSH/SFTP collector.
 - MySQL read-only collector.
+- Pantheon provider collector using SFTP logs and Terminus or dashboard-derived connection metadata.
 - Signed HTTP endpoint collector.
 - PostgreSQL-backed job queue.
 - Scheduling model for daily health reports.

@@ -309,9 +309,12 @@ The core rule engine should treat module rules and generic rules the same way.
 Target priority:
 
 - Wave 1: PrestaShop and WordPress/WooCommerce.
+- Wave 1 hosting provider: Pantheon WordPress, including single installations and WordPress Multisite networks.
 - Wave 2: Mautic, Yii2 applications, and Laravel applications.
 
 Wave 1 must be strong from the beginning. These modules should get dedicated snapshot models, diff categories, and rule packs instead of relying only on generic PHP/log heuristics.
+
+Pantheon support should live in provider collectors/adapters, not in the core WordPress module. The WordPress module owns WordPress semantics; the Pantheon collector owns platform access to SFTP logs, environment metadata, connection info, and backup or read-only MySQL snapshot acquisition.
 
 ## Security Model
 
