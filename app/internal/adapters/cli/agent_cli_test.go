@@ -125,6 +125,76 @@ sites:
 	}
 }
 
+func TestAgentRunConfigQueuesDatabaseCoverageWarning(t *testing.T) {
+	t.Setenv("AEGRAIL_TEST_MISSING_DB_DSN", "")
+	root := t.TempDir()
+	configPath := filepath.Join(root, "agent.yaml")
+	content := fmt.Sprintf(`schema: aegrail.agent.server_config.v1
+hub:
+  url: http://127.0.0.1:8787
+identity:
+  org: acme
+  project: hosted-sites
+  environment: production
+  host: web-01
+  agent_id: agt_web_01
+runtime:
+  queue_dir: %q
+  state_dir: %q
+  interval: 30s
+sites:
+  - slug: example-com
+    domain: example.com
+    kind: wordpress
+    app: example-com
+    service: frontend
+    root: %q
+    databases:
+      - name: main
+        engine: mysql
+        dsn_env: AEGRAIL_TEST_MISSING_DB_DSN
+        profile: wordpress
+        table_prefix: wp_
+        timeout: 2s
+`, filepath.Join(root, "queue"), filepath.Join(root, "state"), filepath.Join(root, "site"))
+	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+
+	stdout := runCLICapture(t, "aegrail", "agent", "run", "--once", "--config", configPath)
+	if !strings.Contains(stdout, "Database collected 1 database(s)") {
+		t.Fatalf("stdout = %q, want database summary", stdout)
+	}
+
+	entries, err := os.ReadDir(filepath.Join(root, "queue", "pending"))
+	if err != nil {
+		t.Fatalf("ReadDir returned error: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("pending files = %d, want 1", len(entries))
+	}
+	contentBytes, err := os.ReadFile(filepath.Join(root, "queue", "pending", entries[0].Name()))
+	if err != nil {
+		t.Fatalf("ReadFile returned error: %v", err)
+	}
+	var batch agent.QueuedBatch
+	if err := json.Unmarshal(contentBytes, &batch); err != nil {
+		t.Fatalf("Unmarshal returned error: %v", err)
+	}
+	if batch.Source != "agent.database" || batch.Service != "database" {
+		t.Fatalf("batch source/service = %s/%s, want agent.database/database", batch.Source, batch.Service)
+	}
+	if batch.Labels["db_name"] != "main" || batch.Labels["site_slug"] != "example-com" {
+		t.Fatalf("batch labels = %#v, want database and site context", batch.Labels)
+	}
+	if len(batch.Events) != 2 {
+		t.Fatalf("events = %d, want completed and warning events", len(batch.Events))
+	}
+	if batch.Events[1].Type != "db.coverage.warning" {
+		t.Fatalf("event type = %s, want coverage warning", batch.Events[1].Type)
+	}
+}
+
 func TestAgentStartOnceSendsOneRequestForOneQueuedChange(t *testing.T) {
 	var requests int32
 	var mu sync.Mutex

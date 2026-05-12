@@ -50,6 +50,8 @@ sites:
         engine: mysql
         dsn_env: AEGRAIL_DB_EXAMPLE_COM_DSN
         profile: wordpress
+        table_prefix: wp_
+        timeout: 10s
         schedule: 15m
     browser_crawl:
       enabled: true
@@ -84,6 +86,8 @@ sites:
         engine: mysql
         dsn_env: AEGRAIL_DB_EXAMPLE2_COM_DSN
         profile: prestashop
+        table_prefix: ps_
+        timeout: 10s
         schedule: 15m
     browser_crawl:
       enabled: true
@@ -110,6 +114,8 @@ sites:
         engine: mysql
         dsn_env: AEGRAIL_DB_NETWORK_MAIN_DSN
         profile: wordpress
+        table_prefix: wp_
+        timeout: 10s
         schedule: 15m
     wordpress:
       multisite: true

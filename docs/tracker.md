@@ -61,7 +61,7 @@ Last updated: 2026-05-12
 - [x] Add `aegrail agent run --config ... --once`.
 - [x] Add continuous multi-site agent runner.
 - [ ] Report config coverage to Hub.
-- [ ] Run database collectors from multi-site agent config.
+- [x] Run database collectors from multi-site agent config.
 - [x] Run browser crawls from multi-site agent config.
 
 ## Phase 3: WordPress And PrestaShop Evidence
@@ -70,21 +70,21 @@ Last updated: 2026-05-12
 - [x] Add WordPress module spec package.
 - [x] Add PrestaShop module spec package.
 - [x] Document Pantheon WordPress and Multisite monitoring.
-- [ ] Add WordPress DB snapshot importer or collector.
-- [ ] Snapshot WordPress users.
-- [ ] Snapshot WordPress usermeta capabilities.
-- [ ] Snapshot WordPress options.
-- [ ] Snapshot WordPress active plugins and themes.
-- [ ] Snapshot WordPress cron tasks.
+- [~] Add WordPress DB snapshot importer or collector.
+- [~] Snapshot WordPress users.
+- [~] Snapshot WordPress usermeta capabilities.
+- [~] Snapshot WordPress options.
+- [~] Snapshot WordPress active plugins and themes.
+- [~] Snapshot WordPress cron tasks.
 - [ ] Detect new WordPress administrators.
 - [ ] Detect changed WordPress capabilities.
 - [ ] Detect suspicious WordPress option values.
 - [ ] Detect new or changed WordPress plugins/themes.
-- [ ] Add PrestaShop DB snapshot importer or collector.
-- [ ] Snapshot PrestaShop employees.
-- [ ] Snapshot PrestaShop modules.
-- [ ] Snapshot PrestaShop configuration.
-- [ ] Snapshot PrestaShop tabs, hooks, and access.
+- [~] Add PrestaShop DB snapshot importer or collector.
+- [~] Snapshot PrestaShop employees.
+- [~] Snapshot PrestaShop modules.
+- [~] Snapshot PrestaShop configuration.
+- [~] Snapshot PrestaShop tabs, hooks, and access.
 - [ ] Detect new PrestaShop employees and SuperAdmin accounts.
 - [ ] Detect suspicious PrestaShop configuration values.
 - [ ] Detect suspicious PrestaShop module changes.
@@ -145,7 +145,7 @@ Last updated: 2026-05-12
 - [x] Add rendered browser crawl mode with bounded waits.
 - [x] Emit browser crawl observations into Hub event storage.
 - [ ] Add SSH/SFTP collector.
-- [ ] Add MySQL read-only collector.
+- [~] Add MySQL read-only collector.
 - [ ] Add Pantheon provider collector for SFTP logs and DB snapshots.
 - [ ] Add Pantheon WordPress Multisite network inventory and snapshot support.
 - [ ] Add scheduled daily health reports.

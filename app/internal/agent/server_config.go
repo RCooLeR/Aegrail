@@ -74,12 +74,14 @@ type ServerLogConfig struct {
 }
 
 type ServerDatabaseConfig struct {
-	Name     string `yaml:"name"`
-	Engine   string `yaml:"engine"`
-	DSN      string `yaml:"dsn"`
-	DSNEnv   string `yaml:"dsn_env"`
-	Profile  string `yaml:"profile"`
-	Schedule string `yaml:"schedule"`
+	Name        string `yaml:"name"`
+	Engine      string `yaml:"engine"`
+	DSN         string `yaml:"dsn"`
+	DSNEnv      string `yaml:"dsn_env"`
+	Profile     string `yaml:"profile"`
+	TablePrefix string `yaml:"table_prefix"`
+	Timeout     string `yaml:"timeout"`
+	Schedule    string `yaml:"schedule"`
 }
 
 type ServerBrowserCrawlConfig struct {
@@ -199,6 +201,8 @@ func NormalizeServerConfig(config ServerConfig) ServerConfig {
 			db.DSN = strings.TrimSpace(db.DSN)
 			db.DSNEnv = strings.TrimSpace(db.DSNEnv)
 			db.Profile = strings.ToLower(strings.TrimSpace(db.Profile))
+			db.TablePrefix = strings.TrimSpace(db.TablePrefix)
+			db.Timeout = strings.TrimSpace(db.Timeout)
 			db.Schedule = strings.TrimSpace(db.Schedule)
 		}
 		site.BrowserCrawl.Timeout = strings.TrimSpace(site.BrowserCrawl.Timeout)
@@ -308,6 +312,14 @@ func ValidateServerConfig(config ServerConfig) error {
 			}
 			if db.Profile != "" && !isKnownWatchProfile(db.Profile) {
 				issues = append(issues, dbPrefix+".profile is unknown")
+			}
+			if db.TablePrefix != "" && !isSafeDBTablePrefix(db.TablePrefix) {
+				issues = append(issues, dbPrefix+".table_prefix may contain only letters, numbers, and underscores")
+			}
+			if db.Timeout != "" {
+				if _, err := time.ParseDuration(db.Timeout); err != nil {
+					issues = append(issues, dbPrefix+".timeout must be a valid duration")
+				}
 			}
 			if db.Schedule != "" {
 				if _, err := time.ParseDuration(db.Schedule); err != nil {
@@ -536,6 +548,16 @@ func isKnownDBEngine(engine string) bool {
 	default:
 		return false
 	}
+}
+
+func isSafeDBTablePrefix(value string) bool {
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func IsServerConfigValidationError(err error) bool {

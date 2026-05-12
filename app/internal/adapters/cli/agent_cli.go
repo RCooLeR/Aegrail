@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/signal"
 	"strings"
 	"syscall"
@@ -187,6 +188,11 @@ func agentRunCommand() *urfavecli.Command {
 				if err != nil {
 					return err
 				}
+				databaseResult, err := runConfiguredDatabaseCollectors(ctx, runtime, config)
+				if err != nil {
+					return err
+				}
+				result.Queued += databaseResult.Queued
 				browserResult, err := runConfiguredBrowserCrawls(ctx, runtime, config)
 				if err != nil {
 					return err
@@ -220,6 +226,12 @@ func agentRunCommand() *urfavecli.Command {
 						site.Queued,
 						site.StateDir,
 					)
+				}
+				if databaseResult.Databases > 0 || databaseResult.Queued > 0 {
+					fmt.Fprintf(c.App.Writer, "Database collected %d database(s); queued %d event(s)\n", databaseResult.Databases, databaseResult.Queued)
+					for _, site := range databaseResult.Sites {
+						fmt.Fprintf(c.App.Writer, "  %s databases=%d queued=%d warnings=%d\n", site.Slug, site.Databases, site.Queued, site.Warnings)
+					}
 				}
 				if browserResult.Pages > 0 || browserResult.Queued > 0 {
 					fmt.Fprintf(c.App.Writer, "Browser crawled %d page(s); queued %d event(s)\n", browserResult.Pages, browserResult.Queued)
@@ -257,6 +269,109 @@ func agentRunCommand() *urfavecli.Command {
 			}
 		},
 	}
+}
+
+type agentDatabaseRunResult struct {
+	Sites     []agentDatabaseSiteRunResult
+	Databases int
+	Queued    int
+}
+
+type agentDatabaseSiteRunResult struct {
+	Slug      string
+	Databases int
+	Queued    int
+	Warnings  int
+}
+
+func runConfiguredDatabaseCollectors(ctx context.Context, runtime *agent.Runtime, config agent.ServerConfig) (agentDatabaseRunResult, error) {
+	collectorRuntime := collector.NewRuntime(collector.Config{Name: "database"})
+	summary := agentDatabaseRunResult{}
+	for _, site := range config.Sites {
+		if len(site.Databases) == 0 {
+			continue
+		}
+		siteSummary := agentDatabaseSiteRunResult{Slug: site.Slug}
+		for _, database := range site.Databases {
+			timeout, err := parseOptionalDuration(database.Timeout)
+			if err != nil {
+				return agentDatabaseRunResult{}, fmt.Errorf("site %s database %s timeout: %w", site.Slug, database.Name, err)
+			}
+			profile := databaseProfileForSite(site, database)
+			name := databaseEventName(database, profile)
+			dsn := strings.TrimSpace(os.Getenv(database.DSNEnv))
+			var snapshot collector.DatabaseCollectResult
+			if dsn == "" {
+				now := time.Now().UTC()
+				snapshot = collector.DatabaseCollectResult{
+					StartedAt:  now,
+					FinishedAt: now,
+					Name:       name,
+					Engine:     databaseEngineForConfig(database),
+					Profile:    profile,
+					Warnings:   []string{fmt.Sprintf("database DSN env %s is not set", database.DSNEnv)},
+				}
+			} else {
+				snapshot, err = collectorRuntime.CollectDatabaseSnapshot(ctx, collector.DatabaseCollectInput{
+					Name:        name,
+					Engine:      database.Engine,
+					DSN:         dsn,
+					Profile:     profile,
+					TablePrefix: database.TablePrefix,
+					Timeout:     timeout,
+				})
+				if err != nil {
+					now := time.Now().UTC()
+					snapshot = collector.DatabaseCollectResult{
+						StartedAt:  now,
+						FinishedAt: now,
+						Name:       name,
+						Engine:     databaseEngineForConfig(database),
+						Profile:    profile,
+						Warnings:   []string{fmt.Sprintf("database collector failed: %v", err)},
+					}
+				}
+			}
+			labels := databaseBatchLabels(site, snapshot)
+			events := collector.BuildDatabaseSnapshotEvents(snapshot, labels)
+			if len(events) == 0 {
+				siteSummary.Databases++
+				continue
+			}
+			inputEvents := make([]agent.EnqueueEventInput, 0, len(events))
+			for _, event := range events {
+				inputEvents = append(inputEvents, agent.EnqueueEventInput{
+					EventTime: event.EventTime,
+					Type:      event.Type,
+					Target:    event.Target,
+					Severity:  event.Severity,
+					Message:   event.Message,
+					Labels:    event.Labels,
+					Payload:   event.Payload,
+				})
+			}
+			if _, _, err := runtime.EnqueueEvents(ctx, agent.EnqueueEventsInput{
+				BatchID: dbQueueBatchID(site, snapshot),
+				App:     site.App,
+				Service: "database",
+				Source:  "agent.database",
+				Region:  config.Identity.Region,
+				Labels:  labels,
+				Events:  inputEvents,
+			}); err != nil {
+				return agentDatabaseRunResult{}, fmt.Errorf("site %s database %s enqueue: %w", site.Slug, name, err)
+			}
+			siteSummary.Databases++
+			siteSummary.Queued += len(events)
+			siteSummary.Warnings += len(snapshot.Warnings)
+			summary.Databases++
+			summary.Queued += len(events)
+		}
+		if siteSummary.Databases > 0 || siteSummary.Queued > 0 {
+			summary.Sites = append(summary.Sites, siteSummary)
+		}
+	}
+	return summary, nil
 }
 
 type agentBrowserRunResult struct {
@@ -349,6 +464,69 @@ func browserQueueBatchID(site agent.ServerSiteConfig, result collector.BrowserCr
 		timestamp = time.Now().UTC()
 	}
 	return "browser-" + cliSafeID(site.Slug) + "-" + timestamp.UTC().Format("20060102T150405.000000000Z")
+}
+
+func dbQueueBatchID(site agent.ServerSiteConfig, result collector.DatabaseCollectResult) string {
+	timestamp := result.FinishedAt
+	if timestamp.IsZero() {
+		timestamp = time.Now().UTC()
+	}
+	return "db-" + cliSafeID(site.Slug) + "-" + cliSafeID(result.Name) + "-" + timestamp.UTC().Format("20060102T150405.000000000Z")
+}
+
+func databaseBatchLabels(site agent.ServerSiteConfig, result collector.DatabaseCollectResult) map[string]string {
+	labels := agent.SiteEventLabels(site)
+	labels["collector"] = "database"
+	if result.Name != "" {
+		labels["db_name"] = result.Name
+	}
+	if result.Engine != "" {
+		labels["db_engine"] = result.Engine
+	}
+	if result.Profile != "" {
+		labels["db_profile"] = result.Profile
+	}
+	return labels
+}
+
+func databaseEventName(database agent.ServerDatabaseConfig, profile string) string {
+	name := strings.TrimSpace(database.Name)
+	if name != "" {
+		return name
+	}
+	if profile != "" {
+		return profile
+	}
+	return "database"
+}
+
+func databaseProfileForSite(site agent.ServerSiteConfig, database agent.ServerDatabaseConfig) string {
+	if strings.TrimSpace(database.Profile) != "" {
+		switch strings.ToLower(strings.TrimSpace(database.Profile)) {
+		case "wp":
+			return "wordpress"
+		case "ps":
+			return "prestashop"
+		default:
+			return strings.ToLower(strings.TrimSpace(database.Profile))
+		}
+	}
+	switch site.Kind {
+	case "prestashop":
+		return "prestashop"
+	case "wordpress", "wordpress-multisite":
+		return "wordpress"
+	default:
+		return site.Kind
+	}
+}
+
+func databaseEngineForConfig(database agent.ServerDatabaseConfig) string {
+	engine := strings.ToLower(strings.TrimSpace(database.Engine))
+	if engine == "" {
+		return "mysql"
+	}
+	return engine
 }
 
 func cliSafeID(value string) string {

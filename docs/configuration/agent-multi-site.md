@@ -1,6 +1,6 @@
 # Aegrail Agent Multi-Site Configuration
 
-Status: in progress; validation plus file/log/browser multi-site runs implemented
+Status: in progress; validation plus file/log/database/browser multi-site runs implemented
 Date: 2026-05-12
 
 Canonical context:
@@ -57,7 +57,7 @@ go run ./cmd/aegrail agent config validate --config configs/agent.multi-site.yam
 go run ./cmd/aegrail agent run --config configs/agent.multi-site.yaml.example
 ```
 
-The current implementation uses the config for file watching, log tailing, browser crawls, queueing, replay, and per-site app/service labels. Database collectors are represented in the config but still need to be wired into `agent run`.
+The current implementation uses the config for file watching, log tailing, database snapshot checks, browser crawls, queueing, replay, and per-site app/service labels.
 
 ## Configuration Shape
 
@@ -112,6 +112,8 @@ sites:
         engine: mysql
         dsn_env: AEGRAIL_DB_EXAMPLE_COM_DSN
         profile: wordpress
+        table_prefix: wp_
+        timeout: 10s
     browser_crawl:
       enabled: true
       rendered: true
@@ -225,8 +227,21 @@ databases:
     engine: mysql
     dsn_env: AEGRAIL_DB_EXAMPLE_COM_DSN
     profile: wordpress
+    table_prefix: wp_
+    timeout: 10s
     schedule: 15m
 ```
+
+Current implementation:
+
+- `aegrail agent run --config ...` runs configured database checks on every scan.
+- MySQL and MariaDB are supported first because WordPress and PrestaShop are first-wave targets.
+- PostgreSQL can be represented in config, but collector support is still planned.
+- DSNs must come from `dsn_env`; literal DSNs in config are rejected.
+- If `dsn_env` is missing at runtime, the agent queues `db.coverage.warning` instead of failing the whole scan.
+- Events are emitted under `source=agent.database` and `service=database`.
+- Sensitive DB values are not queued raw. Aegrail records counts, value byte lengths, and SHA-256 digests for selected option/config values.
+- `schedule` is accepted as config metadata; independent per-database scheduling is still planned. The current runner executes DB checks on the agent scan interval.
 
 Minimum WordPress database checks:
 
@@ -237,6 +252,16 @@ Minimum WordPress database checks:
 - cron tasks
 - suspicious script-bearing posts, pages, widgets, and builder content
 
+Implemented WordPress check events:
+
+- `wordpress.users.count`
+- `wordpress.admin_users.count`
+- `wordpress.options.count`
+- `wordpress.active_plugins.digest`
+- `wordpress.cron.digest`
+- `wordpress.theme_stylesheet.digest`
+- `wordpress.theme_template.digest`
+
 Minimum PrestaShop database checks:
 
 - employees and SuperAdmin status
@@ -244,6 +269,17 @@ Minimum PrestaShop database checks:
 - configuration values
 - modules
 - tabs, hooks, and access rules
+
+Implemented PrestaShop check events:
+
+- `prestashop.employees.count`
+- `prestashop.active_employees.count`
+- `prestashop.modules.count`
+- `prestashop.active_modules.count`
+- `prestashop.configuration.count`
+- `prestashop.hooks.count`
+- `prestashop.tabs.count`
+- `prestashop.access_rules.count`
 
 ## Browser Crawling
 
@@ -285,7 +321,7 @@ The Hub should group the network as one app while still allowing findings to ref
 
 ## Validation Rules
 
-The planned `agent config validate` command should check:
+The `agent config validate` command checks:
 
 - required `hub`, `identity`, and `sites` fields
 - unique site slugs
@@ -293,7 +329,12 @@ The planned `agent config validate` command should check:
 - valid URL values for Hub and browser crawl seeds
 - known site kinds and profiles
 - no literal database passwords in committed example configs
-- DSN environment variables exist when validation is run on a live server
+- safe database table prefixes
+- valid durations for runtime interval, database timeout/schedule, and browser timeout
+
+Future live validation should also check:
+
+- DSN environment variables exist on the target server
 - no duplicate path ownership between unrelated site configs unless explicitly allowed
 
 ## Hub Inventory Sync
@@ -327,8 +368,9 @@ Done:
 5. Add `aegrail agent run --config ... --once`.
 6. Extend `agent run` to continuously scan every configured site and replay queued batches.
 7. Run browser crawls from configured `browser_crawl`.
+8. Run database collectors from configured `databases`.
 
 Next:
 
-1. Run database collectors from configured `databases`.
+1. Persist DB snapshot state and diff against previous snapshots.
 2. Report config coverage to the Hub for dashboard views.

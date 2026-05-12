@@ -134,6 +134,14 @@ The payload should keep useful details such as path, method, status, IP hash whe
 
 Database collectors should use read-only credentials where possible.
 
+Current implementation:
+
+- `agent run --config` executes configured MySQL/MariaDB database checks for each site.
+- `dsn_env` is required; literal DSNs are rejected by config validation.
+- Missing DSN environment variables become `db.coverage.warning` events so other site collection continues.
+- Raw option/config values are not emitted. Snapshot events keep counts, byte lengths, and SHA-256 digests.
+- Full row snapshots, previous-snapshot diffs, and PostgreSQL collector support are still planned.
+
 Minimum WordPress checks:
 
 - users
