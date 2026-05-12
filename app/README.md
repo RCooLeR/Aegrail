@@ -46,6 +46,8 @@ go run ./cmd/aegrail inventory bootstrap single-site --kind wordpress --org acme
 go run ./cmd/aegrail hub baseline compare-files --org acme --project customer-site --env production --app main-web
 go run ./cmd/aegrail hub correlate events --org acme --project customer-site --env production --app main-web --save
 go run ./cmd/aegrail hub correlate browser-scripts --org acme --project customer-site --env production --app main-web --baseline 30d --since 24h --save
+go run ./cmd/aegrail hub browser-scripts allow --org acme --project customer-site --env production --app main-web --page https://example.com --kind domain --value trusted-chat.example --reason "approved chat vendor"
+go run ./cmd/aegrail hub browser-scripts allowlist --org acme --project customer-site --env production --app main-web
 go run ./cmd/aegrail hub findings list --org acme --project customer-site --env production --app main-web
 go run ./cmd/aegrail report hub-findings --org acme --project customer-site --env production --app main-web
 go run ./cmd/aegrail collector browser crawl --url https://example.com --format json

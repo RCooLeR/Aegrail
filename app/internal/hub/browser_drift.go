@@ -85,7 +85,11 @@ func (h *Hub) AnalyzeBrowserScriptDrift(ctx context.Context, input AnalyzeBrowse
 		return BrowserScriptDriftResult{}, err
 	}
 	baseline, observed := splitBrowserScriptEvents(events, input.ObserveSince)
-	drifts := detectBrowserScriptDrifts(baseline, observed)
+	allowlist, err := h.browserScriptAllowlistMatcher(ctx, environment.ID, app.ID)
+	if err != nil {
+		return BrowserScriptDriftResult{}, err
+	}
+	drifts := detectBrowserScriptDrifts(baseline, observed, allowlist)
 	findings := browserScriptDriftFindings(org, project, environment, app, drifts)
 	if input.SaveFindings && len(findings) > 0 {
 		if h.findings == nil {
@@ -132,10 +136,13 @@ func isBrowserScriptObservation(event domain.TimelineEvent) bool {
 	return event.EventType == "browser.script.observed" || event.EventType == "browser.tag_manager.detected"
 }
 
-func detectBrowserScriptDrifts(baselineEvents []domain.TimelineEvent, observedEvents []domain.TimelineEvent) []BrowserScriptDrift {
+func detectBrowserScriptDrifts(baselineEvents []domain.TimelineEvent, observedEvents []domain.TimelineEvent, allowlist *browserScriptAllowlistMatcher) []BrowserScriptDrift {
 	baseline := newBrowserScriptBaseline()
 	for _, event := range baselineEvents {
 		baseline.observe(event)
+	}
+	if allowlist == nil {
+		allowlist = newBrowserScriptAllowlistMatcher(nil)
 	}
 
 	var drifts []BrowserScriptDrift
@@ -146,18 +153,18 @@ func detectBrowserScriptDrifts(baselineEvents []domain.TimelineEvent, observedEv
 			continue
 		}
 		domain := payloadStringAny(event.Payload, "domain", "")
-		if domain != "" && !baseline.hasDomain(page, domain) {
+		if domain != "" && !baseline.hasDomain(page, domain) && !allowlist.allows(page, "domain", domain) {
 			addBrowserScriptDrift(&drifts, seen, buildBrowserScriptDrift("domain", event, domain))
 		}
 
 		sourceType := strings.ToLower(payloadStringAny(event.Payload, "source_type", ""))
 		inlineHash := payloadStringAny(event.Payload, "sha256", "")
-		if sourceType == "inline" && inlineHash != "" && !baseline.hasInlineHash(page, inlineHash) {
+		if sourceType == "inline" && inlineHash != "" && !baseline.hasInlineHash(page, inlineHash) && !allowlist.allows(page, "inline_hash", inlineHash) {
 			addBrowserScriptDrift(&drifts, seen, buildBrowserScriptDrift("inline_hash", event, inlineHash))
 		}
 
 		for _, id := range payloadStringSlice(event.Payload, "tag_manager_ids") {
-			if id != "" && !baseline.hasTagManagerID(page, id) {
+			if id != "" && !baseline.hasTagManagerID(page, id) && !allowlist.allows(page, "tag_manager_id", id) {
 				addBrowserScriptDrift(&drifts, seen, buildBrowserScriptDrift("tag_manager_id", event, id))
 			}
 		}
@@ -176,6 +183,68 @@ func detectBrowserScriptDrifts(baselineEvents []domain.TimelineEvent, observedEv
 		return 1
 	})
 	return drifts
+}
+
+func (h *Hub) browserScriptAllowlistMatcher(ctx context.Context, environmentID domain.ID, appID domain.ID) (*browserScriptAllowlistMatcher, error) {
+	if h.browserAllowlist == nil {
+		return newBrowserScriptAllowlistMatcher(nil), nil
+	}
+	entries, err := h.browserAllowlist.ListBrowserScriptAllowlistEntries(ctx, environmentID, appID)
+	if err != nil {
+		return nil, err
+	}
+	return newBrowserScriptAllowlistMatcher(entries), nil
+}
+
+type browserScriptAllowlistMatcher struct {
+	values map[string]struct{}
+}
+
+func newBrowserScriptAllowlistMatcher(entries []domain.BrowserScriptAllowlistEntry) *browserScriptAllowlistMatcher {
+	matcher := &browserScriptAllowlistMatcher{values: map[string]struct{}{}}
+	for _, entry := range entries {
+		if entry.Status != "" && entry.Status != "active" {
+			continue
+		}
+		kind, err := normalizeBrowserScriptAllowlistKind(entry.Kind)
+		if err != nil {
+			continue
+		}
+		value := strings.TrimSpace(entry.Value)
+		if value == "" {
+			continue
+		}
+		page := normalizeBrowserPageURL(entry.PageURL)
+		matcher.values[browserScriptAllowlistKey(page, kind, value)] = struct{}{}
+		if page == "" {
+			continue
+		}
+	}
+	return matcher
+}
+
+func (m *browserScriptAllowlistMatcher) allows(page string, kind string, value string) bool {
+	if m == nil {
+		return false
+	}
+	kind, err := normalizeBrowserScriptAllowlistKind(kind)
+	if err != nil {
+		return false
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	page = normalizeBrowserPageURL(page)
+	if _, ok := m.values[browserScriptAllowlistKey(page, kind, value)]; ok {
+		return true
+	}
+	_, ok := m.values[browserScriptAllowlistKey("", kind, value)]
+	return ok
+}
+
+func browserScriptAllowlistKey(page string, kind string, value string) string {
+	return page + "\x00" + kind + "\x00" + value
 }
 
 type browserScriptBaseline struct {

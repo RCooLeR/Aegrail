@@ -39,6 +39,8 @@ aegrail collector browser crawl --url https://example.com --format json
 aegrail collector browser crawl --url https://example.com --rendered --wait-tag-manager --timeout 30s --format json
 aegrail collector browser crawl --url https://example.com --rendered --ingest --org acme --project customer-site --env production --app main-web --service frontend --host web-01 --agent-id agt_web_01
 aegrail hub correlate browser-scripts --org acme --project customer-site --env production --app main-web --baseline 30d --since 24h --save
+aegrail hub browser-scripts allow --org acme --project customer-site --env production --app main-web --page https://example.com --kind domain --value trusted-chat.example --reason "approved chat vendor"
+aegrail hub browser-scripts allowlist --org acme --project customer-site --env production --app main-web
 aegrail collector browser crawl --url https://example.com --url https://example.com/contact --max-pages 10
 ```
 
@@ -55,6 +57,7 @@ Current implementation:
 - supports bounded rendered waits with `--network-idle`, `--settle`, and `--wait-tag-manager`
 - can save crawl observations as normalized Hub ingest events with `--ingest`
 - can compare Hub browser event history with `hub correlate browser-scripts` to save drift findings
+- can approve known-good drift values with `hub browser-scripts allow`
 - outputs table or JSON
 
 Next rendered-browser work:
@@ -62,7 +65,7 @@ Next rendered-browser work:
 - Store only normalized script evidence by default, not full page content.
 - Hash inline script bodies and fetched script responses.
 - Redact query strings and obvious tokens from URLs.
-- Add explicit allowlist review for script domains, tag-manager containers, and inline hashes.
+- Add finding-to-allowlist handoff helpers once finding IDs have richer detail views.
 
 ## What To Capture
 
@@ -152,6 +155,12 @@ Suspicious changes:
 - same page differs between web nodes or environments
 
 Baseline comparison should use normalized domains and hashes. Reports should show enough evidence to review the change without dumping full script bodies by default.
+
+Approved drift values are stored in the Hub browser script allowlist. Entries can be scoped to one page or to the whole app when `--page` is omitted. Supported allowlist kinds are:
+
+- `domain`
+- `inline_hash`
+- `tag_manager_id`
 
 ## WordPress-Specific Value
 

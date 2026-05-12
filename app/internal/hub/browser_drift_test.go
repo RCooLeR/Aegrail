@@ -118,6 +118,61 @@ func TestAnalyzeBrowserScriptDriftSkipsPagesWithoutBaseline(t *testing.T) {
 	}
 }
 
+func TestAnalyzeBrowserScriptDriftSuppressesAllowedValues(t *testing.T) {
+	inventory := newMemoryInventoryRepository()
+	ingest := &memoryIngestRepository{}
+	allowlist := newMemoryBrowserScriptAllowlistRepository()
+	hub := New(Dependencies{Inventory: inventory, Ingest: ingest, BrowserAllowlist: allowlist})
+	ctx := context.Background()
+
+	environment, app := bootstrapBrowserDriftInventory(t, ctx, hub)
+	now := time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
+	pageURL := "https://example.test"
+	ingest.timelineEvents = []domain.TimelineEvent{
+		browserScriptTimelineEvent("evt-base-domain", environment.ID, app.ID, now.Add(-48*time.Hour), pageURL, map[string]any{
+			"source_type": "dom",
+			"domain":      "static.example.test",
+		}),
+		browserScriptTimelineEvent("evt-new-domain", environment.ID, app.ID, now.Add(-20*time.Minute), pageURL, map[string]any{
+			"source_type": "network",
+			"domain":      "cdn.approved.example",
+		}),
+	}
+
+	entry, err := hub.AllowBrowserScript(ctx, AllowBrowserScriptInput{
+		OrganizationSlug: "acme",
+		ProjectSlug:      "customer-site",
+		EnvironmentSlug:  "production",
+		AppSlug:          "main-web",
+		PageURL:          pageURL + "/",
+		Kind:             "script-domain",
+		Value:            "cdn.approved.example",
+		Reason:           "approved vendor",
+		ApprovedBy:       "security",
+	})
+	if err != nil {
+		t.Fatalf("AllowBrowserScript returned error: %v", err)
+	}
+	if entry.Kind != "domain" || entry.PageURL != pageURL {
+		t.Fatalf("allowlist entry = %#v", entry)
+	}
+
+	result, err := hub.AnalyzeBrowserScriptDrift(ctx, AnalyzeBrowserScriptDriftInput{
+		OrganizationSlug: "acme",
+		ProjectSlug:      "customer-site",
+		EnvironmentSlug:  "production",
+		AppSlug:          "main-web",
+		BaselineSince:    now.Add(-30 * 24 * time.Hour),
+		ObserveSince:     now.Add(-24 * time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("AnalyzeBrowserScriptDrift returned error: %v", err)
+	}
+	if len(result.Drifts) != 0 {
+		t.Fatalf("drifts = %#v, want approved domain suppressed", result.Drifts)
+	}
+}
+
 func bootstrapBrowserDriftInventory(t *testing.T, ctx context.Context, hub *Hub) (domain.Environment, domain.MonitoredApp) {
 	t.Helper()
 	if _, err := hub.SaveOrganization(ctx, SaveOrganizationInput{Slug: "acme"}); err != nil {
@@ -151,4 +206,38 @@ func browserScriptTimelineEvent(id string, environmentID domain.ID, appID domain
 		Severity:      domain.SeverityInfo,
 		Payload:       payload,
 	}
+}
+
+type memoryBrowserScriptAllowlistRepository struct {
+	entries map[string]domain.BrowserScriptAllowlistEntry
+}
+
+func newMemoryBrowserScriptAllowlistRepository() *memoryBrowserScriptAllowlistRepository {
+	return &memoryBrowserScriptAllowlistRepository{entries: map[string]domain.BrowserScriptAllowlistEntry{}}
+}
+
+func (r *memoryBrowserScriptAllowlistRepository) SaveBrowserScriptAllowlistEntry(ctx context.Context, entry domain.BrowserScriptAllowlistEntry) (domain.BrowserScriptAllowlistEntry, error) {
+	key := string(entry.EnvironmentID) + ":" + string(entry.AppID) + ":" + entry.PageURL + ":" + entry.Kind + ":" + entry.Value
+	existing, ok := r.entries[key]
+	now := time.Now().UTC()
+	if ok {
+		entry.ID = existing.ID
+		entry.CreatedAt = existing.CreatedAt
+	} else {
+		entry.ID = domain.ID("allow-" + entry.Kind + "-" + entry.Value)
+		entry.CreatedAt = now
+	}
+	entry.UpdatedAt = now
+	r.entries[key] = entry
+	return entry, nil
+}
+
+func (r *memoryBrowserScriptAllowlistRepository) ListBrowserScriptAllowlistEntries(ctx context.Context, environmentID domain.ID, appID domain.ID) ([]domain.BrowserScriptAllowlistEntry, error) {
+	var entries []domain.BrowserScriptAllowlistEntry
+	for _, entry := range r.entries {
+		if entry.EnvironmentID == environmentID && entry.AppID == appID {
+			entries = append(entries, entry)
+		}
+	}
+	return entries, nil
 }

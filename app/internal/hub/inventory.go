@@ -12,22 +12,25 @@ import (
 )
 
 type Hub struct {
-	inventory ports.InventoryRepository
-	ingest    ports.IngestRepository
-	findings  ports.HubFindingRepository
+	inventory        ports.InventoryRepository
+	ingest           ports.IngestRepository
+	findings         ports.HubFindingRepository
+	browserAllowlist ports.BrowserScriptAllowlistRepository
 }
 
 type Dependencies struct {
-	Inventory ports.InventoryRepository
-	Ingest    ports.IngestRepository
-	Findings  ports.HubFindingRepository
+	Inventory        ports.InventoryRepository
+	Ingest           ports.IngestRepository
+	Findings         ports.HubFindingRepository
+	BrowserAllowlist ports.BrowserScriptAllowlistRepository
 }
 
 func New(deps Dependencies) *Hub {
 	return &Hub{
-		inventory: deps.Inventory,
-		ingest:    deps.Ingest,
-		findings:  deps.Findings,
+		inventory:        deps.Inventory,
+		ingest:           deps.Ingest,
+		findings:         deps.Findings,
+		browserAllowlist: deps.BrowserAllowlist,
 	}
 }
 

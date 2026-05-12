@@ -117,3 +117,19 @@ type HubFinding struct {
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 }
+
+type BrowserScriptAllowlistEntry struct {
+	ID             ID
+	OrganizationID ID
+	ProjectID      ID
+	EnvironmentID  ID
+	AppID          ID
+	PageURL        string
+	Kind           string
+	Value          string
+	Reason         string
+	ApprovedBy     string
+	Status         string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}

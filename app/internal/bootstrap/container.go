@@ -67,9 +67,10 @@ func (c *Container) ConnectDatabase(ctx context.Context) error {
 		Archive:   filesystem.NewEvidenceArchive(c.Config.Paths.DataDir),
 	})
 	c.Hub = hub.New(hub.Dependencies{
-		Inventory: postgres.NewInventoryRepository(pool),
-		Ingest:    postgres.NewIngestRepository(pool),
-		Findings:  postgres.NewHubFindingRepository(pool),
+		Inventory:        postgres.NewInventoryRepository(pool),
+		Ingest:           postgres.NewIngestRepository(pool),
+		Findings:         postgres.NewHubFindingRepository(pool),
+		BrowserAllowlist: postgres.NewBrowserScriptAllowlistRepository(pool),
 	})
 	return nil
 }

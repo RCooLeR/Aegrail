@@ -204,4 +204,5 @@ Last updated: 2026-05-12
 - [x] FUT-013 Rendered browser crawl mode with bounded network and tag-manager waits.
 - [x] FUT-014 Emit browser crawl observations into Hub event storage.
 - [x] FUT-015 Browser script drift findings from Hub event history.
-- [ ] FUT-016 Browser script allowlist review workflow.
+- [x] FUT-016 Browser script allowlist review workflow.
+- [ ] FUT-017 Finding-to-allowlist handoff command.
