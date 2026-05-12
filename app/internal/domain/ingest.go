@@ -65,3 +65,30 @@ type FileStateObservation struct {
 	HashSkipped     bool
 	Deleted         bool
 }
+
+type TimelineEvent struct {
+	ID              ID
+	BatchID         ID
+	OrganizationID  ID
+	ProjectID       ID
+	EnvironmentID   ID
+	AppID           ID
+	AppSlug         string
+	ServiceID       ID
+	ServiceSlug     string
+	HostID          ID
+	HostSlug        string
+	Hostname        string
+	AgentID         ID
+	AgentExternalID string
+	EventTime       time.Time
+	ReceivedAt      time.Time
+	EventType       string
+	Target          string
+	Severity        Severity
+	Message         string
+	Region          string
+	Labels          map[string]string
+	Payload         map[string]any
+	CreatedAt       time.Time
+}

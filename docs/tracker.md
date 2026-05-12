@@ -80,7 +80,7 @@ Last updated: 2026-05-12
 - [x] AH-007 Add event-time and received-time storage fields.
 - [x] AH-008 Add cross-host app baseline comparison.
 - [x] AH-009 Add deployment marker CLI import.
-- [ ] AH-010 Add correlation rules across host/app/service/database events.
+- [x] AH-010 Add correlation rules across host/app/service/database events.
 - [x] AH-013 Implement `aegrail agent install/start/status` behavior.
 - [x] AH-014 Add Hub ingest storage use case and CLI smoke path.
 - [x] AH-015 Add HMAC-signed `POST /api/v1/ingest/events` endpoint.

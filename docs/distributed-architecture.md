@@ -214,6 +214,19 @@ Probable incident chain:
 suspicious login activity -> file change on web-02 -> database privilege change -> persistence attempt on worker-01
 ```
 
+Current correlation command:
+
+```powershell
+aegrail hub correlate events --org acme --project customer-site --env production --app main-web --since 24h --window 30m
+```
+
+The first deterministic correlation rules look for:
+
+- suspicious web activity followed by a high-signal file change
+- high-signal file changes followed by sensitive database changes
+- high-signal file changes followed by persistence signals such as cron or service changes
+- a probable incident chain when those signals happen in sequence inside the selected window
+
 ## Implementation Phases
 
 1. Keep local evidence import and normalization working.
@@ -224,7 +237,7 @@ suspicious login activity -> file change on web-02 -> database privilege change 
 6. Add deployment marker import.
 7. Add single-site inventory bootstrap for WordPress and PrestaShop.
 8. Add cross-host file observation comparison.
-9. Add correlation rules across hosts, apps, services, and DB events.
+9. Add first correlation rules across hosts, apps, services, and DB events.
 
 Current signed ingest endpoint:
 

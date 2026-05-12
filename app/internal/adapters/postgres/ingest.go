@@ -330,6 +330,76 @@ func (r *IngestRepository) ListFileStateObservations(ctx context.Context, enviro
 	return items, rows.Err()
 }
 
+func (r *IngestRepository) ListTimelineEvents(ctx context.Context, environmentID domain.ID, appID domain.ID, since time.Time, limit int) ([]domain.TimelineEvent, error) {
+	if limit <= 0 {
+		limit = 1000
+	}
+	if limit > 10000 {
+		limit = 10000
+	}
+	if since.IsZero() {
+		since = time.Unix(0, 0).UTC()
+	}
+	const query = `
+		SELECT e.id::text, e.batch_id::text, e.organization_id::text, e.project_id::text,
+			e.environment_id::text, coalesce(e.app_id::text, ''), coalesce(ma.slug::text, ''),
+			coalesce(e.service_id::text, ''), coalesce(s.slug::text, ''),
+			e.host_id::text, h.slug::text, h.hostname, e.agent_id::text, a.agent_id::text,
+			e.event_time, e.received_at, e.event_type, e.target, e.severity, e.message,
+			e.region, e.labels, e.payload, e.created_at
+		FROM hub_ingest_events e
+		LEFT JOIN monitored_apps ma ON ma.id = e.app_id
+		LEFT JOIN services s ON s.id = e.service_id
+		INNER JOIN hosts h ON h.id = e.host_id
+		INNER JOIN agents a ON a.id = e.agent_id
+		WHERE e.environment_id = $1
+			AND ($2::text = '' OR e.app_id = nullif($2::text, '')::uuid)
+			AND e.event_time >= $3
+		ORDER BY e.event_time ASC, e.created_at ASC
+		LIMIT $4
+	`
+	rows, err := r.pool.Query(ctx, query, environmentID, string(appID), since.UTC(), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []domain.TimelineEvent
+	for rows.Next() {
+		var item domain.TimelineEvent
+		if err := rows.Scan(
+			&item.ID,
+			&item.BatchID,
+			&item.OrganizationID,
+			&item.ProjectID,
+			&item.EnvironmentID,
+			&item.AppID,
+			&item.AppSlug,
+			&item.ServiceID,
+			&item.ServiceSlug,
+			&item.HostID,
+			&item.HostSlug,
+			&item.Hostname,
+			&item.AgentID,
+			&item.AgentExternalID,
+			&item.EventTime,
+			&item.ReceivedAt,
+			&item.EventType,
+			&item.Target,
+			&item.Severity,
+			&item.Message,
+			&item.Region,
+			&item.Labels,
+			&item.Payload,
+			&item.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
 type queryer interface {
 	Query(context.Context, string, ...any) (pgx.Rows, error)
 	QueryRow(context.Context, string, ...any) pgx.Row

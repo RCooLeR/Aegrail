@@ -253,7 +253,8 @@ Current status:
 - `aegrail inventory bootstrap single-site` creates the first common WordPress or PrestaShop Hub topology in one idempotent step.
 - Tailed Nginx/Apache access logs and PHP error logs now produce structured `log.access` and `log.php_error` events while retaining redacted raw line evidence.
 - `aegrail hub baseline compare-files` compares recent app-relative file observations across reporting hosts.
-- Per-agent secrets, richer topology templates, persisted baseline snapshots, and rule correlation remain the next Hub priorities.
+- `aegrail hub correlate events` runs the first deterministic incident-chain rules over recent Hub ingest events.
+- Per-agent secrets, richer topology templates, persisted baseline snapshots, and persisted findings remain the next Hub priorities.
 
 ## Phase 10: Remote Collection and Scheduling
 

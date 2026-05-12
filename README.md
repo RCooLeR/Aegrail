@@ -81,6 +81,7 @@ cd app
 go run ./cmd/aegrail hub ingest event --org acme --project customer-site --env production --app main-web --service frontend --host web-01 --agent-id agt_web_01 --batch-id smoke-001 --source cli --type file.created --target /var/www/app/uploads/avatar.php --severity high
 go run ./cmd/aegrail hub ingest batch list --org acme --project customer-site --env production
 go run ./cmd/aegrail hub baseline compare-files --org acme --project customer-site --env production --app main-web --since 24h
+go run ./cmd/aegrail hub correlate events --org acme --project customer-site --env production --app main-web --since 24h
 ```
 
 Run the signed Hub HTTP API:

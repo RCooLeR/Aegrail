@@ -127,6 +127,7 @@ func TestCompareFileBaselinesFindsCrossHostDifferences(t *testing.T) {
 
 type memoryIngestRepository struct {
 	fileObservations []domain.FileStateObservation
+	timelineEvents   []domain.TimelineEvent
 }
 
 func (r *memoryIngestRepository) SaveIngestBatch(ctx context.Context, batch domain.IngestBatch, events []domain.IngestEvent) (domain.IngestBatch, []domain.IngestEvent, bool, error) {
@@ -146,4 +147,18 @@ func (r *memoryIngestRepository) ListFileStateObservations(ctx context.Context, 
 		observations = append(observations, observation)
 	}
 	return observations, nil
+}
+
+func (r *memoryIngestRepository) ListTimelineEvents(ctx context.Context, environmentID domain.ID, appID domain.ID, since time.Time, limit int) ([]domain.TimelineEvent, error) {
+	var events []domain.TimelineEvent
+	for _, event := range r.timelineEvents {
+		if event.EnvironmentID != environmentID || event.EventTime.Before(since) {
+			continue
+		}
+		if appID != "" && event.AppID != appID {
+			continue
+		}
+		events = append(events, event)
+	}
+	return events, nil
 }
