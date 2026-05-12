@@ -22,7 +22,7 @@ func TestUpdateDatabaseSnapshotStateBaselinesThenDiffs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpdateDatabaseSnapshotState returned error on second update: %v", err)
 	}
-	if diff.Baselined || diff.Skipped || len(diff.Changes) != 2 {
+	if diff.Baselined || diff.Skipped || len(diff.Changes) != 2 || len(diff.EntityChanges) != 1 {
 		t.Fatalf("second diff = %+v, want two changes", diff)
 	}
 	changesByName := map[string]DatabaseSnapshotChange{}
@@ -36,6 +36,10 @@ func TestUpdateDatabaseSnapshotStateBaselinesThenDiffs(t *testing.T) {
 	pluginsChange := changesByName["wordpress.active_plugins.digest"]
 	if pluginsChange.Type != "changed" || pluginsChange.Previous.ValueSHA256 != "aaa" || pluginsChange.Current.ValueSHA256 != "bbb" {
 		t.Fatalf("plugins change = %+v, want digest aaa -> bbb", pluginsChange)
+	}
+	entityChange := diff.EntityChanges[0]
+	if entityChange.Type != "changed" || !entityChange.Current.Privileged {
+		t.Fatalf("entity change = %+v, want changed privileged user", entityChange)
 	}
 }
 
@@ -110,6 +114,47 @@ func TestBuildDatabaseSnapshotDiffEvents(t *testing.T) {
 	}
 }
 
+func TestBuildDatabaseSnapshotEntityDiffEvents(t *testing.T) {
+	result := databaseStateTestResult(3, "ccc")
+	diff := DatabaseSnapshotDiffResult{
+		EntityChanges: []DatabaseEntityChange{
+			{
+				Type: "added",
+				Current: DatabaseEntityState{
+					Type:       "wordpress_user",
+					Key:        "wordpress_user:abc",
+					Label:      "wordpress_user:abc",
+					Privileged: true,
+					Signature:  "sig",
+					Attributes: map[string]any{
+						"administrator": true,
+						"email_sha256":  "redacted",
+					},
+				},
+			},
+		},
+	}
+	events := BuildDatabaseSnapshotDiffEvents(result, diff, map[string]string{"site_slug": "example-com"})
+	if len(events) != 1 {
+		t.Fatalf("events = %d, want one entity event", len(events))
+	}
+	event := events[0]
+	if event.Type != "db.entity.added" || event.Severity != "high" {
+		t.Fatalf("event type/severity = %s/%s, want entity added/high", event.Type, event.Severity)
+	}
+	if event.Labels["db_entity_type"] != "wordpress_user" || event.Labels["db_privileged"] != "true" {
+		t.Fatalf("labels = %#v, want entity labels", event.Labels)
+	}
+	current, ok := event.Payload["current"].(map[string]any)
+	if !ok {
+		t.Fatalf("payload = %#v, want current entity", event.Payload)
+	}
+	attributes, ok := current["attributes"].(map[string]any)
+	if !ok || attributes["email_sha256"] != "redacted" {
+		t.Fatalf("current = %#v, want redacted attributes", current)
+	}
+}
+
 func databaseStateTestResult(users int64, pluginsHash string) DatabaseCollectResult {
 	now := time.Now().UTC()
 	return DatabaseCollectResult{
@@ -135,6 +180,19 @@ func databaseStateTestResult(users int64, pluginsHash string) DatabaseCollectRes
 				OptionName:  "active_plugins",
 				ValueSHA256: pluginsHash,
 				ValueBytes:  42,
+			},
+		},
+		Entities: []DatabaseEntityObservation{
+			{
+				Type:       "wordpress_user",
+				Key:        "wordpress_user:admin",
+				Label:      "wordpress_user:admin",
+				Privileged: true,
+				Attributes: map[string]any{
+					"administrator":       true,
+					"capabilities_sha256": pluginsHash,
+				},
+				Signature: pluginsHash,
 			},
 		},
 	}

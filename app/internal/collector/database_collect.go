@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/url"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,6 +31,7 @@ type DatabaseCollectResult struct {
 	Engine     string
 	Profile    string
 	Checks     []DatabaseCheckResult
+	Entities   []DatabaseEntityObservation
 	Warnings   []string
 }
 
@@ -43,6 +46,15 @@ type DatabaseCheckResult struct {
 	ValueSHA256 string
 	ValueBytes  int
 	Message     string
+}
+
+type DatabaseEntityObservation struct {
+	Type       string
+	Key        string
+	Label      string
+	Privileged bool
+	Attributes map[string]any
+	Signature  string
 }
 
 type databaseCheckSpec struct {
@@ -68,6 +80,7 @@ func (r *Runtime) CollectDatabaseSnapshot(ctx context.Context, input DatabaseCol
 		Engine:    normalizeDatabaseEngine(input.Engine),
 		Profile:   normalizeDatabaseProfile(input.Profile),
 		Checks:    []DatabaseCheckResult{},
+		Entities:  []DatabaseEntityObservation{},
 		Warnings:  []string{},
 	}
 	if result.Name == "" {
@@ -156,9 +169,176 @@ func (r *Runtime) CollectDatabaseSnapshot(ctx context.Context, input DatabaseCol
 		}
 		result.Checks = append(result.Checks, check)
 	}
+	entities, entityWarnings := collectDatabaseEntities(queryCtx, db, result.Profile, input.TablePrefix)
+	result.Entities = append(result.Entities, entities...)
+	result.Warnings = append(result.Warnings, entityWarnings...)
 
 	result.FinishedAt = time.Now().UTC()
 	return result, nil
+}
+
+func collectDatabaseEntities(ctx context.Context, db *sql.DB, profile string, tablePrefix string) ([]DatabaseEntityObservation, []string) {
+	switch normalizeDatabaseProfile(profile) {
+	case "wordpress":
+		return collectWordPressDatabaseEntities(ctx, db, tablePrefix)
+	case "prestashop":
+		return collectPrestaShopDatabaseEntities(ctx, db, tablePrefix)
+	default:
+		return nil, nil
+	}
+}
+
+func collectWordPressDatabaseEntities(ctx context.Context, db *sql.DB, tablePrefix string) ([]DatabaseEntityObservation, []string) {
+	prefix, warning := sanitizeDatabasePrefix(tablePrefix, "wp_")
+	users := quoteDatabaseIdentifier(prefix + "users")
+	usermeta := quoteDatabaseIdentifier(prefix + "usermeta")
+	query := "SELECT u.ID, COALESCE(u.user_login, ''), COALESCE(u.user_email, ''), COALESCE(um.meta_value, '') FROM " +
+		users + " u LEFT JOIN " + usermeta + " um ON um.user_id = u.ID AND um.meta_key = ? ORDER BY u.ID LIMIT 1000"
+	rows, err := db.QueryContext(ctx, query, prefix+"capabilities")
+	if err != nil {
+		return nil, append(optionalWarning(warning), fmt.Sprintf("wordpress user entity query failed: %v", err))
+	}
+	defer rows.Close()
+
+	var entities []DatabaseEntityObservation
+	for rows.Next() {
+		var id int64
+		var login string
+		var email string
+		var capabilities string
+		if err := rows.Scan(&id, &login, &email, &capabilities); err != nil {
+			return entities, append(optionalWarning(warning), fmt.Sprintf("wordpress user entity scan failed: %v", err))
+		}
+		admin := strings.Contains(strings.ToLower(capabilities), "administrator")
+		capabilitiesHash := databaseSHA256Hex(capabilities)
+		emailHash := databaseSHA256Hex(strings.ToLower(strings.TrimSpace(email)))
+		loginHash := databaseSHA256Hex(strings.TrimSpace(login))
+		entity := DatabaseEntityObservation{
+			Type:       "wordpress_user",
+			Key:        databaseEntityKey("wordpress_user", strconv.FormatInt(id, 10)),
+			Label:      "wordpress_user:" + databaseSHA256Short(strconv.FormatInt(id, 10)),
+			Privileged: admin,
+			Attributes: map[string]any{
+				"user_id_hash":        databaseSHA256Hex(strconv.FormatInt(id, 10)),
+				"login_sha256":        loginHash,
+				"email_sha256":        emailHash,
+				"capabilities_sha256": capabilitiesHash,
+				"administrator":       admin,
+				"has_capabilities":    strings.TrimSpace(capabilities) != "",
+			},
+		}
+		entity.Signature = databaseEntitySignature(entity)
+		entities = append(entities, entity)
+	}
+	if err := rows.Err(); err != nil {
+		return entities, append(optionalWarning(warning), fmt.Sprintf("wordpress user entity rows failed: %v", err))
+	}
+	sortDatabaseEntities(entities)
+	return entities, optionalWarning(warning)
+}
+
+func collectPrestaShopDatabaseEntities(ctx context.Context, db *sql.DB, tablePrefix string) ([]DatabaseEntityObservation, []string) {
+	prefix, warning := sanitizeDatabasePrefix(tablePrefix, "ps_")
+	var entities []DatabaseEntityObservation
+	var warnings []string
+	warnings = append(warnings, optionalWarning(warning)...)
+
+	employeeEntities, employeeWarnings := collectPrestaShopEmployeeEntities(ctx, db, prefix)
+	entities = append(entities, employeeEntities...)
+	warnings = append(warnings, employeeWarnings...)
+
+	moduleEntities, moduleWarnings := collectPrestaShopModuleEntities(ctx, db, prefix)
+	entities = append(entities, moduleEntities...)
+	warnings = append(warnings, moduleWarnings...)
+
+	sortDatabaseEntities(entities)
+	return entities, warnings
+}
+
+func collectPrestaShopEmployeeEntities(ctx context.Context, db *sql.DB, prefix string) ([]DatabaseEntityObservation, []string) {
+	table := quoteDatabaseIdentifier(prefix + "employee")
+	rows, err := db.QueryContext(ctx, "SELECT id_employee, COALESCE(email, ''), active, id_profile FROM "+table+" ORDER BY id_employee LIMIT 1000")
+	if err != nil {
+		return nil, []string{fmt.Sprintf("prestashop employee entity query failed: %v", err)}
+	}
+	defer rows.Close()
+
+	var entities []DatabaseEntityObservation
+	for rows.Next() {
+		var id int64
+		var email string
+		var active int64
+		var profileID int64
+		if err := rows.Scan(&id, &email, &active, &profileID); err != nil {
+			return entities, []string{fmt.Sprintf("prestashop employee entity scan failed: %v", err)}
+		}
+		superAdmin := profileID == 1
+		isActive := active != 0
+		entity := DatabaseEntityObservation{
+			Type:       "prestashop_employee",
+			Key:        databaseEntityKey("prestashop_employee", strconv.FormatInt(id, 10)),
+			Label:      "prestashop_employee:" + databaseSHA256Short(strconv.FormatInt(id, 10)),
+			Privileged: superAdmin,
+			Attributes: map[string]any{
+				"employee_id_hash": databaseSHA256Hex(strconv.FormatInt(id, 10)),
+				"email_sha256":     databaseSHA256Hex(strings.ToLower(strings.TrimSpace(email))),
+				"profile_id":       profileID,
+				"active":           isActive,
+				"super_admin":      superAdmin,
+			},
+		}
+		entity.Signature = databaseEntitySignature(entity)
+		entities = append(entities, entity)
+	}
+	if err := rows.Err(); err != nil {
+		return entities, []string{fmt.Sprintf("prestashop employee entity rows failed: %v", err)}
+	}
+	return entities, nil
+}
+
+func collectPrestaShopModuleEntities(ctx context.Context, db *sql.DB, prefix string) ([]DatabaseEntityObservation, []string) {
+	table := quoteDatabaseIdentifier(prefix + "module")
+	rows, err := db.QueryContext(ctx, "SELECT id_module, COALESCE(name, ''), active, COALESCE(version, '') FROM "+table+" ORDER BY id_module LIMIT 2000")
+	if err != nil {
+		return nil, []string{fmt.Sprintf("prestashop module entity query failed: %v", err)}
+	}
+	defer rows.Close()
+
+	var entities []DatabaseEntityObservation
+	for rows.Next() {
+		var id int64
+		var name string
+		var active int64
+		var version string
+		if err := rows.Scan(&id, &name, &active, &version); err != nil {
+			return entities, []string{fmt.Sprintf("prestashop module entity scan failed: %v", err)}
+		}
+		name = strings.TrimSpace(name)
+		version = strings.TrimSpace(version)
+		isActive := active != 0
+		entity := DatabaseEntityObservation{
+			Type:       "prestashop_module",
+			Key:        databaseEntityKey("prestashop_module", strconv.FormatInt(id, 10)),
+			Label:      name,
+			Privileged: false,
+			Attributes: map[string]any{
+				"module_id_hash": databaseSHA256Hex(strconv.FormatInt(id, 10)),
+				"module_name":    name,
+				"name_sha256":    databaseSHA256Hex(name),
+				"version":        version,
+				"active":         isActive,
+			},
+		}
+		if entity.Label == "" {
+			entity.Label = "prestashop_module:" + databaseSHA256Short(strconv.FormatInt(id, 10))
+		}
+		entity.Signature = databaseEntitySignature(entity)
+		entities = append(entities, entity)
+	}
+	if err := rows.Err(); err != nil {
+		return entities, []string{fmt.Sprintf("prestashop module entity rows failed: %v", err)}
+	}
+	return entities, nil
 }
 
 func queryDatabaseCount(ctx context.Context, db *sql.DB, spec databaseCheckSpec) (int64, error) {
@@ -351,4 +531,44 @@ func optionalWarning(value string) []string {
 		return nil
 	}
 	return []string{value}
+}
+
+func databaseEntityKey(kind string, value string) string {
+	return strings.TrimSpace(kind) + ":" + databaseSHA256Short(value)
+}
+
+func databaseEntitySignature(entity DatabaseEntityObservation) string {
+	var parts []string
+	parts = append(parts, strings.TrimSpace(entity.Type), strings.TrimSpace(entity.Label), fmt.Sprintf("privileged:%t", entity.Privileged))
+	keys := make([]string, 0, len(entity.Attributes))
+	for key := range entity.Attributes {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		parts = append(parts, key+"="+fmt.Sprint(entity.Attributes[key]))
+	}
+	return databaseSHA256Hex(strings.Join(parts, "\n"))
+}
+
+func sortDatabaseEntities(entities []DatabaseEntityObservation) {
+	sort.Slice(entities, func(i int, j int) bool {
+		if entities[i].Type == entities[j].Type {
+			return entities[i].Key < entities[j].Key
+		}
+		return entities[i].Type < entities[j].Type
+	})
+}
+
+func databaseSHA256Hex(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
+}
+
+func databaseSHA256Short(value string) string {
+	hash := databaseSHA256Hex(value)
+	if len(hash) <= 24 {
+		return hash
+	}
+	return hash[:24]
 }

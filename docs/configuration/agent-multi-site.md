@@ -241,8 +241,10 @@ Current implementation:
 - If `dsn_env` is missing at runtime, the agent queues `db.coverage.warning` instead of failing the whole scan.
 - Events are emitted under `source=agent.database` and `service=database`.
 - Sensitive DB values are not queued raw. Aegrail records counts, value byte lengths, and SHA-256 digests for selected option/config values.
+- Aegrail also records redacted entity fingerprints for WordPress users/capabilities and PrestaShop employees/modules.
+- User and employee emails/logins are hashed; PrestaShop module names may be retained because they are operational security evidence.
 - The first successful snapshot creates a per-site, per-database JSON baseline in `runtime.state_dir`.
-- Later snapshots compare against that state and emit `db.snapshot.check_changed` or `db.snapshot.check_added` events when counts or digests change.
+- Later snapshots compare against that state and emit `db.snapshot.check_changed`, `db.entity.added`, `db.entity.changed`, or `db.entity.removed` events when counts, digests, or redacted entities change.
 - Failed or warning-only snapshots do not overwrite the previous good DB state.
 - `schedule` is accepted as config metadata; independent per-database scheduling is still planned. The current runner executes DB checks on the agent scan interval.
 
@@ -374,8 +376,9 @@ Done:
 8. Run database collectors from configured `databases`.
 9. Persist DB snapshot state and emit redacted DB diff events.
 10. Turn first-wave DB diff events into deterministic Hub findings.
+11. Add redacted entity-level snapshots for WordPress users and PrestaShop employees/modules.
 
 Next:
 
 1. Report config coverage to the Hub for dashboard views.
-2. Add entity-level DB snapshots so findings can name the exact user, plugin, module, or option that changed.
+2. Add exact plugin/option/config parsers so findings can identify the specific plugin, option, module setting, or cron entry that changed.

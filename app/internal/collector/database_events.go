@@ -36,6 +36,7 @@ func BuildDatabaseSnapshotEvents(result DatabaseCollectResult, baseLabels map[st
 				"engine":          result.Engine,
 				"profile":         result.Profile,
 				"check_count":     len(result.Checks),
+				"entity_count":    len(result.Entities),
 				"warning_count":   warningCount,
 				"run_started_at":  result.StartedAt.Format(time.RFC3339Nano),
 				"run_finished_at": result.FinishedAt.Format(time.RFC3339Nano),
@@ -125,10 +126,11 @@ func BuildDatabaseSnapshotDiffEvents(result DatabaseCollectResult, diff Database
 				Message:   fmt.Sprintf("Database snapshot baseline created for %s", result.Name),
 				Labels:    labels,
 				Payload: map[string]any{
-					"database":    result.Name,
-					"engine":      result.Engine,
-					"profile":     result.Profile,
-					"check_count": len(BuildDatabaseSnapshotState(result).Checks),
+					"database":     result.Name,
+					"engine":       result.Engine,
+					"profile":      result.Profile,
+					"check_count":  len(BuildDatabaseSnapshotState(result).Checks),
+					"entity_count": len(BuildDatabaseSnapshotState(result).Entities),
 				},
 			},
 		}
@@ -166,6 +168,41 @@ func BuildDatabaseSnapshotDiffEvents(result DatabaseCollectResult, diff Database
 			Severity:  databaseDiffSeverity(current),
 			Message:   databaseDiffMessage(result, change),
 			Labels:    checkLabels,
+			Payload:   payload,
+		})
+	}
+	for _, change := range diff.EntityChanges {
+		entity := change.Current
+		if entity.Key == "" {
+			entity = change.Previous
+		}
+		entityLabels := databaseEventLabels(baseLabels, result, map[string]string{
+			"db_entity_type": entity.Type,
+			"db_entity_key":  entity.Key,
+			"db_change_type": change.Type,
+			"db_privileged":  boolLabel(entity.Privileged),
+		})
+		payload := map[string]any{
+			"database":    result.Name,
+			"engine":      result.Engine,
+			"profile":     result.Profile,
+			"change_type": change.Type,
+			"entity_type": entity.Type,
+			"entity_key":  entity.Key,
+		}
+		if change.Current.Key != "" {
+			payload["current"] = databaseEntityStatePayload(change.Current)
+		}
+		if change.Previous.Key != "" {
+			payload["previous"] = databaseEntityStatePayload(change.Previous)
+		}
+		events = append(events, DatabaseSnapshotEvent{
+			EventTime: eventTime,
+			Type:      "db.entity." + databaseChangeEventSuffix(change.Type),
+			Target:    databaseEntityTarget(result, entity),
+			Severity:  databaseEntityDiffSeverity(entity),
+			Message:   databaseEntityDiffMessage(result, change),
+			Labels:    entityLabels,
 			Payload:   payload,
 		})
 	}
@@ -264,6 +301,20 @@ func databaseCheckStatePayload(state DatabaseSnapshotCheckState) map[string]any 
 	return payload
 }
 
+func databaseEntityStatePayload(state DatabaseEntityState) map[string]any {
+	payload := map[string]any{
+		"type":       state.Type,
+		"key":        state.Key,
+		"label":      state.Label,
+		"privileged": state.Privileged,
+		"signature":  state.Signature,
+	}
+	if len(state.Attributes) > 0 {
+		payload["attributes"] = state.Attributes
+	}
+	return payload
+}
+
 func databaseStateTarget(result DatabaseCollectResult, state DatabaseSnapshotCheckState) string {
 	if state.Table != "" && state.Metric != "" {
 		return result.Name + ":" + state.Table + ":" + state.Metric
@@ -272,6 +323,25 @@ func databaseStateTarget(result DatabaseCollectResult, state DatabaseSnapshotChe
 		return result.Name + ":" + state.Table
 	}
 	return result.Name + ":" + state.Name
+}
+
+func databaseEntityTarget(result DatabaseCollectResult, entity DatabaseEntityState) string {
+	if entity.Label != "" {
+		return result.Name + ":" + entity.Type + ":" + entity.Label
+	}
+	return result.Name + ":" + entity.Type + ":" + entity.Key
+}
+
+func databaseEntityDiffSeverity(entity DatabaseEntityState) string {
+	if entity.Privileged {
+		return "high"
+	}
+	switch entity.Type {
+	case "wordpress_user", "prestashop_employee", "prestashop_module":
+		return "medium"
+	default:
+		return "low"
+	}
 }
 
 func databaseDiffSeverity(state DatabaseSnapshotCheckState) string {
@@ -300,10 +370,23 @@ func databaseDiffMessage(result DatabaseCollectResult, change DatabaseSnapshotCh
 	}
 }
 
+func databaseEntityDiffMessage(result DatabaseCollectResult, change DatabaseEntityChange) string {
+	entity := change.Current
+	if entity.Key == "" {
+		entity = change.Previous
+	}
+	if entity.Privileged {
+		return fmt.Sprintf("Privileged database entity %s %s for %s", entity.Type, change.Type, result.Name)
+	}
+	return fmt.Sprintf("Database entity %s %s for %s", entity.Type, change.Type, result.Name)
+}
+
 func databaseChangeEventSuffix(value string) string {
 	switch strings.TrimSpace(value) {
 	case "added":
 		return "added"
+	case "removed":
+		return "removed"
 	default:
 		return "changed"
 	}

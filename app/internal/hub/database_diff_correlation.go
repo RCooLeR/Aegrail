@@ -16,7 +16,7 @@ type databaseSnapshotRule struct {
 
 func isDatabaseSnapshotDiffEvent(event domain.TimelineEvent) bool {
 	switch event.EventType {
-	case "db.snapshot.check_changed", "db.snapshot.check_added":
+	case "db.snapshot.check_changed", "db.snapshot.check_added", "db.entity.added", "db.entity.changed", "db.entity.removed":
 		return true
 	default:
 		return false
@@ -46,6 +46,9 @@ func buildDatabaseSnapshotDiffChain(event domain.TimelineEvent) CorrelationChain
 }
 
 func databaseSnapshotRuleForEvent(event domain.TimelineEvent) databaseSnapshotRule {
+	if strings.HasPrefix(event.EventType, "db.entity.") {
+		return databaseEntityRuleForEvent(event)
+	}
 	profile := strings.ToLower(firstNonEmpty(
 		payloadStringAny(event.Payload, "profile", ""),
 		event.Labels["db_profile"],
@@ -70,6 +73,145 @@ func databaseSnapshotRuleForEvent(event domain.TimelineEvent) databaseSnapshotRu
 		return databaseSnapshotRule{
 			RuleID:     "database-snapshot-check-changed",
 			Title:      "Database snapshot check changed",
+			Severity:   maxSeverity(event.Severity, domain.SeverityLow),
+			Confidence: domain.ConfidenceMedium,
+		}
+	}
+}
+
+func databaseEntityRuleForEvent(event domain.TimelineEvent) databaseSnapshotRule {
+	profile := strings.ToLower(firstNonEmpty(
+		payloadStringAny(event.Payload, "profile", ""),
+		event.Labels["db_profile"],
+	))
+	entityType := strings.ToLower(firstNonEmpty(
+		payloadStringAny(event.Payload, "entity_type", ""),
+		event.Labels["db_entity_type"],
+	))
+	current := payloadMap(event.Payload, "current")
+	previous := payloadMap(event.Payload, "previous")
+	currentAttributes := payloadMap(current, "attributes")
+	previousAttributes := payloadMap(previous, "attributes")
+
+	switch profile {
+	case "wordpress", "wp":
+		return wordpressDatabaseEntityRule(event, entityType, currentAttributes, previousAttributes)
+	case "prestashop", "ps":
+		return prestashopDatabaseEntityRule(event, entityType, currentAttributes, previousAttributes)
+	default:
+		return databaseSnapshotRule{
+			RuleID:     "database-entity-changed",
+			Title:      "Database entity changed",
+			Severity:   maxSeverity(event.Severity, domain.SeverityLow),
+			Confidence: domain.ConfidenceMedium,
+		}
+	}
+}
+
+func wordpressDatabaseEntityRule(event domain.TimelineEvent, entityType string, current map[string]any, previous map[string]any) databaseSnapshotRule {
+	if entityType == "wordpress_user" {
+		currentAdmin := payloadBool(current, "administrator")
+		previousAdmin := payloadBool(previous, "administrator")
+		switch {
+		case event.EventType == "db.entity.added" && currentAdmin:
+			return databaseSnapshotRule{
+				RuleID:     "wordpress-admin-user-added",
+				Title:      "WordPress administrator added",
+				Severity:   domain.SeverityHigh,
+				Confidence: domain.ConfidenceHigh,
+			}
+		case event.EventType == "db.entity.changed" && currentAdmin && !previousAdmin:
+			return databaseSnapshotRule{
+				RuleID:     "wordpress-user-became-admin",
+				Title:      "WordPress user became administrator",
+				Severity:   domain.SeverityHigh,
+				Confidence: domain.ConfidenceHigh,
+			}
+		case event.EventType == "db.entity.changed":
+			return databaseSnapshotRule{
+				RuleID:     "wordpress-user-capabilities-changed",
+				Title:      "WordPress user capabilities changed",
+				Severity:   domain.SeverityMedium,
+				Confidence: domain.ConfidenceHigh,
+			}
+		case event.EventType == "db.entity.removed" && previousAdmin:
+			return databaseSnapshotRule{
+				RuleID:     "wordpress-admin-user-removed",
+				Title:      "WordPress administrator removed",
+				Severity:   domain.SeverityMedium,
+				Confidence: domain.ConfidenceMedium,
+			}
+		default:
+			return databaseSnapshotRule{
+				RuleID:     "wordpress-user-entity-changed",
+				Title:      "WordPress user changed",
+				Severity:   maxSeverity(event.Severity, domain.SeverityLow),
+				Confidence: domain.ConfidenceMedium,
+			}
+		}
+	}
+	return databaseSnapshotRule{
+		RuleID:     "wordpress-database-entity-changed",
+		Title:      "WordPress database entity changed",
+		Severity:   maxSeverity(event.Severity, domain.SeverityLow),
+		Confidence: domain.ConfidenceMedium,
+	}
+}
+
+func prestashopDatabaseEntityRule(event domain.TimelineEvent, entityType string, current map[string]any, previous map[string]any) databaseSnapshotRule {
+	switch entityType {
+	case "prestashop_employee":
+		currentSuperAdmin := payloadBool(current, "super_admin")
+		previousSuperAdmin := payloadBool(previous, "super_admin")
+		switch {
+		case event.EventType == "db.entity.added" && currentSuperAdmin:
+			return databaseSnapshotRule{
+				RuleID:     "prestashop-superadmin-employee-added",
+				Title:      "PrestaShop SuperAdmin employee added",
+				Severity:   domain.SeverityHigh,
+				Confidence: domain.ConfidenceHigh,
+			}
+		case event.EventType == "db.entity.changed" && currentSuperAdmin && !previousSuperAdmin:
+			return databaseSnapshotRule{
+				RuleID:     "prestashop-employee-became-superadmin",
+				Title:      "PrestaShop employee became SuperAdmin",
+				Severity:   domain.SeverityHigh,
+				Confidence: domain.ConfidenceHigh,
+			}
+		case event.EventType == "db.entity.changed":
+			return databaseSnapshotRule{
+				RuleID:     "prestashop-employee-changed",
+				Title:      "PrestaShop employee changed",
+				Severity:   domain.SeverityMedium,
+				Confidence: domain.ConfidenceHigh,
+			}
+		default:
+			return databaseSnapshotRule{
+				RuleID:     "prestashop-employee-entity-changed",
+				Title:      "PrestaShop employee entity changed",
+				Severity:   maxSeverity(event.Severity, domain.SeverityLow),
+				Confidence: domain.ConfidenceMedium,
+			}
+		}
+	case "prestashop_module":
+		if event.EventType == "db.entity.added" && payloadBool(current, "active") {
+			return databaseSnapshotRule{
+				RuleID:     "prestashop-active-module-added",
+				Title:      "PrestaShop active module added",
+				Severity:   domain.SeverityMedium,
+				Confidence: domain.ConfidenceHigh,
+			}
+		}
+		return databaseSnapshotRule{
+			RuleID:     "prestashop-module-entity-changed",
+			Title:      "PrestaShop module changed",
+			Severity:   domain.SeverityMedium,
+			Confidence: domain.ConfidenceMedium,
+		}
+	default:
+		return databaseSnapshotRule{
+			RuleID:     "prestashop-database-entity-changed",
+			Title:      "PrestaShop database entity changed",
 			Severity:   maxSeverity(event.Severity, domain.SeverityLow),
 			Confidence: domain.ConfidenceMedium,
 		}
@@ -188,6 +330,9 @@ func databaseSnapshotDiffChainID(ruleID string, event domain.TimelineEvent) stri
 	current := payloadMap(event.Payload, "current")
 	signature := payloadStringAny(current, "signature", "")
 	if signature == "" {
+		signature = payloadStringAny(payloadMap(event.Payload, "previous"), "signature", "")
+	}
+	if signature == "" {
 		signature = string(event.ID)
 	}
 	parts := []string{
@@ -196,6 +341,7 @@ func databaseSnapshotDiffChainID(ruleID string, event domain.TimelineEvent) stri
 		string(event.AppID),
 		event.Target,
 		payloadStringAny(event.Payload, "check", ""),
+		payloadStringAny(event.Payload, "entity_key", ""),
 		signature,
 	}
 	return "corr-" + sha256Short(strings.Join(parts, "\n"))
@@ -230,6 +376,10 @@ func databaseSnapshotChangeSummary(event domain.TimelineEvent) string {
 	if previousHash != "" && currentHash != "" && previousHash != currentHash {
 		return "digest changed"
 	}
+	entity := payloadStringAny(event.Payload, "entity_type", "")
+	if entity != "" {
+		return strings.TrimPrefix(event.EventType, "db.entity.") + " " + entity
+	}
 	return ""
 }
 
@@ -249,6 +399,31 @@ func payloadMap(payload map[string]any, key string) map[string]any {
 		return converted
 	default:
 		return nil
+	}
+}
+
+func payloadBool(payload map[string]any, key string) bool {
+	if payload == nil {
+		return false
+	}
+	switch value := payload[key].(type) {
+	case bool:
+		return value
+	case string:
+		switch strings.ToLower(strings.TrimSpace(value)) {
+		case "true", "1", "yes":
+			return true
+		default:
+			return false
+		}
+	case int:
+		return value != 0
+	case int64:
+		return value != 0
+	case float64:
+		return value != 0
+	default:
+		return false
 	}
 }
 

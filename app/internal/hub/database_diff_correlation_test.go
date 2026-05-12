@@ -85,6 +85,73 @@ func TestCorrelateEventsSavesWordPressDatabaseDiffFinding(t *testing.T) {
 	}
 }
 
+func TestCorrelateEventsSavesWordPressAdminEntityFinding(t *testing.T) {
+	inventory := newMemoryInventoryRepository()
+	ingest := &memoryIngestRepository{}
+	findings := newMemoryHubFindingRepository()
+	hub := New(Dependencies{Inventory: inventory, Ingest: ingest, Findings: findings})
+	ctx := context.Background()
+
+	environment, app, host, agent := bootstrapDatabaseDiffInventory(t, ctx, hub, "wordpress")
+	now := time.Date(2026, 5, 12, 12, 30, 0, 0, time.UTC)
+	ingest.timelineEvents = []domain.TimelineEvent{
+		{
+			ID:              "evt-db-admin-entity",
+			EnvironmentID:   environment.ID,
+			AppID:           app.ID,
+			AppSlug:         app.Slug,
+			HostID:          host.ID,
+			HostSlug:        host.Slug,
+			AgentID:         agent.ID,
+			AgentExternalID: agent.AgentID,
+			EventTime:       now,
+			EventType:       "db.entity.added",
+			Target:          "wordpress:wordpress_user:wordpress_user:abc",
+			Severity:        domain.SeverityHigh,
+			Message:         "Privileged database entity wordpress_user added for wordpress",
+			Labels: map[string]string{
+				"db_profile":     "wordpress",
+				"db_entity_type": "wordpress_user",
+			},
+			Payload: map[string]any{
+				"database":    "wordpress",
+				"profile":     "wordpress",
+				"entity_type": "wordpress_user",
+				"entity_key":  "wordpress_user:abc",
+				"current": map[string]any{
+					"type":       "wordpress_user",
+					"key":        "wordpress_user:abc",
+					"privileged": true,
+					"signature":  "sig-admin",
+					"attributes": map[string]any{
+						"administrator": true,
+						"email_sha256":  "redacted",
+					},
+				},
+			},
+		},
+	}
+
+	result, err := hub.CorrelateEvents(ctx, CorrelateEventsInput{
+		OrganizationSlug: "acme",
+		ProjectSlug:      "customer-site",
+		EnvironmentSlug:  "production",
+		AppSlug:          "main-web",
+		Since:            now.Add(-time.Hour),
+		SaveFindings:     true,
+	})
+	if err != nil {
+		t.Fatalf("CorrelateEvents returned error: %v", err)
+	}
+	if len(result.Findings) != 1 {
+		t.Fatalf("findings = %#v, want one saved finding", result.Findings)
+	}
+	finding := result.Findings[0]
+	if finding.RuleID != "wordpress-admin-user-added" || finding.Severity != domain.SeverityHigh || finding.Confidence != domain.ConfidenceHigh {
+		t.Fatalf("finding = %#v, want WordPress admin entity finding", finding)
+	}
+}
+
 func TestCorrelateEventsBuildsPrestaShopDatabaseDiffChain(t *testing.T) {
 	now := time.Date(2026, 5, 12, 13, 0, 0, 0, time.UTC)
 	chains := correlateTimelineEvents([]domain.TimelineEvent{
@@ -124,6 +191,43 @@ func TestCorrelateEventsBuildsPrestaShopDatabaseDiffChain(t *testing.T) {
 	}
 	if chain.Summary == "" || chain.Events[0].EventID != "evt-db-module" {
 		t.Fatalf("chain summary/events = %#v", chain)
+	}
+}
+
+func TestCorrelateEventsBuildsPrestaShopModuleEntityChain(t *testing.T) {
+	now := time.Date(2026, 5, 12, 13, 30, 0, 0, time.UTC)
+	chains := correlateTimelineEvents([]domain.TimelineEvent{
+		{
+			ID:        "evt-db-module-entity",
+			EventTime: now,
+			EventType: "db.entity.added",
+			Target:    "prestashop:prestashop_module:ps_checkout",
+			Severity:  domain.SeverityMedium,
+			HostSlug:  "web-01",
+			Labels: map[string]string{
+				"db_profile":     "prestashop",
+				"db_entity_type": "prestashop_module",
+			},
+			Payload: map[string]any{
+				"profile":     "prestashop",
+				"entity_type": "prestashop_module",
+				"entity_key":  "prestashop_module:def",
+				"current": map[string]any{
+					"type":       "prestashop_module",
+					"key":        "prestashop_module:def",
+					"label":      "ps_checkout",
+					"signature":  "sig-module",
+					"attributes": map[string]any{"active": true, "module_name": "ps_checkout"},
+				},
+			},
+		},
+	}, 30*time.Minute)
+	if len(chains) != 1 {
+		t.Fatalf("chains = %#v, want one PrestaShop module entity chain", chains)
+	}
+	chain := chains[0]
+	if chain.RuleID != "prestashop-active-module-added" || chain.Title != "PrestaShop active module added" {
+		t.Fatalf("chain = %#v, want active module entity finding", chain)
 	}
 }
 

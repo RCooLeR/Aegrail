@@ -71,12 +71,21 @@ High-signal findings:
 
 Current deterministic DB diff finding rules:
 
+- `wordpress-admin-user-added`
+- `wordpress-user-became-admin`
+- `wordpress-user-capabilities-changed`
+- `wordpress-admin-user-removed`
 - `wordpress-admin-users-changed`
 - `wordpress-users-changed`
 - `wordpress-active-plugins-changed`
 - `wordpress-theme-option-changed`
 - `wordpress-cron-option-changed`
 - `wordpress-options-changed`
+- `prestashop-superadmin-employee-added`
+- `prestashop-employee-became-superadmin`
+- `prestashop-employee-changed`
+- `prestashop-active-module-added`
+- `prestashop-module-entity-changed`
 - `prestashop-employees-changed`
 - `prestashop-modules-changed`
 - `prestashop-configuration-changed`
@@ -84,7 +93,7 @@ Current deterministic DB diff finding rules:
 - `prestashop-hooks-changed`
 - `prestashop-tabs-changed`
 
-These rules currently operate on redacted snapshot diff events: counts, byte lengths, and SHA-256 digests. They intentionally do not expose raw option/config values in findings.
+These rules operate on redacted snapshot diff events: counts, byte lengths, SHA-256 digests, and entity fingerprints. User and employee names/emails are hashed; module names may be kept when they are operational evidence rather than credentials. Raw option/config values are not exposed in findings.
 
 ### Browser JavaScript
 

@@ -20,6 +20,7 @@ type DatabaseSnapshotState struct {
 	Engine    string                                `json:"engine"`
 	Profile   string                                `json:"profile"`
 	Checks    map[string]DatabaseSnapshotCheckState `json:"checks"`
+	Entities  map[string]DatabaseEntityState        `json:"entities,omitempty"`
 }
 
 type DatabaseSnapshotCheckState struct {
@@ -35,10 +36,20 @@ type DatabaseSnapshotCheckState struct {
 	Signature   string `json:"signature"`
 }
 
+type DatabaseEntityState struct {
+	Type       string         `json:"type"`
+	Key        string         `json:"key"`
+	Label      string         `json:"label,omitempty"`
+	Privileged bool           `json:"privileged,omitempty"`
+	Attributes map[string]any `json:"attributes,omitempty"`
+	Signature  string         `json:"signature"`
+}
+
 type DatabaseSnapshotDiffResult struct {
-	Baselined bool
-	Skipped   bool
-	Changes   []DatabaseSnapshotChange
+	Baselined     bool
+	Skipped       bool
+	Changes       []DatabaseSnapshotChange
+	EntityChanges []DatabaseEntityChange
 }
 
 type DatabaseSnapshotChange struct {
@@ -47,9 +58,15 @@ type DatabaseSnapshotChange struct {
 	Current  DatabaseSnapshotCheckState
 }
 
+type DatabaseEntityChange struct {
+	Type     string
+	Previous DatabaseEntityState
+	Current  DatabaseEntityState
+}
+
 func UpdateDatabaseSnapshotState(path string, result DatabaseCollectResult) (DatabaseSnapshotDiffResult, error) {
 	current := BuildDatabaseSnapshotState(result)
-	if len(current.Checks) == 0 {
+	if len(current.Checks) == 0 && len(current.Entities) == 0 {
 		return DatabaseSnapshotDiffResult{Skipped: true}, nil
 	}
 
@@ -72,6 +89,7 @@ func BuildDatabaseSnapshotState(result DatabaseCollectResult) DatabaseSnapshotSt
 		Engine:    strings.TrimSpace(result.Engine),
 		Profile:   strings.TrimSpace(result.Profile),
 		Checks:    map[string]DatabaseSnapshotCheckState{},
+		Entities:  map[string]DatabaseEntityState{},
 	}
 	if state.UpdatedAt.IsZero() {
 		state.UpdatedAt = time.Now().UTC()
@@ -82,6 +100,13 @@ func BuildDatabaseSnapshotState(result DatabaseCollectResult) DatabaseSnapshotSt
 			continue
 		}
 		state.Checks[checkState.Name] = checkState
+	}
+	for _, entity := range result.Entities {
+		entityState, ok := databaseEntityState(entity)
+		if !ok {
+			continue
+		}
+		state.Entities[entityState.Key] = entityState
 	}
 	return state
 }
@@ -104,6 +129,9 @@ func LoadDatabaseSnapshotState(path string) (DatabaseSnapshotState, bool, error)
 	if state.Checks == nil {
 		state.Checks = map[string]DatabaseSnapshotCheckState{}
 	}
+	if state.Entities == nil {
+		state.Entities = map[string]DatabaseEntityState{}
+	}
 	return state, true, nil
 }
 
@@ -114,6 +142,9 @@ func SaveDatabaseSnapshotState(path string, state DatabaseSnapshotState) error {
 	}
 	if state.Checks == nil {
 		state.Checks = map[string]DatabaseSnapshotCheckState{}
+	}
+	if state.Entities == nil {
+		state.Entities = map[string]DatabaseEntityState{}
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
@@ -153,6 +184,43 @@ func DiffDatabaseSnapshotState(previous DatabaseSnapshotState, found bool, curre
 			})
 		}
 	}
+	entityKeys := make([]string, 0, len(current.Entities))
+	for key := range current.Entities {
+		entityKeys = append(entityKeys, key)
+	}
+	sort.Strings(entityKeys)
+	for _, key := range entityKeys {
+		currentEntity := current.Entities[key]
+		previousEntity, ok := previous.Entities[key]
+		if !ok {
+			diff.EntityChanges = append(diff.EntityChanges, DatabaseEntityChange{
+				Type:    "added",
+				Current: currentEntity,
+			})
+			continue
+		}
+		if previousEntity.Signature != currentEntity.Signature {
+			diff.EntityChanges = append(diff.EntityChanges, DatabaseEntityChange{
+				Type:     "changed",
+				Previous: previousEntity,
+				Current:  currentEntity,
+			})
+		}
+	}
+	previousEntityKeys := make([]string, 0, len(previous.Entities))
+	for key := range previous.Entities {
+		previousEntityKeys = append(previousEntityKeys, key)
+	}
+	sort.Strings(previousEntityKeys)
+	for _, key := range previousEntityKeys {
+		if _, ok := current.Entities[key]; ok {
+			continue
+		}
+		diff.EntityChanges = append(diff.EntityChanges, DatabaseEntityChange{
+			Type:     "removed",
+			Previous: previous.Entities[key],
+		})
+	}
 	return diff
 }
 
@@ -182,4 +250,43 @@ func databaseCheckState(check DatabaseCheckResult) (DatabaseSnapshotCheckState, 
 		return DatabaseSnapshotCheckState{}, false
 	}
 	return state, true
+}
+
+func databaseEntityState(entity DatabaseEntityObservation) (DatabaseEntityState, bool) {
+	state := DatabaseEntityState{
+		Type:       strings.TrimSpace(entity.Type),
+		Key:        strings.TrimSpace(entity.Key),
+		Label:      strings.TrimSpace(entity.Label),
+		Privileged: entity.Privileged,
+		Attributes: cloneAnyMap(entity.Attributes),
+		Signature:  strings.TrimSpace(entity.Signature),
+	}
+	if state.Type == "" || state.Key == "" {
+		return DatabaseEntityState{}, false
+	}
+	if state.Signature == "" {
+		state.Signature = databaseEntitySignature(DatabaseEntityObservation{
+			Type:       state.Type,
+			Key:        state.Key,
+			Label:      state.Label,
+			Privileged: state.Privileged,
+			Attributes: state.Attributes,
+		})
+	}
+	return state, true
+}
+
+func cloneAnyMap(values map[string]any) map[string]any {
+	if len(values) == 0 {
+		return nil
+	}
+	clone := make(map[string]any, len(values))
+	for key, value := range values {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		clone[key] = value
+	}
+	return clone
 }

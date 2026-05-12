@@ -140,11 +140,13 @@ Current implementation:
 - `dsn_env` is required; literal DSNs are rejected by config validation.
 - Missing DSN environment variables become `db.coverage.warning` events so other site collection continues.
 - Raw option/config values are not emitted. Snapshot events keep counts, byte lengths, and SHA-256 digests.
+- Entity snapshots now cover redacted WordPress users/capabilities plus PrestaShop employees and modules.
+- User and employee emails/logins are hashed before they become local state or Hub events.
 - The first good snapshot creates local baseline state under the configured site state directory.
-- Later snapshots emit redacted diff events such as `db.snapshot.check_changed` and `db.snapshot.check_added`.
+- Later snapshots emit redacted diff events such as `db.snapshot.check_changed`, `db.entity.added`, and `db.entity.changed`.
 - Warning-only snapshots do not replace the previous known-good DB state.
 - Hub correlation turns first-wave WordPress and PrestaShop DB diff events into deterministic findings.
-- Full row snapshots, richer entity-level finding rules, and PostgreSQL collector support are still planned.
+- Full row snapshots, more exact option/plugin parsing, and PostgreSQL collector support are still planned.
 
 Minimum WordPress checks:
 

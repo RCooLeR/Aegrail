@@ -72,25 +72,25 @@ Last updated: 2026-05-12
 - [x] Add PrestaShop module spec package.
 - [x] Document Pantheon WordPress and Multisite monitoring.
 - [~] Add WordPress DB snapshot importer or collector.
-- [~] Snapshot WordPress users.
-- [~] Snapshot WordPress usermeta capabilities.
+- [x] Snapshot redacted WordPress users.
+- [x] Snapshot redacted WordPress usermeta capabilities.
 - [~] Snapshot WordPress options.
 - [~] Snapshot WordPress active plugins and themes.
 - [~] Snapshot WordPress cron tasks.
 - [x] Emit redacted WordPress DB snapshot diff events.
-- [~] Detect new WordPress administrators.
-- [~] Detect changed WordPress capabilities.
+- [x] Detect new WordPress administrators.
+- [x] Detect changed WordPress capabilities.
 - [~] Detect suspicious WordPress option values.
 - [~] Detect new or changed WordPress plugins/themes.
 - [~] Add PrestaShop DB snapshot importer or collector.
-- [~] Snapshot PrestaShop employees.
-- [~] Snapshot PrestaShop modules.
+- [x] Snapshot redacted PrestaShop employees.
+- [x] Snapshot PrestaShop modules.
 - [~] Snapshot PrestaShop configuration.
 - [~] Snapshot PrestaShop tabs, hooks, and access.
 - [x] Emit redacted PrestaShop DB snapshot diff events.
-- [~] Detect new PrestaShop employees and SuperAdmin accounts.
+- [x] Detect new PrestaShop employees and SuperAdmin accounts.
 - [~] Detect suspicious PrestaShop configuration values.
-- [~] Detect suspicious PrestaShop module changes.
+- [x] Detect suspicious PrestaShop module changes.
 
 ## Phase 4: Detection Quality And Correlation
 

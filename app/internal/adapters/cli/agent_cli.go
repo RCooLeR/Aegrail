@@ -372,7 +372,7 @@ func runConfiguredDatabaseCollectors(ctx context.Context, runtime *agent.Runtime
 			if diffResult.Baselined {
 				siteSummary.Baselines++
 			}
-			siteSummary.Changes += len(diffResult.Changes)
+			siteSummary.Changes += len(diffResult.Changes) + len(diffResult.EntityChanges)
 			siteSummary.Queued += len(events)
 			siteSummary.Warnings += len(snapshot.Warnings)
 			summary.Databases++
