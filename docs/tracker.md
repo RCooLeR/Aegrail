@@ -61,7 +61,7 @@ Last updated: 2026-05-12
 - [x] Add per-site database snapshot state paths.
 - [x] Add `aegrail agent run --config ... --once`.
 - [x] Add continuous multi-site agent runner.
-- [ ] Report config coverage to Hub.
+- [x] Report config coverage to Hub.
 - [x] Run database collectors from multi-site agent config.
 - [x] Run browser crawls from multi-site agent config.
 
@@ -116,7 +116,8 @@ Last updated: 2026-05-12
 - [ ] Add Hub read API for inventory.
 - [x] Add Hub read API for events/timeline.
 - [x] Add Hub read API for findings.
-- [ ] Add Hub read API for agents and config coverage.
+- [x] Add Hub read API for config coverage.
+- [ ] Add Hub read API for agents.
 - [ ] Add Hub read API for deployments.
 - [ ] Add Hub read API for browser script observations.
 - [ ] Create `dashboard/` TypeScript React Bootstrap app.

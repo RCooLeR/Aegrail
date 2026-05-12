@@ -27,6 +27,7 @@ Aegrail already has:
 - deterministic Hub findings for first-wave WordPress and PrestaShop DB diff and entity events
 - Hub read APIs for findings and timelines
 - WordPress option, active plugin, active theme, and Multisite network option entity snapshots
+- Agent config coverage events and Hub coverage read API
 
 ## Phase 0: Product Foundation
 
@@ -159,6 +160,7 @@ Current API slice:
 
 - `GET /api/v1/findings`
 - `GET /api/v1/timeline`
+- `GET /api/v1/coverage`
 
 ## Phase 6: Reports And AI
 

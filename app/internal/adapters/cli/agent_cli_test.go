@@ -103,17 +103,11 @@ sites:
 	if err != nil {
 		t.Fatalf("ReadDir returned error: %v", err)
 	}
-	if len(entries) != 1 {
-		t.Fatalf("pending files = %d, want 1", len(entries))
+	if len(entries) != 2 {
+		t.Fatalf("pending files = %d, want browser and coverage batches", len(entries))
 	}
-	contentBytes, err := os.ReadFile(filepath.Join(root, "queue", "pending", entries[0].Name()))
-	if err != nil {
-		t.Fatalf("ReadFile returned error: %v", err)
-	}
-	var batch agent.QueuedBatch
-	if err := json.Unmarshal(contentBytes, &batch); err != nil {
-		t.Fatalf("Unmarshal returned error: %v", err)
-	}
+	batches := readQueuedBatches(t, filepath.Join(root, "queue", "pending"))
+	batch := queuedBatchBySource(t, batches, "agent.browser")
 	if batch.Source != "agent.browser" || batch.App != "example-com" {
 		t.Fatalf("batch source/app = %s/%s, want agent.browser/example-com", batch.Source, batch.App)
 	}
@@ -122,6 +116,10 @@ sites:
 	}
 	if len(batch.Events) < 2 {
 		t.Fatalf("events = %d, want crawl and script events", len(batch.Events))
+	}
+	coverage := queuedBatchBySource(t, batches, "agent.coverage")
+	if len(coverage.Events) != 1 || coverage.Events[0].Type != "agent.config.coverage" {
+		t.Fatalf("coverage batch = %#v", coverage)
 	}
 }
 
@@ -170,17 +168,11 @@ sites:
 	if err != nil {
 		t.Fatalf("ReadDir returned error: %v", err)
 	}
-	if len(entries) != 1 {
-		t.Fatalf("pending files = %d, want 1", len(entries))
+	if len(entries) != 2 {
+		t.Fatalf("pending files = %d, want database and coverage batches", len(entries))
 	}
-	contentBytes, err := os.ReadFile(filepath.Join(root, "queue", "pending", entries[0].Name()))
-	if err != nil {
-		t.Fatalf("ReadFile returned error: %v", err)
-	}
-	var batch agent.QueuedBatch
-	if err := json.Unmarshal(contentBytes, &batch); err != nil {
-		t.Fatalf("Unmarshal returned error: %v", err)
-	}
+	batches := readQueuedBatches(t, filepath.Join(root, "queue", "pending"))
+	batch := queuedBatchBySource(t, batches, "agent.database")
 	if batch.Source != "agent.database" || batch.Service != "database" {
 		t.Fatalf("batch source/service = %s/%s, want agent.database/database", batch.Source, batch.Service)
 	}
@@ -192,6 +184,10 @@ sites:
 	}
 	if batch.Events[1].Type != "db.coverage.warning" {
 		t.Fatalf("event type = %s, want coverage warning", batch.Events[1].Type)
+	}
+	coverage := queuedBatchBySource(t, batches, "agent.coverage")
+	if len(coverage.Events) != 1 || coverage.Events[0].Labels["coverage_level"] != "partial" {
+		t.Fatalf("coverage batch = %#v", coverage)
 	}
 }
 
@@ -252,6 +248,41 @@ func TestAgentStartOnceSendsOneRequestForOneQueuedChange(t *testing.T) {
 func runCLI(t *testing.T, args ...string) {
 	t.Helper()
 	_ = runCLICapture(t, args...)
+}
+
+func readQueuedBatches(t *testing.T, dir string) []agent.QueuedBatch {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir returned error: %v", err)
+	}
+	batches := make([]agent.QueuedBatch, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		content, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		if err != nil {
+			t.Fatalf("ReadFile returned error: %v", err)
+		}
+		var batch agent.QueuedBatch
+		if err := json.Unmarshal(content, &batch); err != nil {
+			t.Fatalf("Unmarshal returned error: %v", err)
+		}
+		batches = append(batches, batch)
+	}
+	return batches
+}
+
+func queuedBatchBySource(t *testing.T, batches []agent.QueuedBatch, source string) agent.QueuedBatch {
+	t.Helper()
+	for _, batch := range batches {
+		if batch.Source == source {
+			return batch
+		}
+	}
+	t.Fatalf("missing queued batch with source %s in %#v", source, batches)
+	return agent.QueuedBatch{}
 }
 
 func runCLICapture(t *testing.T, args ...string) string {

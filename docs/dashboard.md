@@ -15,5 +15,6 @@ Current Hub read API slice:
 
 - `GET /api/v1/findings?org=...&project=...&environment=...&app=...&limit=...`
 - `GET /api/v1/timeline?org=...&project=...&environment=...&app=...&since=...&limit=...`
+- `GET /api/v1/coverage?org=...&project=...&environment=...&app=...&since=...&limit=...`
 
-These endpoints are the first backend surface for the future Findings and Timeline views. Inventory, coverage, deployments, browser-script observations, and finding actions are still planned.
+These endpoints are the first backend surface for the future Findings, Timeline, and Coverage views. Inventory, deployments, browser-script observations, and finding actions are still planned.

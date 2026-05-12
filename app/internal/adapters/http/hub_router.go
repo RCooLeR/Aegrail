@@ -57,6 +57,7 @@ func NewHubRouter(meta domain.AppMeta, hub *hubapp.Hub, options HubOptions) http
 	router.Post("/api/v1/ingest/events", ingestEventsHandler(hub, options))
 	router.Get("/api/v1/findings", listFindingsHandler(hub))
 	router.Get("/api/v1/timeline", listTimelineHandler(hub))
+	router.Get("/api/v1/coverage", listCoverageHandler(hub))
 	return router
 }
 
@@ -100,6 +101,24 @@ type timelineEventResponse struct {
 	Labels          map[string]string `json:"labels"`
 	Payload         map[string]any    `json:"payload"`
 	CreatedAt       time.Time         `json:"created_at"`
+}
+
+type configCoverageResponse struct {
+	EventID         string            `json:"event_id"`
+	AppID           string            `json:"app_id,omitempty"`
+	AppSlug         string            `json:"app,omitempty"`
+	HostID          string            `json:"host_id"`
+	HostSlug        string            `json:"host"`
+	Hostname        string            `json:"hostname"`
+	AgentID         string            `json:"agent_id"`
+	AgentExternalID string            `json:"agent"`
+	ReportedAt      time.Time         `json:"reported_at"`
+	ReceivedAt      time.Time         `json:"received_time"`
+	SiteSlug        string            `json:"site"`
+	SiteKind        string            `json:"site_kind"`
+	CoverageLevel   string            `json:"coverage_level"`
+	Labels          map[string]string `json:"labels"`
+	Payload         map[string]any    `json:"payload"`
 }
 
 type ingestEventsRequest struct {
@@ -243,6 +262,45 @@ func listTimelineHandler(hub *hubapp.Hub) http.HandlerFunc {
 	}
 }
 
+func listCoverageHandler(hub *hubapp.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		limit, err := parseQueryLimit(r, 5000)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		since, err := parseQueryTime(r.URL.Query().Get("since"), "since")
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		coverage, err := hub.ListConfigCoverage(r.Context(), hubapp.ListConfigCoverageInput{
+			OrganizationSlug: r.URL.Query().Get("org"),
+			ProjectSlug:      r.URL.Query().Get("project"),
+			EnvironmentSlug:  r.URL.Query().Get("environment"),
+			AppSlug:          r.URL.Query().Get("app"),
+			Since:            since,
+			Limit:            limit,
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		records := make([]configCoverageResponse, 0, len(coverage))
+		for _, record := range coverage {
+			records = append(records, configCoverageRecord(record))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"count":    len(records),
+			"coverage": records,
+		})
+	}
+}
+
 func (r ingestEventsRequest) toInput(signature string) (hubapp.IngestEventsInput, error) {
 	events := make([]hubapp.IngestEventInput, 0, len(r.Events))
 	for _, event := range r.Events {
@@ -364,6 +422,26 @@ func timelineEventRecord(event domain.TimelineEvent) timelineEventResponse {
 		Labels:          nonNilResponseStringMap(event.Labels),
 		Payload:         nonNilResponseMap(event.Payload),
 		CreatedAt:       event.CreatedAt,
+	}
+}
+
+func configCoverageRecord(record hubapp.ConfigCoverageRecord) configCoverageResponse {
+	return configCoverageResponse{
+		EventID:         string(record.EventID),
+		AppID:           string(record.AppID),
+		AppSlug:         record.AppSlug,
+		HostID:          string(record.HostID),
+		HostSlug:        record.HostSlug,
+		Hostname:        record.Hostname,
+		AgentID:         string(record.AgentID),
+		AgentExternalID: record.AgentExternalID,
+		ReportedAt:      record.ReportedAt,
+		ReceivedAt:      record.ReceivedAt,
+		SiteSlug:        record.SiteSlug,
+		SiteKind:        record.SiteKind,
+		CoverageLevel:   record.CoverageLevel,
+		Labels:          nonNilResponseStringMap(record.Labels),
+		Payload:         nonNilResponseMap(record.Payload),
 	}
 }
 

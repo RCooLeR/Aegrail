@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoadServerConfigExample(t *testing.T) {
@@ -168,7 +169,135 @@ func TestRunServerConfigOnceUsesPerSiteContextAndState(t *testing.T) {
 	}
 }
 
+func TestBuildServerConfigCoverageReportsClassifiesCoverage(t *testing.T) {
+	root := t.TempDir()
+	config := NormalizeServerConfig(ServerConfig{
+		Schema: ServerConfigSchema,
+		Hub:    ServerHubConfig{URL: "http://127.0.0.1:8787"},
+		Identity: ServerIdentityConfig{
+			Org:         "acme",
+			Project:     "hosted-sites",
+			Environment: "production",
+			Host:        "web-01",
+			AgentID:     "agt_web_01",
+		},
+		Runtime: ServerRuntimeConfig{
+			QueueDir: filepath.Join(root, "queue"),
+			StateDir: filepath.Join(root, "state"),
+		},
+		Sites: []ServerSiteConfig{
+			{
+				Slug: "example-com",
+				Kind: "wordpress",
+				Root: filepath.Join(root, "site"),
+				Files: ServerFileWatchConfig{
+					Profiles: []string{"wordpress"},
+				},
+				Logs: []ServerLogConfig{{Path: filepath.Join(root, "access.log"), Kind: "nginx_access"}},
+				Databases: []ServerDatabaseConfig{{
+					Name:    "main",
+					Engine:  "mysql",
+					DSNEnv:  "AEGRAIL_TEST_DSN",
+					Profile: "wordpress",
+				}},
+				BrowserCrawl: ServerBrowserCrawlConfig{
+					Enabled:  true,
+					Rendered: true,
+					URLs:     []string{"https://example.com/"},
+				},
+			},
+		},
+	})
+	reports := BuildServerConfigCoverageReports(config, mustTime("2026-05-12T15:00:00Z"))
+	if len(reports) != 1 {
+		t.Fatalf("reports = %#v, want one report", reports)
+	}
+	report := reports[0]
+	if report.Coverage.Level != "complete" || report.Signature == "" {
+		t.Fatalf("coverage = %#v, want complete with signature", report.Coverage)
+	}
+	if report.Coverage.Databases.Profiles[0] != "wordpress" || !report.Coverage.Databases.AllDSNEnvConfigured {
+		t.Fatalf("database coverage = %#v", report.Coverage.Databases)
+	}
+}
+
+func TestQueueServerConfigCoverageDedupesUnchangedConfig(t *testing.T) {
+	root := t.TempDir()
+	config := NormalizeServerConfig(ServerConfig{
+		Schema: ServerConfigSchema,
+		Hub:    ServerHubConfig{URL: "http://127.0.0.1:8787"},
+		Identity: ServerIdentityConfig{
+			Org:         "acme",
+			Project:     "hosted-sites",
+			Environment: "production",
+			Host:        "web-01",
+			AgentID:     "agt_web_01",
+		},
+		Runtime: ServerRuntimeConfig{
+			QueueDir: filepath.Join(root, "queue"),
+			StateDir: filepath.Join(root, "state"),
+		},
+		Sites: []ServerSiteConfig{
+			{
+				Slug:    "example-com",
+				Domain:  "example.com",
+				Kind:    "wordpress",
+				App:     "example-com",
+				Service: "frontend",
+				Root:    filepath.Join(root, "site"),
+				Files: ServerFileWatchConfig{
+					Profiles: []string{"wordpress"},
+				},
+			},
+		},
+	})
+	runtime := NewRuntime(Config{})
+	result, err := runtime.QueueServerConfigCoverage(context.Background(), config)
+	if err != nil {
+		t.Fatalf("QueueServerConfigCoverage returned error: %v", err)
+	}
+	if result.Sites != 1 || result.Queued != 1 {
+		t.Fatalf("first result = %+v, want one queued coverage update", result)
+	}
+	result, err = runtime.QueueServerConfigCoverage(context.Background(), config)
+	if err != nil {
+		t.Fatalf("second QueueServerConfigCoverage returned error: %v", err)
+	}
+	if result.Queued != 0 {
+		t.Fatalf("second result = %+v, want unchanged config deduped", result)
+	}
+	files, err := queueFiles(filepath.Join(root, "queue", "pending"))
+	if err != nil {
+		t.Fatalf("queueFiles returned error: %v", err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("pending files = %d, want 1", len(files))
+	}
+	content, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatalf("ReadFile returned error: %v", err)
+	}
+	var batch QueuedBatch
+	if err := json.Unmarshal(content, &batch); err != nil {
+		t.Fatalf("Unmarshal returned error: %v", err)
+	}
+	if batch.Source != "agent.coverage" || batch.App != "example-com" || len(batch.Events) != 1 {
+		t.Fatalf("coverage batch = %#v", batch)
+	}
+	if batch.Events[0].Type != "agent.config.coverage" || batch.Events[0].Labels["coverage_level"] != "partial" {
+		t.Fatalf("coverage event = %#v", batch.Events[0])
+	}
+}
+
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+func mustTime(value string) time.Time {
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		panic(err)
+	}
+	return parsed
 }

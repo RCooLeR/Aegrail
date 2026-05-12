@@ -198,6 +198,11 @@ func agentRunCommand() *urfavecli.Command {
 					return err
 				}
 				result.Queued += browserResult.Queued
+				coverageResult, err := runtime.QueueServerConfigCoverage(ctx, config)
+				if err != nil {
+					return err
+				}
+				result.Queued += coverageResult.Queued
 				if secret != "" {
 					send, err := runtime.SendQueued(ctx, secret, sendLimit)
 					if err != nil {
@@ -238,6 +243,9 @@ func agentRunCommand() *urfavecli.Command {
 					for _, site := range browserResult.Sites {
 						fmt.Fprintf(c.App.Writer, "  %s browser_pages=%d queued=%d\n", site.Slug, site.Pages, site.Queued)
 					}
+				}
+				if coverageResult.Sites > 0 {
+					fmt.Fprintf(c.App.Writer, "Config coverage checked %d site(s); queued %d update(s)\n", coverageResult.Sites, coverageResult.Queued)
 				}
 				return nil
 			}

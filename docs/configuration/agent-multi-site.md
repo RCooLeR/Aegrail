@@ -353,7 +353,7 @@ Future live validation should also check:
 
 ## Hub Inventory Sync
 
-The agent should optionally report its config coverage to the Hub:
+The agent reports config coverage to the Hub as site-scoped `agent.config.coverage` events:
 
 ```text
 web-01
@@ -371,6 +371,14 @@ web-01
 
 The dashboard can then show which sites are covered, partially covered, or not covered.
 
+Current implementation:
+
+- `aegrail agent run --config ...` queues one coverage event per configured site when that site's coverage signature changes.
+- Coverage events use `source=agent.coverage` and carry the site app/service context.
+- Payloads include enabled collectors, file profiles, log kinds, database engines/profiles, browser crawl settings, and WordPress Multisite metadata.
+- Coverage levels are `none`, `partial`, `strong`, and `complete`.
+- The Hub exposes latest coverage records through `GET /api/v1/coverage`.
+
 ## Implementation Steps
 
 Done:
@@ -386,8 +394,9 @@ Done:
 9. Persist DB snapshot state and emit redacted DB diff events.
 10. Turn first-wave DB diff events into deterministic Hub findings.
 11. Add redacted entity-level snapshots for WordPress users/options/plugins/themes and PrestaShop employees/modules.
+12. Report config coverage to the Hub for dashboard views.
 
 Next:
 
-1. Report config coverage to the Hub for dashboard views.
-2. Add exact cron, post, widget, builder-content, and PrestaShop configuration parsers.
+1. Add exact cron, post, widget, builder-content, and PrestaShop configuration parsers.
+2. Add Hub inventory read APIs for agents, hosts, services, and apps.
