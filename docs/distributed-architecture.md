@@ -256,7 +256,7 @@ When `--save` is used, each chain becomes a `hub_findings` row keyed by environm
 8. Add cross-host file observation comparison.
 9. Add first correlation rules across hosts, apps, services, and DB events.
 10. Persist and deduplicate Hub findings from deterministic correlation runs.
-11. Add browser crawler collector for rendered JavaScript and tag-manager script drift.
+11. Feed browser crawler static/rendered JavaScript observations into Hub events and drift findings.
 
 Current signed ingest endpoint:
 

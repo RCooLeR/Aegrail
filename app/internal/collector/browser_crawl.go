@@ -17,11 +17,15 @@ import (
 )
 
 type BrowserCrawlInput struct {
-	URLs         []string
-	MaxPages     int
-	Timeout      time.Duration
-	UserAgent    string
-	SameHostOnly bool
+	URLs           []string
+	MaxPages       int
+	Timeout        time.Duration
+	UserAgent      string
+	SameHostOnly   bool
+	Rendered       bool
+	NetworkIdle    time.Duration
+	Settle         time.Duration
+	WaitTagManager bool
 }
 
 type BrowserCrawlResult struct {
@@ -33,6 +37,7 @@ type BrowserCrawlResult struct {
 type BrowserPageResult struct {
 	URL          string                     `json:"url"`
 	FinalURL     string                     `json:"final_url"`
+	Mode         string                     `json:"mode"`
 	StatusCode   int                        `json:"status_code"`
 	Title        string                     `json:"title,omitempty"`
 	CanonicalURL string                     `json:"canonical_url,omitempty"`
@@ -48,12 +53,20 @@ type BrowserScriptObservation struct {
 	Path              string            `json:"path,omitempty"`
 	SHA256            string            `json:"sha256,omitempty"`
 	InlineBytes       int               `json:"inline_bytes,omitempty"`
+	Initiator         string            `json:"initiator,omitempty"`
+	ResponseStatus    int               `json:"response_status,omitempty"`
+	ContentType       string            `json:"content_type,omitempty"`
 	Attributes        map[string]string `json:"attributes,omitempty"`
 	TagManager        bool              `json:"tag_manager"`
 	TagManagerIDs     []string          `json:"tag_manager_ids,omitempty"`
 	InitialHTML       bool              `json:"initial_html"`
 	DynamicallyLoaded bool              `json:"dynamically_loaded"`
 }
+
+const (
+	browserCrawlModeStatic   = "static"
+	browserCrawlModeRendered = "rendered"
+)
 
 func (r *Runtime) CrawlBrowserPages(ctx context.Context, input BrowserCrawlInput) (BrowserCrawlResult, error) {
 	timeout := input.Timeout
@@ -71,20 +84,24 @@ func (r *Runtime) CrawlBrowserPages(ctx context.Context, input BrowserCrawlInput
 	startedAt := time.Now().UTC()
 	result := BrowserCrawlResult{StartedAt: startedAt}
 	allowedHosts := allowedSeedHosts(input.URLs)
+	mode := browserCrawlModeStatic
+	if input.Rendered {
+		mode = browserCrawlModeRendered
+	}
 
 	for _, rawURL := range input.URLs[:maxPages] {
 		pageURL, err := normalizeCrawlURL(rawURL)
 		if err != nil {
-			result.Pages = append(result.Pages, browserWarningPage(rawURL, err.Error()))
+			result.Pages = append(result.Pages, browserWarningPage(rawURL, mode, err.Error()))
 			continue
 		}
 		if input.SameHostOnly && !allowedHosts[pageURL.Hostname()] {
-			result.Pages = append(result.Pages, browserWarningPage(pageURL.String(), "skipped because host is outside seed host set"))
+			result.Pages = append(result.Pages, browserWarningPage(pageURL.String(), mode, "skipped because host is outside seed host set"))
 			continue
 		}
-		page, err := crawlOnePage(ctx, client, pageURL, input.UserAgent)
+		page, err := crawlOnePage(ctx, client, pageURL, input)
 		if err != nil {
-			result.Pages = append(result.Pages, browserWarningPage(pageURL.String(), err.Error()))
+			result.Pages = append(result.Pages, browserWarningPage(pageURL.String(), mode, err.Error()))
 			continue
 		}
 		result.Pages = append(result.Pages, page)
@@ -93,20 +110,26 @@ func (r *Runtime) CrawlBrowserPages(ctx context.Context, input BrowserCrawlInput
 	return result, nil
 }
 
-func browserWarningPage(rawURL string, warning string) BrowserPageResult {
+func browserWarningPage(rawURL string, mode string, warning string) BrowserPageResult {
 	return BrowserPageResult{
 		URL:      rawURL,
 		FinalURL: rawURL,
+		Mode:     mode,
 		Scripts:  []BrowserScriptObservation{},
 		Warnings: []string{warning},
 	}
 }
 
-func crawlOnePage(ctx context.Context, client *http.Client, pageURL *url.URL, userAgent string) (BrowserPageResult, error) {
+func crawlOnePage(ctx context.Context, client *http.Client, pageURL *url.URL, input BrowserCrawlInput) (BrowserPageResult, error) {
+	if input.Rendered {
+		return crawlRenderedPage(ctx, pageURL, input)
+	}
+
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, pageURL.String(), nil)
 	if err != nil {
 		return BrowserPageResult{}, err
 	}
+	userAgent := input.UserAgent
 	if strings.TrimSpace(userAgent) == "" {
 		userAgent = "aegrail-browser-crawler/dev"
 	}
@@ -129,6 +152,7 @@ func crawlOnePage(ctx context.Context, client *http.Client, pageURL *url.URL, us
 	page := BrowserPageResult{
 		URL:        pageURL.String(),
 		FinalURL:   finalURL.String(),
+		Mode:       browserCrawlModeStatic,
 		StatusCode: response.StatusCode,
 		Scripts:    []BrowserScriptObservation{},
 	}

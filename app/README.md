@@ -48,6 +48,7 @@ go run ./cmd/aegrail hub correlate events --org acme --project customer-site --e
 go run ./cmd/aegrail hub findings list --org acme --project customer-site --env production --app main-web
 go run ./cmd/aegrail report hub-findings --org acme --project customer-site --env production --app main-web
 go run ./cmd/aegrail collector browser crawl --url https://example.com --format json
+go run ./cmd/aegrail collector browser crawl --url https://example.com --rendered --wait-tag-manager --timeout 30s --format json
 go run ./cmd/aegrail agent start --once --root /var/www/site --profile wordpress
 go run ./cmd/aegrail agent start --once --log /var/log/nginx/access.log
 go fmt ./...

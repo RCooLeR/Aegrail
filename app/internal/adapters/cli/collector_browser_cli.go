@@ -19,23 +19,31 @@ func collectorBrowserCommand(meta domain.AppMeta) *urfavecli.Command {
 		Subcommands: []*urfavecli.Command{
 			{
 				Name:  "crawl",
-				Usage: "crawl pages and inventory scripts from initial HTML",
+				Usage: "crawl pages and inventory scripts from static HTML or rendered browser state",
 				Flags: []urfavecli.Flag{
 					&urfavecli.StringSliceFlag{Name: "url", Aliases: []string{"u"}, Required: true, Usage: "page URL to crawl; repeat for multiple pages"},
 					&urfavecli.IntFlag{Name: "max-pages", Value: 10, Usage: "maximum supplied URLs to crawl"},
 					&urfavecli.DurationFlag{Name: "timeout", Value: 15 * time.Second, Usage: "per-page HTTP timeout"},
 					&urfavecli.StringFlag{Name: "user-agent", Usage: "override crawler User-Agent"},
 					&urfavecli.BoolFlag{Name: "same-host-only", Usage: "skip supplied URLs outside the seed host set"},
+					&urfavecli.BoolFlag{Name: "rendered", Usage: "use a headless browser to observe scripts after JavaScript execution"},
+					&urfavecli.DurationFlag{Name: "network-idle", Value: 1500 * time.Millisecond, Usage: "rendered mode quiet-network period before extraction"},
+					&urfavecli.DurationFlag{Name: "settle", Value: 2 * time.Second, Usage: "rendered mode extra settle wait after network idle"},
+					&urfavecli.BoolFlag{Name: "wait-tag-manager", Usage: "rendered mode waits briefly for Google Tag Manager or Google tag readiness"},
 					&urfavecli.StringFlag{Name: "format", Value: "table", Usage: "output format: table or json"},
 				},
 				Action: func(c *urfavecli.Context) error {
 					runtime := collector.NewRuntime(collector.Config{Name: "browser"})
 					result, err := runtime.CrawlBrowserPages(c.Context, collector.BrowserCrawlInput{
-						URLs:         c.StringSlice("url"),
-						MaxPages:     c.Int("max-pages"),
-						Timeout:      c.Duration("timeout"),
-						UserAgent:    c.String("user-agent"),
-						SameHostOnly: c.Bool("same-host-only"),
+						URLs:           c.StringSlice("url"),
+						MaxPages:       c.Int("max-pages"),
+						Timeout:        c.Duration("timeout"),
+						UserAgent:      c.String("user-agent"),
+						SameHostOnly:   c.Bool("same-host-only"),
+						Rendered:       c.Bool("rendered"),
+						NetworkIdle:    c.Duration("network-idle"),
+						Settle:         c.Duration("settle"),
+						WaitTagManager: c.Bool("wait-tag-manager"),
 					})
 					if err != nil {
 						return err
@@ -58,23 +66,26 @@ func collectorBrowserCommand(meta domain.AppMeta) *urfavecli.Command {
 
 func writeBrowserCrawlTable(c *urfavecli.Context, result collector.BrowserCrawlResult) error {
 	writer := tabwriter.NewWriter(c.App.Writer, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(writer, "PAGE\tSTATUS\tSCRIPT\tTYPE\tDOMAIN\tSHA256/TAG\tURL")
+	fmt.Fprintln(writer, "PAGE\tMODE\tSTATUS\tSCRIPT\tTYPE\tDOMAIN\tSHA256/TAG\tURL")
 	for _, page := range result.Pages {
 		if len(page.Scripts) == 0 {
-			fmt.Fprintf(writer, "%s\t%d\t-\t-\t-\t-\t%s\n", page.FinalURL, page.StatusCode, strings.Join(page.Warnings, "; "))
+			fmt.Fprintf(writer, "%s\t%s\t%d\t-\t-\t-\t-\t%s\n", page.FinalURL, page.Mode, page.StatusCode, strings.Join(page.Warnings, "; "))
 			continue
 		}
 		for index, script := range page.Scripts {
 			pageLabel := page.FinalURL
+			mode := page.Mode
 			status := page.StatusCode
 			if index > 0 {
 				pageLabel = ""
+				mode = ""
 				status = 0
 			}
 			fmt.Fprintf(
 				writer,
-				"%s\t%s\t%d\t%s\t%s\t%s\t%s\n",
+				"%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\n",
 				pageLabel,
+				mode,
 				statusLabel(status),
 				index+1,
 				script.SourceType,
@@ -84,7 +95,7 @@ func writeBrowserCrawlTable(c *urfavecli.Context, result collector.BrowserCrawlR
 			)
 		}
 		for _, warning := range page.Warnings {
-			fmt.Fprintf(writer, "%s\tWARN\t-\t-\t-\t-\t%s\n", page.FinalURL, warning)
+			fmt.Fprintf(writer, "%s\t%s\tWARN\t-\t-\t-\t-\t%s\n", page.FinalURL, page.Mode, warning)
 		}
 	}
 	return writer.Flush()

@@ -1,6 +1,6 @@
 # Browser Crawler And JavaScript Monitoring Plan
 
-Status: planned; initial static script inventory implemented
+Status: in progress; static and rendered script inventory implemented
 Date: 2026-05-12
 
 ## Goal
@@ -36,27 +36,30 @@ The collector should live under the generic `collector` runtime app, with WordPr
 
 ```text
 aegrail collector browser crawl --url https://example.com --format json
+aegrail collector browser crawl --url https://example.com --rendered --wait-tag-manager --timeout 30s --format json
 aegrail collector browser crawl --url https://example.com --url https://example.com/contact --max-pages 10
 ```
 
 Current implementation:
 
 - fetches supplied HTTP/HTTPS URLs
-- parses initial HTML
+- parses initial HTML in static mode
+- can use an installed Chrome/Chromium browser in rendered mode through Chrome DevTools Protocol
 - resolves external script URLs
 - redacts sensitive query parameters
 - hashes inline script bodies
 - detects obvious Google Tag Manager and Google tag IDs
-- emits a warning when Tag Manager is present because rendered browser mode is required to see later injected scripts
+- records browser network metadata for rendered script responses when available
+- supports bounded rendered waits with `--network-idle`, `--settle`, and `--wait-tag-manager`
 - outputs table or JSON
 
-Planned rendered-browser implementation:
+Next rendered-browser work:
 
-- Use a headless browser through a Go adapter such as Chrome DevTools Protocol.
-- Keep browser automation behind a port so the collector can be tested with fake page results.
+- Store crawl results as normalized Hub events.
 - Store only normalized script evidence by default, not full page content.
 - Hash inline script bodies and fetched script responses.
 - Redact query strings and obvious tokens from URLs.
+- Add baseline comparison and allowlist review for script domains, tag-manager containers, and inline hashes.
 
 ## What To Capture
 
@@ -99,11 +102,11 @@ Yes: Aegrail should wait for tag-manager-loaded scripts, but bounded and configu
 
 Default browser wait plan:
 
-1. Navigate and wait for `DOMContentLoaded`.
-2. Wait for browser `load`.
+1. Navigate with Chrome/Chromium.
+2. Wait for browser readiness.
 3. Wait for network quiet, for example no relevant network activity for 2 seconds.
 4. If tag-manager mode is enabled, wait for known tag-manager activity to settle.
-5. Apply an extra settle delay, for example 3 to 5 seconds.
+5. Apply an extra settle delay, for example 2 to 5 seconds.
 6. Stop at a hard timeout, for example 30 seconds, and record a coverage warning.
 
 Suggested flags:
