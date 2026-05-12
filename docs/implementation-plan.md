@@ -87,7 +87,7 @@ Current status:
 
 - Raw local file and log evidence import is implemented.
 - Raw evidence is copied into `data/evidence/{site_slug}/{import_id}`.
-- Normalized event parsing for Nginx, Apache, and PHP logs is the next step.
+- Agent-tailed Nginx, Apache, and PHP logs now produce structured Hub events. Local evidence-import normalization still needs the same parser path before `N-002` to `N-004` can be called complete.
 
 ## Phase 4: WordPress And PrestaShop MVP Modules
 
@@ -252,7 +252,8 @@ Current status:
 - `aegrail agent start --log` can baseline and tail web/PHP log files or directories, enqueue redacted structured log events, and optionally replay signed events.
 - `aegrail inventory bootstrap single-site` creates the first common WordPress or PrestaShop Hub topology in one idempotent step.
 - Tailed Nginx/Apache access logs and PHP error logs now produce structured `log.access` and `log.php_error` events while retaining redacted raw line evidence.
-- Per-agent secrets, cross-host baseline comparison, richer topology templates, and rule correlation remain next.
+- `aegrail hub baseline compare-files` compares recent app-relative file observations across reporting hosts.
+- Per-agent secrets, richer topology templates, persisted baseline snapshots, and rule correlation remain the next Hub priorities.
 
 ## Phase 10: Remote Collection and Scheduling
 

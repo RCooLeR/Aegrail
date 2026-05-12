@@ -43,3 +43,25 @@ type IngestEvent struct {
 	Payload        map[string]any
 	CreatedAt      time.Time
 }
+
+type FileStateObservation struct {
+	EventID         ID
+	EnvironmentID   ID
+	AppID           ID
+	HostID          ID
+	AgentID         ID
+	HostSlug        string
+	Hostname        string
+	AgentExternalID string
+	EventTime       time.Time
+	EventType       string
+	Target          string
+	Severity        Severity
+	RelativePath    string
+	Path            string
+	SHA256          string
+	PreviousSHA256  string
+	SizeBytes       int64
+	HashSkipped     bool
+	Deleted         bool
+}

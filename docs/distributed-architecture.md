@@ -127,6 +127,7 @@ Aegrail needs two baseline scopes:
 
 - host baseline: what changed on this exact host
 - shared app baseline: what should match across equivalent app nodes
+- comparison baseline: what the Hub has observed recently for the same app-relative path across reporting hosts
 
 Example finding:
 
@@ -141,6 +142,16 @@ web-02 has a different file hash for /var/www/app/index.php.
 ```
 
 This is essential for detecting tampering on only one web node.
+
+The Agent should send both the absolute path and, when started with `--root`, an app-relative path. The Hub should prefer the app-relative path for cross-host comparison because web nodes may mount the same application under different absolute roots.
+
+Current comparison command:
+
+```powershell
+aegrail hub baseline compare-files --org acme --project customer-site --env production --app main-web --since 24h
+```
+
+The first comparison implementation works from recent Hub file observations. It flags app-relative paths with differing latest hashes/states across reporting hosts and paths observed on only one reporting host.
 
 ## Deployment Awareness
 
@@ -212,7 +223,7 @@ suspicious login activity -> file change on web-02 -> database privilege change 
 5. Add Agent spool format and offline queue.
 6. Add deployment marker import.
 7. Add single-site inventory bootstrap for WordPress and PrestaShop.
-8. Add cross-host baseline comparison.
+8. Add cross-host file observation comparison.
 9. Add correlation rules across hosts, apps, services, and DB events.
 
 Current signed ingest endpoint:

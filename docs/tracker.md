@@ -78,7 +78,7 @@ Last updated: 2026-05-12
 - [x] AH-005 Add Hub signed ingest API.
 - [x] AH-006 Add per-agent identity and fingerprint model.
 - [x] AH-007 Add event-time and received-time storage fields.
-- [ ] AH-008 Add cross-host app baseline comparison.
+- [x] AH-008 Add cross-host app baseline comparison.
 - [x] AH-009 Add deployment marker CLI import.
 - [ ] AH-010 Add correlation rules across host/app/service/database events.
 - [x] AH-013 Implement `aegrail agent install/start/status` behavior.

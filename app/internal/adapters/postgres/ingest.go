@@ -3,6 +3,10 @@ package postgres
 import (
 	"context"
 	"errors"
+	"math"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -259,6 +263,73 @@ func (r *IngestRepository) ListIngestBatches(ctx context.Context, environmentID 
 	return items, rows.Err()
 }
 
+func (r *IngestRepository) ListFileStateObservations(ctx context.Context, environmentID domain.ID, appID domain.ID, since time.Time, limit int) ([]domain.FileStateObservation, error) {
+	if limit <= 0 {
+		limit = 1000
+	}
+	if limit > 10000 {
+		limit = 10000
+	}
+	if since.IsZero() {
+		since = time.Unix(0, 0).UTC()
+	}
+	const query = `
+		SELECT e.id::text, e.environment_id::text, coalesce(e.app_id::text, ''),
+			e.host_id::text, e.agent_id::text, h.slug::text, h.hostname,
+			a.agent_id::text, e.event_time, e.event_type, e.target, e.severity,
+			e.payload
+		FROM hub_ingest_events e
+		INNER JOIN hosts h ON h.id = e.host_id
+		INNER JOIN agents a ON a.id = e.agent_id
+		WHERE e.environment_id = $1
+			AND ($2::text = '' OR e.app_id = nullif($2::text, '')::uuid)
+			AND e.event_time >= $3
+			AND e.event_type IN ('file.created', 'file.modified', 'file.deleted')
+		ORDER BY e.event_time DESC, e.created_at DESC
+		LIMIT $4
+	`
+	rows, err := r.pool.Query(ctx, query, environmentID, string(appID), since.UTC(), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []domain.FileStateObservation
+	for rows.Next() {
+		var item domain.FileStateObservation
+		var payload map[string]any
+		if err := rows.Scan(
+			&item.EventID,
+			&item.EnvironmentID,
+			&item.AppID,
+			&item.HostID,
+			&item.AgentID,
+			&item.HostSlug,
+			&item.Hostname,
+			&item.AgentExternalID,
+			&item.EventTime,
+			&item.EventType,
+			&item.Target,
+			&item.Severity,
+			&payload,
+		); err != nil {
+			return nil, err
+		}
+		item.Path = payloadString(payload, "path", item.Target)
+		item.RelativePath = normalizedRelativePath(payloadString(payload, "relative_path", ""))
+		if item.RelativePath == "" {
+			item.RelativePath = normalizedRelativePath(item.Path)
+		}
+		item.SHA256 = payloadString(payload, "sha256", "")
+		item.PreviousSHA256 = payloadString(payload, "previous_sha256", "")
+		item.SizeBytes = payloadInt64(payload, "size_bytes")
+		item.HashSkipped = payloadBool(payload, "hash_skipped")
+		item.Deleted = item.EventType == "file.deleted"
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
 type queryer interface {
 	Query(context.Context, string, ...any) (pgx.Rows, error)
 	QueryRow(context.Context, string, ...any) pgx.Row
@@ -354,4 +425,72 @@ func nonNilAnyMap(values map[string]any) map[string]any {
 		return map[string]any{}
 	}
 	return values
+}
+
+func payloadString(payload map[string]any, key string, fallback string) string {
+	if payload == nil {
+		return fallback
+	}
+	value, ok := payload[key]
+	if !ok || value == nil {
+		return fallback
+	}
+	switch typed := value.(type) {
+	case string:
+		if strings.TrimSpace(typed) == "" {
+			return fallback
+		}
+		return typed
+	default:
+		return fallback
+	}
+}
+
+func payloadInt64(payload map[string]any, key string) int64 {
+	if payload == nil {
+		return 0
+	}
+	value := payload[key]
+	switch typed := value.(type) {
+	case int64:
+		return typed
+	case int:
+		return int64(typed)
+	case float64:
+		if math.IsNaN(typed) || math.IsInf(typed, 0) {
+			return 0
+		}
+		return int64(typed)
+	case string:
+		parsed, err := strconv.ParseInt(strings.TrimSpace(typed), 10, 64)
+		if err == nil {
+			return parsed
+		}
+	case jsonNumber:
+		parsed, err := typed.Int64()
+		if err == nil {
+			return parsed
+		}
+	}
+	return 0
+}
+
+func payloadBool(payload map[string]any, key string) bool {
+	if payload == nil {
+		return false
+	}
+	value, ok := payload[key].(bool)
+	return ok && value
+}
+
+func normalizedRelativePath(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	return strings.TrimLeft(strings.ReplaceAll(value, "\\", "/"), "/")
+}
+
+type jsonNumber interface {
+	Int64() (int64, error)
 }

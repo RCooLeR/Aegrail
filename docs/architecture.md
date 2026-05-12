@@ -114,8 +114,8 @@ internal/bootstrap
   Config loading, logger setup, DB connection, dependency wiring.
 
 internal/domain
-  Pure domain types: Site, EvidenceImport, EvidenceRef, Event, Finding,
-  Baseline, Snapshot, Report, Severity, Confidence.
+  Pure domain types: Site, EvidenceImport, EvidenceRef, Event, Hub ingest,
+  inventory, baselines, Snapshot, Report, Severity, Confidence.
 
 internal/local
   Local investigation use cases: init project, add site, import evidence,
@@ -351,6 +351,7 @@ aegrail db status
 aegrail hub serve
 aegrail hub ingest event
 aegrail hub ingest batch list
+aegrail hub baseline compare-files
 aegrail agent install
 aegrail agent start
 aegrail agent start --log /var/log/nginx/access.log

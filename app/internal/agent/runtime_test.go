@@ -165,6 +165,9 @@ func TestScanWatchedPathsBaselinesThenQueuesFileCreate(t *testing.T) {
 	if event.Type != "file.created" || event.Severity != "high" || event.Target != filepath.Clean(shellPath) {
 		t.Fatalf("event = %+v, want high severity file.created for upload php", event)
 	}
+	if event.Payload["relative_path"] != filepath.ToSlash(filepath.Join("wp-content", "uploads", "avatar.php")) {
+		t.Fatalf("relative_path = %#v", event.Payload["relative_path"])
+	}
 }
 
 func TestScanWatchedPathsReturnsErrorWhenStateIsLocked(t *testing.T) {

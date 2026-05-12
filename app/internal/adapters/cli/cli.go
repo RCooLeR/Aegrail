@@ -50,6 +50,7 @@ func hubCommand(meta domain.AppMeta) *urfavecli.Command {
 		Subcommands: []*urfavecli.Command{
 			hubServeCommand(meta),
 			hubIngestCommand(meta),
+			hubBaselineCommand(meta),
 			inventoryCommand(meta),
 		},
 	}

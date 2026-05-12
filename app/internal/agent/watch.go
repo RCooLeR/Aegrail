@@ -41,11 +41,12 @@ type watchState struct {
 }
 
 type fileState struct {
-	Path        string    `json:"path"`
-	SizeBytes   int64     `json:"size_bytes"`
-	ModTime     time.Time `json:"mod_time"`
-	SHA256      string    `json:"sha256,omitempty"`
-	HashSkipped bool      `json:"hash_skipped,omitempty"`
+	Path         string    `json:"path"`
+	RelativePath string    `json:"relative_path,omitempty"`
+	SizeBytes    int64     `json:"size_bytes"`
+	ModTime      time.Time `json:"mod_time"`
+	SHA256       string    `json:"sha256,omitempty"`
+	HashSkipped  bool      `json:"hash_skipped,omitempty"`
 }
 
 func (r *Runtime) ScanWatchedPaths(ctx context.Context, options WatchOptions) (WatchResult, error) {
@@ -71,7 +72,7 @@ func (r *Runtime) ScanWatchedPaths(ctx context.Context, options WatchOptions) (W
 	if err != nil {
 		return WatchResult{}, err
 	}
-	current, err := scanPaths(paths, identity.QueueDir)
+	current, err := scanPaths(paths, identity.QueueDir, options.Root)
 	if err != nil {
 		return WatchResult{}, err
 	}
@@ -218,18 +219,22 @@ func saveWatchState(path string, state watchState) error {
 	return os.WriteFile(path, append(content, '\n'), 0o600)
 }
 
-func scanPaths(paths []string, queueDir string) (map[string]fileState, error) {
+func scanPaths(paths []string, queueDir string, root string) (map[string]fileState, error) {
 	result := map[string]fileState{}
 	queueAbs, _ := filepath.Abs(queueDir)
+	rootAbs := ""
+	if strings.TrimSpace(root) != "" {
+		rootAbs, _ = filepath.Abs(root)
+	}
 	for _, path := range paths {
-		if err := scanPath(path, queueAbs, result); err != nil {
+		if err := scanPath(path, queueAbs, rootAbs, result); err != nil {
 			return nil, err
 		}
 	}
 	return result, nil
 }
 
-func scanPath(path string, queueAbs string, result map[string]fileState) error {
+func scanPath(path string, queueAbs string, rootAbs string, result map[string]fileState) error {
 	info, err := os.Stat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -238,7 +243,7 @@ func scanPath(path string, queueAbs string, result map[string]fileState) error {
 		return err
 	}
 	if !info.IsDir() {
-		state, err := buildFileState(path, info)
+		state, err := buildFileState(path, info, rootAbs)
 		if err != nil {
 			return err
 		}
@@ -265,7 +270,7 @@ func scanPath(path string, queueAbs string, result map[string]fileState) error {
 		if !info.Mode().IsRegular() {
 			return nil
 		}
-		state, err := buildFileState(current, info)
+		state, err := buildFileState(current, info, rootAbs)
 		if err != nil {
 			return err
 		}
@@ -286,15 +291,21 @@ func shouldSkipDir(path string, queueAbs string) bool {
 	return false
 }
 
-func buildFileState(path string, info fs.FileInfo) (fileState, error) {
+func buildFileState(path string, info fs.FileInfo, rootAbs string) (fileState, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return fileState{}, err
 	}
+	cleaned := filepath.Clean(abs)
 	state := fileState{
-		Path:      filepath.Clean(abs),
+		Path:      cleaned,
 		SizeBytes: info.Size(),
 		ModTime:   info.ModTime().UTC(),
+	}
+	if rootAbs != "" {
+		if relativePath, ok := appRelativePath(rootAbs, cleaned); ok {
+			state.RelativePath = relativePath
+		}
 	}
 	if info.Size() > maxWatchedHashBytes {
 		state.HashSkipped = true
@@ -361,6 +372,13 @@ func fileEvent(eventType string, current fileState, previous fileState) EnqueueE
 	}
 	if current.SHA256 != "" {
 		payload["sha256"] = current.SHA256
+	}
+	relativePath := current.RelativePath
+	if relativePath == "" {
+		relativePath = previous.RelativePath
+	}
+	if relativePath != "" {
+		payload["relative_path"] = relativePath
 	}
 	if previous.Path != "" {
 		payload["previous_size_bytes"] = previous.SizeBytes
@@ -442,4 +460,12 @@ func fileEventMessage(eventType string, path string) string {
 
 func sortStrings(values []string) {
 	slices.Sort(values)
+}
+
+func appRelativePath(rootAbs string, pathAbs string) (string, bool) {
+	relativePath, err := filepath.Rel(rootAbs, pathAbs)
+	if err != nil || relativePath == "." || strings.HasPrefix(relativePath, "..") || filepath.IsAbs(relativePath) {
+		return "", false
+	}
+	return filepath.ToSlash(relativePath), true
 }
