@@ -106,6 +106,72 @@ func BuildDatabaseSnapshotEvents(result DatabaseCollectResult, baseLabels map[st
 	return events
 }
 
+func BuildDatabaseSnapshotDiffEvents(result DatabaseCollectResult, diff DatabaseSnapshotDiffResult, baseLabels map[string]string) []DatabaseSnapshotEvent {
+	if diff.Skipped {
+		return nil
+	}
+	eventTime := result.FinishedAt
+	if eventTime.IsZero() {
+		eventTime = time.Now().UTC()
+	}
+	labels := databaseEventLabels(baseLabels, result, nil)
+	if diff.Baselined {
+		return []DatabaseSnapshotEvent{
+			{
+				EventTime: eventTime,
+				Type:      "db.snapshot.baseline_created",
+				Target:    result.Name,
+				Severity:  "info",
+				Message:   fmt.Sprintf("Database snapshot baseline created for %s", result.Name),
+				Labels:    labels,
+				Payload: map[string]any{
+					"database":    result.Name,
+					"engine":      result.Engine,
+					"profile":     result.Profile,
+					"check_count": len(BuildDatabaseSnapshotState(result).Checks),
+				},
+			},
+		}
+	}
+	events := make([]DatabaseSnapshotEvent, 0, len(diff.Changes))
+	for _, change := range diff.Changes {
+		current := change.Current
+		checkLabels := databaseEventLabels(baseLabels, result, map[string]string{
+			"db_check":       current.Name,
+			"db_metric":      current.Metric,
+			"db_status":      current.Status,
+			"db_table":       current.Table,
+			"db_change_type": change.Type,
+		})
+		payload := map[string]any{
+			"database":    result.Name,
+			"engine":      result.Engine,
+			"profile":     result.Profile,
+			"change_type": change.Type,
+			"check":       current.Name,
+			"metric":      current.Metric,
+			"table":       current.Table,
+			"current":     databaseCheckStatePayload(current),
+		}
+		if change.Previous.Name != "" {
+			payload["previous"] = databaseCheckStatePayload(change.Previous)
+		}
+		if current.OptionName != "" {
+			payload["option_name"] = current.OptionName
+		}
+		events = append(events, DatabaseSnapshotEvent{
+			EventTime: eventTime,
+			Type:      "db.snapshot.check_" + databaseChangeEventSuffix(change.Type),
+			Target:    databaseStateTarget(result, current),
+			Severity:  databaseDiffSeverity(current),
+			Message:   databaseDiffMessage(result, change),
+			Labels:    checkLabels,
+			Payload:   payload,
+		})
+	}
+	return events
+}
+
 func databaseEventLabels(base map[string]string, result DatabaseCollectResult, extra map[string]string) map[string]string {
 	labels := make(map[string]string, len(base)+len(extra)+4)
 	for key, value := range base {
@@ -174,5 +240,71 @@ func databaseCheckMessage(result DatabaseCollectResult, check DatabaseCheckResul
 		return fmt.Sprintf("Database check %s did not find a value", check.Name)
 	default:
 		return fmt.Sprintf("Database check %s observed count %d", check.Name, check.Count)
+	}
+}
+
+func databaseCheckStatePayload(state DatabaseSnapshotCheckState) map[string]any {
+	payload := map[string]any{
+		"name":      state.Name,
+		"status":    state.Status,
+		"metric":    state.Metric,
+		"table":     state.Table,
+		"signature": state.Signature,
+	}
+	if state.CountValid {
+		payload["count"] = state.Count
+	}
+	if state.ValueSHA256 != "" {
+		payload["value_sha256"] = state.ValueSHA256
+		payload["value_bytes"] = state.ValueBytes
+	}
+	if state.OptionName != "" {
+		payload["option_name"] = state.OptionName
+	}
+	return payload
+}
+
+func databaseStateTarget(result DatabaseCollectResult, state DatabaseSnapshotCheckState) string {
+	if state.Table != "" && state.Metric != "" {
+		return result.Name + ":" + state.Table + ":" + state.Metric
+	}
+	if state.Table != "" {
+		return result.Name + ":" + state.Table
+	}
+	return result.Name + ":" + state.Name
+}
+
+func databaseDiffSeverity(state DatabaseSnapshotCheckState) string {
+	name := strings.ToLower(state.Name + " " + state.Metric)
+	switch {
+	case strings.Contains(name, "admin") ||
+		strings.Contains(name, "capabilities") ||
+		strings.Contains(name, "active_plugins") ||
+		strings.Contains(name, "theme") ||
+		strings.Contains(name, "cron") ||
+		strings.Contains(name, "employee") ||
+		strings.Contains(name, "active_modules"):
+		return "medium"
+	default:
+		return "low"
+	}
+}
+
+func databaseDiffMessage(result DatabaseCollectResult, change DatabaseSnapshotChange) string {
+	current := change.Current
+	switch change.Type {
+	case "added":
+		return fmt.Sprintf("Database check %s was added to snapshot state for %s", current.Name, result.Name)
+	default:
+		return fmt.Sprintf("Database check %s changed for %s", current.Name, result.Name)
+	}
+}
+
+func databaseChangeEventSuffix(value string) string {
+	switch strings.TrimSpace(value) {
+	case "added":
+		return "added"
+	default:
+		return "changed"
 	}
 }

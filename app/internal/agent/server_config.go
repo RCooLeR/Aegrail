@@ -476,6 +476,10 @@ func SiteEventLabels(site ServerSiteConfig) map[string]string {
 	return siteEventLabels(NormalizeServerConfig(ServerConfig{Sites: []ServerSiteConfig{site}}).Sites[0])
 }
 
+func SiteStatePath(config ServerConfig, site ServerSiteConfig, name string) string {
+	return siteStatePath(config, site, name)
+}
+
 func siteStateDir(config ServerConfig, site ServerSiteConfig) string {
 	return filepath.Join(config.Runtime.StateDir, "sites", safeFilename(site.Slug))
 }

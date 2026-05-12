@@ -23,7 +23,7 @@ Aegrail already has:
 - browser script drift findings and allowlist workflow
 - Pantheon WordPress monitoring plan
 - dashboard and multi-site agent config plans
-- multi-site Agent YAML config loading, validation, file watching, log tailing, database checks, browser crawling, and continuous `agent run`
+- multi-site Agent YAML config loading, validation, file watching, log tailing, database checks with local diff state, browser crawling, and continuous `agent run`
 
 ## Phase 0: Product Foundation
 
@@ -50,7 +50,7 @@ Exit criteria:
 
 Goal: make distributed evidence collection real.
 
-Status: in progress, functional for files, logs, database checks, browser crawls, queue, ingest, and multi-site agent config runs.
+Status: in progress, functional for files, logs, database checks and diffs, browser crawls, queue, ingest, and multi-site agent config runs.
 
 Deliverables:
 
@@ -85,6 +85,7 @@ Deliverables:
 - per-site app/service/label event context
 - per-site file and log state paths
 - database collectors attached to the same config
+- per-site database snapshot state and redacted diff events
 - config coverage reporting to Hub
 
 Exit criteria:
@@ -107,7 +108,7 @@ Deliverables:
 
 Exit criteria:
 
-- initial WordPress and PrestaShop DB checks emit counts and redacted digests
+- initial WordPress and PrestaShop DB checks emit counts, redacted digests, and local diff events
 - WordPress admin and capability changes produce deterministic findings
 - PrestaShop employee, module, and configuration changes produce deterministic findings
 - fixtures cover clean and suspicious cases

@@ -58,6 +58,7 @@ Last updated: 2026-05-12
 - [x] Add per-site app/service/label context to queued events.
 - [x] Add per-site file watch state paths.
 - [x] Add per-site log tail state paths.
+- [x] Add per-site database snapshot state paths.
 - [x] Add `aegrail agent run --config ... --once`.
 - [x] Add continuous multi-site agent runner.
 - [ ] Report config coverage to Hub.
@@ -76,6 +77,7 @@ Last updated: 2026-05-12
 - [~] Snapshot WordPress options.
 - [~] Snapshot WordPress active plugins and themes.
 - [~] Snapshot WordPress cron tasks.
+- [x] Emit redacted WordPress DB snapshot diff events.
 - [ ] Detect new WordPress administrators.
 - [ ] Detect changed WordPress capabilities.
 - [ ] Detect suspicious WordPress option values.
@@ -85,6 +87,7 @@ Last updated: 2026-05-12
 - [~] Snapshot PrestaShop modules.
 - [~] Snapshot PrestaShop configuration.
 - [~] Snapshot PrestaShop tabs, hooks, and access.
+- [x] Emit redacted PrestaShop DB snapshot diff events.
 - [ ] Detect new PrestaShop employees and SuperAdmin accounts.
 - [ ] Detect suspicious PrestaShop configuration values.
 - [ ] Detect suspicious PrestaShop module changes.

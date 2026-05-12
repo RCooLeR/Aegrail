@@ -140,7 +140,10 @@ Current implementation:
 - `dsn_env` is required; literal DSNs are rejected by config validation.
 - Missing DSN environment variables become `db.coverage.warning` events so other site collection continues.
 - Raw option/config values are not emitted. Snapshot events keep counts, byte lengths, and SHA-256 digests.
-- Full row snapshots, previous-snapshot diffs, and PostgreSQL collector support are still planned.
+- The first good snapshot creates local baseline state under the configured site state directory.
+- Later snapshots emit redacted diff events such as `db.snapshot.check_changed` and `db.snapshot.check_added`.
+- Warning-only snapshots do not replace the previous known-good DB state.
+- Full row snapshots, Hub finding rules, and PostgreSQL collector support are still planned.
 
 Minimum WordPress checks:
 

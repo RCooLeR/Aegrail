@@ -168,12 +168,12 @@ Target layout:
       file-watch.json
       log-tail.json
       browser-crawl.json
-      db-snapshot.json
+      db-wordpress.json
     example2-com/
       file-watch.json
       log-tail.json
       browser-crawl.json
-      db-snapshot.json
+      db-prestashop.json
 ```
 
 This prevents a scan of `example2.com` from overwriting the baseline for `example.com`.
@@ -241,6 +241,9 @@ Current implementation:
 - If `dsn_env` is missing at runtime, the agent queues `db.coverage.warning` instead of failing the whole scan.
 - Events are emitted under `source=agent.database` and `service=database`.
 - Sensitive DB values are not queued raw. Aegrail records counts, value byte lengths, and SHA-256 digests for selected option/config values.
+- The first successful snapshot creates a per-site, per-database JSON baseline in `runtime.state_dir`.
+- Later snapshots compare against that state and emit `db.snapshot.check_changed` or `db.snapshot.check_added` events when counts or digests change.
+- Failed or warning-only snapshots do not overwrite the previous good DB state.
 - `schedule` is accepted as config metadata; independent per-database scheduling is still planned. The current runner executes DB checks on the agent scan interval.
 
 Minimum WordPress database checks:
@@ -369,8 +372,9 @@ Done:
 6. Extend `agent run` to continuously scan every configured site and replay queued batches.
 7. Run browser crawls from configured `browser_crawl`.
 8. Run database collectors from configured `databases`.
+9. Persist DB snapshot state and emit redacted DB diff events.
 
 Next:
 
-1. Persist DB snapshot state and diff against previous snapshots.
+1. Turn DB diff events into deterministic Hub findings.
 2. Report config coverage to the Hub for dashboard views.

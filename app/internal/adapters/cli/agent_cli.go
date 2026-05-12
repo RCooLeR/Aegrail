@@ -230,7 +230,7 @@ func agentRunCommand() *urfavecli.Command {
 				if databaseResult.Databases > 0 || databaseResult.Queued > 0 {
 					fmt.Fprintf(c.App.Writer, "Database collected %d database(s); queued %d event(s)\n", databaseResult.Databases, databaseResult.Queued)
 					for _, site := range databaseResult.Sites {
-						fmt.Fprintf(c.App.Writer, "  %s databases=%d queued=%d warnings=%d\n", site.Slug, site.Databases, site.Queued, site.Warnings)
+						fmt.Fprintf(c.App.Writer, "  %s databases=%d baselines=%d changes=%d queued=%d warnings=%d\n", site.Slug, site.Databases, site.Baselines, site.Changes, site.Queued, site.Warnings)
 					}
 				}
 				if browserResult.Pages > 0 || browserResult.Queued > 0 {
@@ -280,6 +280,8 @@ type agentDatabaseRunResult struct {
 type agentDatabaseSiteRunResult struct {
 	Slug      string
 	Databases int
+	Baselines int
+	Changes   int
 	Queued    int
 	Warnings  int
 }
@@ -333,7 +335,12 @@ func runConfiguredDatabaseCollectors(ctx context.Context, runtime *agent.Runtime
 				}
 			}
 			labels := databaseBatchLabels(site, snapshot)
+			diffResult, err := collector.UpdateDatabaseSnapshotState(databaseStatePath(config, site, snapshot), snapshot)
+			if err != nil {
+				snapshot.Warnings = append(snapshot.Warnings, fmt.Sprintf("database snapshot state update failed: %v", err))
+			}
 			events := collector.BuildDatabaseSnapshotEvents(snapshot, labels)
+			events = append(events, collector.BuildDatabaseSnapshotDiffEvents(snapshot, diffResult, labels)...)
 			if len(events) == 0 {
 				siteSummary.Databases++
 				continue
@@ -362,6 +369,10 @@ func runConfiguredDatabaseCollectors(ctx context.Context, runtime *agent.Runtime
 				return agentDatabaseRunResult{}, fmt.Errorf("site %s database %s enqueue: %w", site.Slug, name, err)
 			}
 			siteSummary.Databases++
+			if diffResult.Baselined {
+				siteSummary.Baselines++
+			}
+			siteSummary.Changes += len(diffResult.Changes)
 			siteSummary.Queued += len(events)
 			siteSummary.Warnings += len(snapshot.Warnings)
 			summary.Databases++
@@ -472,6 +483,10 @@ func dbQueueBatchID(site agent.ServerSiteConfig, result collector.DatabaseCollec
 		timestamp = time.Now().UTC()
 	}
 	return "db-" + cliSafeID(site.Slug) + "-" + cliSafeID(result.Name) + "-" + timestamp.UTC().Format("20060102T150405.000000000Z")
+}
+
+func databaseStatePath(config agent.ServerConfig, site agent.ServerSiteConfig, result collector.DatabaseCollectResult) string {
+	return agent.SiteStatePath(config, site, "db-"+cliSafeID(result.Name)+".json")
 }
 
 func databaseBatchLabels(site agent.ServerSiteConfig, result collector.DatabaseCollectResult) map[string]string {
