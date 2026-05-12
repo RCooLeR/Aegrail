@@ -118,8 +118,8 @@ Last updated: 2026-05-12
 - [x] Add Hub read API for findings.
 - [x] Add Hub read API for config coverage.
 - [x] Add Hub read API for agents.
-- [ ] Add Hub read API for deployments.
-- [ ] Add Hub read API for browser script observations.
+- [x] Add Hub read API for deployments.
+- [x] Add Hub read API for browser script observations.
 - [ ] Create `dashboard/` TypeScript React Bootstrap app.
 - [ ] Build Overview view.
 - [ ] Build Findings and Finding Detail views.

@@ -379,6 +379,8 @@ Current implementation:
 - Coverage levels are `none`, `partial`, `strong`, and `complete`.
 - The Hub exposes latest coverage records through `GET /api/v1/coverage`.
 - The Hub exposes monitored topology through `GET /api/v1/inventory/topology` plus granular apps, services, hosts, and agents endpoints.
+- The Hub exposes deployment markers through `GET /api/v1/deployments`.
+- The Hub exposes browser script and tag manager observations through `GET /api/v1/browser/scripts`.
 
 ## Implementation Steps
 
@@ -397,8 +399,9 @@ Done:
 11. Add redacted entity-level snapshots for WordPress users/options/plugins/themes and PrestaShop employees/modules.
 12. Report config coverage to the Hub for dashboard views.
 13. Add Hub inventory read APIs for apps, services, hosts, agents, and topology.
+14. Add Hub deployment and browser-script observation read APIs for dashboard views.
 
 Next:
 
 1. Add exact cron, post, widget, builder-content, and PrestaShop configuration parsers.
-2. Add Hub deployment and browser-script read APIs for dashboard views.
+2. Add finding lifecycle actions for dashboard triage.

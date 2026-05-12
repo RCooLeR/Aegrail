@@ -29,6 +29,7 @@ Aegrail already has:
 - WordPress option, active plugin, active theme, and Multisite network option entity snapshots
 - Agent config coverage events and Hub coverage read API
 - Hub inventory read APIs for apps, services, hosts, agents, and topology
+- Hub deployment and browser script observation read APIs
 
 ## Phase 0: Product Foundation
 
@@ -162,6 +163,8 @@ Current API slice:
 - `GET /api/v1/findings`
 - `GET /api/v1/timeline`
 - `GET /api/v1/coverage`
+- `GET /api/v1/deployments`
+- `GET /api/v1/browser/scripts`
 - `GET /api/v1/inventory/apps`
 - `GET /api/v1/inventory/services`
 - `GET /api/v1/inventory/hosts`

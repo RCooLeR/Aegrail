@@ -16,10 +16,12 @@ Current Hub read API slice:
 - `GET /api/v1/findings?org=...&project=...&environment=...&app=...&limit=...`
 - `GET /api/v1/timeline?org=...&project=...&environment=...&app=...&since=...&limit=...`
 - `GET /api/v1/coverage?org=...&project=...&environment=...&app=...&since=...&limit=...`
+- `GET /api/v1/deployments?org=...&project=...&environment=...&app=...`
+- `GET /api/v1/browser/scripts?org=...&project=...&environment=...&app=...&page=...&kind=...&since=...&limit=...`
 - `GET /api/v1/inventory/topology?org=...&project=...&environment=...`
 - `GET /api/v1/inventory/apps?org=...&project=...&environment=...`
 - `GET /api/v1/inventory/services?org=...&project=...&environment=...&app=...`
 - `GET /api/v1/inventory/hosts?org=...&project=...&environment=...`
 - `GET /api/v1/inventory/agents?org=...&project=...&environment=...&host=...`
 
-These endpoints are the first backend surface for the future Findings, Timeline, Coverage, and Inventory views. Deployments, browser-script observations, and finding actions are still planned.
+These endpoints are the first backend surface for the future Findings, Timeline, Coverage, Inventory, Deployments, and Browser Scripts views. Finding actions and allowlist mutations are still planned.

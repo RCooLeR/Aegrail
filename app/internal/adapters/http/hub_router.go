@@ -58,6 +58,8 @@ func NewHubRouter(meta domain.AppMeta, hub *hubapp.Hub, options HubOptions) http
 	router.Get("/api/v1/findings", listFindingsHandler(hub))
 	router.Get("/api/v1/timeline", listTimelineHandler(hub))
 	router.Get("/api/v1/coverage", listCoverageHandler(hub))
+	router.Get("/api/v1/deployments", listDeploymentsHandler(hub))
+	router.Get("/api/v1/browser/scripts", listBrowserScriptsHandler(hub))
 	router.Get("/api/v1/inventory/apps", listInventoryAppsHandler(hub))
 	router.Get("/api/v1/inventory/services", listInventoryServicesHandler(hub))
 	router.Get("/api/v1/inventory/hosts", listInventoryHostsHandler(hub))
@@ -164,6 +166,47 @@ type agentResponse struct {
 	LastSeenAt  *time.Time `json:"last_seen_at,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`
+}
+
+type deploymentResponse struct {
+	ID         string     `json:"id"`
+	AppID      string     `json:"app_id,omitempty"`
+	Version    string     `json:"version"`
+	CommitSHA  string     `json:"commit_sha,omitempty"`
+	Actor      string     `json:"actor,omitempty"`
+	StartedAt  time.Time  `json:"started_at"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+}
+
+type browserScriptObservationResponse struct {
+	EventID         string            `json:"event_id"`
+	AppID           string            `json:"app_id,omitempty"`
+	AppSlug         string            `json:"app,omitempty"`
+	HostID          string            `json:"host_id"`
+	HostSlug        string            `json:"host"`
+	Hostname        string            `json:"hostname"`
+	AgentID         string            `json:"agent_id"`
+	AgentExternalID string            `json:"agent"`
+	EventTime       time.Time         `json:"event_time"`
+	ReceivedAt      time.Time         `json:"received_time"`
+	EventType       string            `json:"type"`
+	Target          string            `json:"target"`
+	Severity        string            `json:"severity"`
+	PageURL         string            `json:"page_url,omitempty"`
+	FinalURL        string            `json:"final_url,omitempty"`
+	Mode            string            `json:"mode,omitempty"`
+	SourceType      string            `json:"source_type,omitempty"`
+	URL             string            `json:"url,omitempty"`
+	URLRedacted     string            `json:"url_redacted,omitempty"`
+	Domain          string            `json:"domain,omitempty"`
+	Path            string            `json:"path,omitempty"`
+	SHA256          string            `json:"sha256,omitempty"`
+	InlineBytes     int               `json:"inline_bytes,omitempty"`
+	TagManager      bool              `json:"tag_manager"`
+	TagManagerIDs   []string          `json:"tag_manager_ids,omitempty"`
+	Labels          map[string]string `json:"labels"`
+	Payload         map[string]any    `json:"payload"`
 }
 
 type ingestEventsRequest struct {
@@ -342,6 +385,69 @@ func listCoverageHandler(hub *hubapp.Hub) http.HandlerFunc {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"count":    len(records),
 			"coverage": records,
+		})
+	}
+}
+
+func listDeploymentsHandler(hub *hubapp.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		deployments, err := hub.ListDeploymentMarkers(r.Context(), r.URL.Query().Get("org"), r.URL.Query().Get("project"), r.URL.Query().Get("environment"), r.URL.Query().Get("app"))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		records := make([]deploymentResponse, 0, len(deployments))
+		for _, deployment := range deployments {
+			records = append(records, deploymentRecord(deployment))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"count":       len(records),
+			"deployments": records,
+		})
+	}
+}
+
+func listBrowserScriptsHandler(hub *hubapp.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		limit, err := parseQueryLimit(r, 1000)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		since, err := parseQueryTime(r.URL.Query().Get("since"), "since")
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		observations, err := hub.ListBrowserScriptObservations(r.Context(), hubapp.ListBrowserScriptObservationsInput{
+			OrganizationSlug: r.URL.Query().Get("org"),
+			ProjectSlug:      r.URL.Query().Get("project"),
+			EnvironmentSlug:  r.URL.Query().Get("environment"),
+			AppSlug:          r.URL.Query().Get("app"),
+			PageURL:          r.URL.Query().Get("page"),
+			Kind:             r.URL.Query().Get("kind"),
+			Since:            since,
+			Limit:            limit,
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		records := make([]browserScriptObservationResponse, 0, len(observations))
+		for _, observation := range observations {
+			records = append(records, browserScriptObservationRecord(observation))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"count":   len(records),
+			"scripts": records,
 		})
 	}
 }
@@ -687,6 +793,51 @@ func agentRecord(agent domain.Agent) agentResponse {
 		LastSeenAt:  agent.LastSeenAt,
 		CreatedAt:   agent.CreatedAt,
 		UpdatedAt:   agent.UpdatedAt,
+	}
+}
+
+func deploymentRecord(deployment domain.DeploymentMarker) deploymentResponse {
+	return deploymentResponse{
+		ID:         string(deployment.ID),
+		AppID:      string(deployment.AppID),
+		Version:    deployment.Version,
+		CommitSHA:  deployment.CommitSHA,
+		Actor:      deployment.Actor,
+		StartedAt:  deployment.StartedAt,
+		FinishedAt: deployment.FinishedAt,
+		CreatedAt:  deployment.CreatedAt,
+	}
+}
+
+func browserScriptObservationRecord(record hubapp.BrowserScriptObservationRecord) browserScriptObservationResponse {
+	return browserScriptObservationResponse{
+		EventID:         string(record.EventID),
+		AppID:           string(record.AppID),
+		AppSlug:         record.AppSlug,
+		HostID:          string(record.HostID),
+		HostSlug:        record.HostSlug,
+		Hostname:        record.Hostname,
+		AgentID:         string(record.AgentID),
+		AgentExternalID: record.AgentExternalID,
+		EventTime:       record.EventTime,
+		ReceivedAt:      record.ReceivedAt,
+		EventType:       record.EventType,
+		Target:          record.Target,
+		Severity:        string(record.Severity),
+		PageURL:         record.PageURL,
+		FinalURL:        record.FinalURL,
+		Mode:            record.Mode,
+		SourceType:      record.SourceType,
+		URL:             record.URL,
+		URLRedacted:     record.URLRedacted,
+		Domain:          record.Domain,
+		Path:            record.Path,
+		SHA256:          record.SHA256,
+		InlineBytes:     record.InlineBytes,
+		TagManager:      record.TagManager,
+		TagManagerIDs:   record.TagManagerIDs,
+		Labels:          nonNilResponseStringMap(record.Labels),
+		Payload:         nonNilResponseMap(record.Payload),
 	}
 }
 

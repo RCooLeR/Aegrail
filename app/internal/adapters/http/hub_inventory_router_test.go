@@ -87,6 +87,38 @@ func TestHubRouterListsAgentsForHost(t *testing.T) {
 	}
 }
 
+func TestHubRouterListsDeployments(t *testing.T) {
+	repo := newHTTPTestInventoryRepository()
+	router := NewHubRouter(domain.AppMeta{Name: "Aegrail", Binary: "aegrail", Version: "test"}, hubapp.New(hubapp.Dependencies{Inventory: repo}), HubOptions{})
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/deployments?org=acme&project=customer-site&environment=production&app=main-web", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Count       int `json:"count"`
+		Deployments []struct {
+			AppID     string `json:"app_id"`
+			Version   string `json:"version"`
+			CommitSHA string `json:"commit_sha"`
+			Actor     string `json:"actor"`
+		} `json:"deployments"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("Decode returned error: %v", err)
+	}
+	if body.Count != 1 {
+		t.Fatalf("count = %d, want 1", body.Count)
+	}
+	deployment := body.Deployments[0]
+	if deployment.AppID != "app-1" || deployment.Version != "v1.8.2" || deployment.CommitSHA != "a91f72c" || deployment.Actor != "github-actions" {
+		t.Fatalf("deployment = %#v, want seeded deployment", deployment)
+	}
+}
+
 type httpTestInventoryRepository struct {
 	org         domain.Organization
 	project     domain.Project
@@ -95,6 +127,7 @@ type httpTestInventoryRepository struct {
 	services    map[domain.ID][]domain.Service
 	hosts       []domain.Host
 	agents      map[domain.ID][]domain.Agent
+	deployments []domain.DeploymentMarker
 }
 
 func newHTTPTestInventoryRepository() *httpTestInventoryRepository {
@@ -107,6 +140,8 @@ func newHTTPTestInventoryRepository() *httpTestInventoryRepository {
 	host := domain.Host{ID: "host-1", EnvironmentID: environment.ID, Slug: "web-01", Hostname: "web-01", Region: "eu-central", Labels: map[string]string{"pool": "blue"}, CreatedAt: now, UpdatedAt: now}
 	lastSeen := now
 	agent := domain.Agent{ID: "agent-1", HostID: host.ID, AgentID: "agt_web_01", Fingerprint: "SHA256:test", Version: "test", LastSeenAt: &lastSeen, CreatedAt: now, UpdatedAt: now}
+	finishedAt := now.Add(2 * time.Minute)
+	deployment := domain.DeploymentMarker{ID: "deploy-1", EnvironmentID: environment.ID, AppID: app.ID, Version: "v1.8.2", CommitSHA: "a91f72c", Actor: "github-actions", StartedAt: now, FinishedAt: &finishedAt, CreatedAt: now}
 	return &httpTestInventoryRepository{
 		org:         org,
 		project:     project,
@@ -115,6 +150,7 @@ func newHTTPTestInventoryRepository() *httpTestInventoryRepository {
 		services:    map[domain.ID][]domain.Service{app.ID: {service}},
 		hosts:       []domain.Host{host},
 		agents:      map[domain.ID][]domain.Agent{host.ID: {agent}},
+		deployments: []domain.DeploymentMarker{deployment},
 	}
 }
 
@@ -241,5 +277,15 @@ func (r *httpTestInventoryRepository) SaveDeploymentMarker(ctx context.Context, 
 }
 
 func (r *httpTestInventoryRepository) ListDeploymentMarkers(ctx context.Context, environmentID domain.ID, appID domain.ID) ([]domain.DeploymentMarker, error) {
-	return nil, nil
+	var deployments []domain.DeploymentMarker
+	for _, deployment := range r.deployments {
+		if deployment.EnvironmentID != environmentID {
+			continue
+		}
+		if appID != "" && deployment.AppID != appID {
+			continue
+		}
+		deployments = append(deployments, deployment)
+	}
+	return deployments, nil
 }
