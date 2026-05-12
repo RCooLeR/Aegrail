@@ -1,7 +1,7 @@
 # Aegrail Tracker
 
 Status: active
-Last updated: 2026-05-12
+Last updated: 2026-05-13
 
 ## Legend
 
@@ -131,7 +131,7 @@ Last updated: 2026-05-12
 - [ ] Build Inventory, Sites, and Agents views.
 - [ ] Build Browser Scripts view.
 - [x] Add finding acknowledge and false-positive actions.
-- [ ] Add browser script allowlist actions.
+- [x] Add browser script allowlist actions.
 
 ## Phase 6: Reports And AI
 

@@ -59,6 +59,7 @@ func hubBrowserScriptsCommand(meta domain.AppMeta) *urfavecli.Command {
 					&urfavecli.StringFlag{Name: "app", Required: true, Usage: "monitored app slug"},
 					&urfavecli.StringFlag{Name: "kind", Usage: "optional kind filter"},
 					&urfavecli.StringFlag{Name: "page", Usage: "optional page URL filter"},
+					&urfavecli.StringFlag{Name: "status", Usage: "optional status filter: active or disabled"},
 				),
 				Action: func(c *urfavecli.Context) error {
 					container, cleanup, err := newDatabaseContainer(c.Context, meta)
@@ -72,11 +73,13 @@ func hubBrowserScriptsCommand(meta domain.AppMeta) *urfavecli.Command {
 						ProjectSlug:      c.String("project"),
 						EnvironmentSlug:  c.String("env"),
 						AppSlug:          c.String("app"),
+						PageURL:          c.String("page"),
+						Kind:             c.String("kind"),
+						Status:           c.String("status"),
 					})
 					if err != nil {
 						return err
 					}
-					entries = filterBrowserAllowlistEntries(entries, c.String("kind"), c.String("page"))
 					if len(entries) == 0 {
 						fmt.Fprintln(c.App.Writer, "No browser script allowlist entries found.")
 						return nil
@@ -100,24 +103,42 @@ func hubBrowserScriptsCommand(meta domain.AppMeta) *urfavecli.Command {
 					return writer.Flush()
 				},
 			},
+			{
+				Name:  "status",
+				Usage: "enable or disable a browser script allowlist entry",
+				Flags: append(environmentPathFlags(),
+					&urfavecli.StringFlag{Name: "app", Required: true, Usage: "monitored app slug"},
+					&urfavecli.StringFlag{Name: "id", Required: true, Usage: "allowlist entry id"},
+					&urfavecli.StringFlag{Name: "status", Required: true, Usage: "active or disabled"},
+					&urfavecli.StringFlag{Name: "reason", Usage: "review note explaining the status change"},
+					&urfavecli.StringFlag{Name: "approved-by", Usage: "reviewer identity"},
+				),
+				Action: func(c *urfavecli.Context) error {
+					container, cleanup, err := newDatabaseContainer(c.Context, meta)
+					if err != nil {
+						return err
+					}
+					defer cleanup()
+
+					entry, err := container.Hub.UpdateBrowserScriptAllowlistStatus(c.Context, hubapp.UpdateBrowserScriptAllowlistStatusInput{
+						OrganizationSlug: c.String("org"),
+						ProjectSlug:      c.String("project"),
+						EnvironmentSlug:  c.String("env"),
+						AppSlug:          c.String("app"),
+						EntryID:          c.String("id"),
+						Status:           c.String("status"),
+						Reason:           c.String("reason"),
+						ApprovedBy:       c.String("approved-by"),
+					})
+					if err != nil {
+						return err
+					}
+					fmt.Fprintf(c.App.Writer, "Browser script allowlist entry %s is now %s.\n", entry.ID, entry.Status)
+					return nil
+				},
+			},
 		},
 	}
-}
-
-func filterBrowserAllowlistEntries(entries []domain.BrowserScriptAllowlistEntry, kind string, page string) []domain.BrowserScriptAllowlistEntry {
-	kind = strings.ToLower(strings.TrimSpace(strings.ReplaceAll(kind, "-", "_")))
-	page = strings.TrimRight(strings.TrimSpace(page), "/")
-	filtered := make([]domain.BrowserScriptAllowlistEntry, 0, len(entries))
-	for _, entry := range entries {
-		if kind != "" && strings.ToLower(entry.Kind) != kind {
-			continue
-		}
-		if page != "" && strings.TrimRight(entry.PageURL, "/") != page {
-			continue
-		}
-		filtered = append(filtered, entry)
-	}
-	return filtered
 }
 
 func browserAllowlistPageLabel(page string) string {

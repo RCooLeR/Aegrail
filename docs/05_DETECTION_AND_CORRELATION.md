@@ -228,6 +228,8 @@ Allowlists should be narrow and reviewable:
 
 An allowlist entry must carry scope, reason, reviewer, and time.
 
+Browser script allowlist entries can be created from drift review and later disabled without deleting review history. The Hub API and CLI both use `active` and `disabled` statuses, and drift matching only suppresses values from active entries.
+
 ## Dashboard Views
 
 The dashboard should expose:

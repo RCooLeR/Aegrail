@@ -61,6 +61,9 @@ func NewHubRouter(meta domain.AppMeta, hub *hubapp.Hub, options HubOptions) http
 	router.Get("/api/v1/coverage", listCoverageHandler(hub))
 	router.Get("/api/v1/deployments", listDeploymentsHandler(hub))
 	router.Get("/api/v1/browser/scripts", listBrowserScriptsHandler(hub))
+	router.Get("/api/v1/browser/script-allowlist", listBrowserScriptAllowlistHandler(hub))
+	router.Post("/api/v1/browser/script-allowlist", allowBrowserScriptHandler(hub))
+	router.Patch("/api/v1/browser/script-allowlist/{id}/status", updateBrowserScriptAllowlistStatusHandler(hub))
 	router.Get("/api/v1/inventory/apps", listInventoryAppsHandler(hub))
 	router.Get("/api/v1/inventory/services", listInventoryServicesHandler(hub))
 	router.Get("/api/v1/inventory/hosts", listInventoryHostsHandler(hub))
@@ -215,6 +218,19 @@ type browserScriptObservationResponse struct {
 	Payload         map[string]any    `json:"payload"`
 }
 
+type browserScriptAllowlistEntryResponse struct {
+	ID         string    `json:"id"`
+	AppID      string    `json:"app_id"`
+	PageURL    string    `json:"page_url"`
+	Kind       string    `json:"kind"`
+	Value      string    `json:"value"`
+	Reason     string    `json:"reason,omitempty"`
+	ApprovedBy string    `json:"approved_by,omitempty"`
+	Status     string    `json:"status"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
 type ingestEventsRequest struct {
 	Organization string               `json:"org"`
 	Project      string               `json:"project"`
@@ -246,6 +262,20 @@ type updateFindingStatusRequest struct {
 	Reason string `json:"reason"`
 	Note   string `json:"note"`
 	Actor  string `json:"actor"`
+}
+
+type allowBrowserScriptRequest struct {
+	PageURL    string `json:"page_url"`
+	Kind       string `json:"kind"`
+	Value      string `json:"value"`
+	Reason     string `json:"reason"`
+	ApprovedBy string `json:"approved_by"`
+}
+
+type updateBrowserScriptAllowlistStatusRequest struct {
+	Status     string `json:"status"`
+	Reason     string `json:"reason"`
+	ApprovedBy string `json:"approved_by"`
 }
 
 func ingestEventsHandler(hub *hubapp.Hub, options HubOptions) http.HandlerFunc {
@@ -492,6 +522,99 @@ func listBrowserScriptsHandler(hub *hubapp.Hub) http.HandlerFunc {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"count":   len(records),
 			"scripts": records,
+		})
+	}
+}
+
+func listBrowserScriptAllowlistHandler(hub *hubapp.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		entries, err := hub.ListBrowserScriptAllowlist(r.Context(), hubapp.ListBrowserScriptAllowlistInput{
+			OrganizationSlug: r.URL.Query().Get("org"),
+			ProjectSlug:      r.URL.Query().Get("project"),
+			EnvironmentSlug:  r.URL.Query().Get("environment"),
+			AppSlug:          r.URL.Query().Get("app"),
+			PageURL:          r.URL.Query().Get("page"),
+			Kind:             r.URL.Query().Get("kind"),
+			Status:           r.URL.Query().Get("status"),
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		records := make([]browserScriptAllowlistEntryResponse, 0, len(entries))
+		for _, entry := range entries {
+			records = append(records, browserScriptAllowlistEntryRecord(entry))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"count":     len(records),
+			"allowlist": records,
+		})
+	}
+}
+
+func allowBrowserScriptHandler(hub *hubapp.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		var request allowBrowserScriptRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		entry, err := hub.AllowBrowserScript(r.Context(), hubapp.AllowBrowserScriptInput{
+			OrganizationSlug: r.URL.Query().Get("org"),
+			ProjectSlug:      r.URL.Query().Get("project"),
+			EnvironmentSlug:  r.URL.Query().Get("environment"),
+			AppSlug:          r.URL.Query().Get("app"),
+			PageURL:          request.PageURL,
+			Kind:             request.Kind,
+			Value:            request.Value,
+			Reason:           request.Reason,
+			ApprovedBy:       request.ApprovedBy,
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"entry": browserScriptAllowlistEntryRecord(entry),
+		})
+	}
+}
+
+func updateBrowserScriptAllowlistStatusHandler(hub *hubapp.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		var request updateBrowserScriptAllowlistStatusRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		entry, err := hub.UpdateBrowserScriptAllowlistStatus(r.Context(), hubapp.UpdateBrowserScriptAllowlistStatusInput{
+			OrganizationSlug: r.URL.Query().Get("org"),
+			ProjectSlug:      r.URL.Query().Get("project"),
+			EnvironmentSlug:  r.URL.Query().Get("environment"),
+			AppSlug:          r.URL.Query().Get("app"),
+			EntryID:          chi.URLParam(r, "id"),
+			Status:           request.Status,
+			Reason:           request.Reason,
+			ApprovedBy:       request.ApprovedBy,
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"entry": browserScriptAllowlistEntryRecord(entry),
 		})
 	}
 }
@@ -902,6 +1025,28 @@ func browserScriptObservationRecord(record hubapp.BrowserScriptObservationRecord
 		Labels:          nonNilResponseStringMap(record.Labels),
 		Payload:         nonNilResponseMap(record.Payload),
 	}
+}
+
+func browserScriptAllowlistEntryRecord(entry domain.BrowserScriptAllowlistEntry) browserScriptAllowlistEntryResponse {
+	return browserScriptAllowlistEntryResponse{
+		ID:         string(entry.ID),
+		AppID:      string(entry.AppID),
+		PageURL:    entry.PageURL,
+		Kind:       entry.Kind,
+		Value:      entry.Value,
+		Reason:     entry.Reason,
+		ApprovedBy: entry.ApprovedBy,
+		Status:     browserScriptAllowlistStatus(entry),
+		CreatedAt:  entry.CreatedAt,
+		UpdatedAt:  entry.UpdatedAt,
+	}
+}
+
+func browserScriptAllowlistStatus(entry domain.BrowserScriptAllowlistEntry) string {
+	if strings.TrimSpace(entry.Status) == "" {
+		return "active"
+	}
+	return entry.Status
 }
 
 func stringDomainIDs(ids []domain.ID) []string {

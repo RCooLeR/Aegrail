@@ -2,6 +2,7 @@ package hub
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -173,6 +174,75 @@ func TestAnalyzeBrowserScriptDriftSuppressesAllowedValues(t *testing.T) {
 	}
 }
 
+func TestUpdateBrowserScriptAllowlistStatusDisablesSuppression(t *testing.T) {
+	inventory := newMemoryInventoryRepository()
+	ingest := &memoryIngestRepository{}
+	allowlist := newMemoryBrowserScriptAllowlistRepository()
+	hub := New(Dependencies{Inventory: inventory, Ingest: ingest, BrowserAllowlist: allowlist})
+	ctx := context.Background()
+
+	environment, app := bootstrapBrowserDriftInventory(t, ctx, hub)
+	now := time.Date(2026, 5, 12, 13, 0, 0, 0, time.UTC)
+	pageURL := "https://example.test"
+	ingest.timelineEvents = []domain.TimelineEvent{
+		browserScriptTimelineEvent("evt-base-domain", environment.ID, app.ID, now.Add(-48*time.Hour), pageURL, map[string]any{
+			"source_type": "dom",
+			"domain":      "static.example.test",
+		}),
+		browserScriptTimelineEvent("evt-new-domain", environment.ID, app.ID, now.Add(-20*time.Minute), pageURL, map[string]any{
+			"source_type": "network",
+			"domain":      "cdn.reviewed.example",
+		}),
+	}
+
+	entry, err := hub.AllowBrowserScript(ctx, AllowBrowserScriptInput{
+		OrganizationSlug: "acme",
+		ProjectSlug:      "customer-site",
+		EnvironmentSlug:  "production",
+		AppSlug:          "main-web",
+		PageURL:          pageURL,
+		Kind:             "domain",
+		Value:            "cdn.reviewed.example",
+		Reason:           "initial review",
+		ApprovedBy:       "security",
+	})
+	if err != nil {
+		t.Fatalf("AllowBrowserScript returned error: %v", err)
+	}
+
+	disabled, err := hub.UpdateBrowserScriptAllowlistStatus(ctx, UpdateBrowserScriptAllowlistStatusInput{
+		OrganizationSlug: "acme",
+		ProjectSlug:      "customer-site",
+		EnvironmentSlug:  "production",
+		AppSlug:          "main-web",
+		EntryID:          string(entry.ID),
+		Status:           "disable",
+		Reason:           "vendor removed",
+		ApprovedBy:       "roman",
+	})
+	if err != nil {
+		t.Fatalf("UpdateBrowserScriptAllowlistStatus returned error: %v", err)
+	}
+	if disabled.Status != "disabled" || disabled.Reason != "vendor removed" || disabled.ApprovedBy != "roman" {
+		t.Fatalf("disabled entry = %#v, want disabled metadata", disabled)
+	}
+
+	result, err := hub.AnalyzeBrowserScriptDrift(ctx, AnalyzeBrowserScriptDriftInput{
+		OrganizationSlug: "acme",
+		ProjectSlug:      "customer-site",
+		EnvironmentSlug:  "production",
+		AppSlug:          "main-web",
+		BaselineSince:    now.Add(-30 * 24 * time.Hour),
+		ObserveSince:     now.Add(-24 * time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("AnalyzeBrowserScriptDrift returned error: %v", err)
+	}
+	if len(result.Drifts) != 1 || result.Drifts[0].Value != "cdn.reviewed.example" {
+		t.Fatalf("drifts = %#v, want disabled allowlist entry to stop suppressing", result.Drifts)
+	}
+}
+
 func bootstrapBrowserDriftInventory(t *testing.T, ctx context.Context, hub *Hub) (domain.Environment, domain.MonitoredApp) {
 	t.Helper()
 	if _, err := hub.SaveOrganization(ctx, SaveOrganizationInput{Slug: "acme"}); err != nil {
@@ -240,4 +310,20 @@ func (r *memoryBrowserScriptAllowlistRepository) ListBrowserScriptAllowlistEntri
 		}
 	}
 	return entries, nil
+}
+
+func (r *memoryBrowserScriptAllowlistRepository) UpdateBrowserScriptAllowlistEntryStatus(ctx context.Context, entryID domain.ID, environmentID domain.ID, appID domain.ID, update domain.BrowserScriptAllowlistStatusUpdate) (domain.BrowserScriptAllowlistEntry, error) {
+	now := time.Now().UTC()
+	for key, entry := range r.entries {
+		if entry.ID != entryID || entry.EnvironmentID != environmentID || entry.AppID != appID {
+			continue
+		}
+		entry.Status = update.Status
+		entry.Reason = update.Reason
+		entry.ApprovedBy = update.ApprovedBy
+		entry.UpdatedAt = now
+		r.entries[key] = entry
+		return entry, nil
+	}
+	return domain.BrowserScriptAllowlistEntry{}, fmt.Errorf("allowlist entry %q was not found", entryID)
 }

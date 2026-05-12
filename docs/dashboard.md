@@ -11,7 +11,7 @@ The dashboard plan now lives in:
 
 The target dashboard remains TypeScript, React, and Bootstrap, backed by Hub HTTP APIs.
 
-Current Hub read API slice:
+Current Hub API slice:
 
 - `GET /api/v1/findings?org=...&project=...&environment=...&app=...&limit=...`
 - `PATCH /api/v1/findings/{id}/status?org=...&project=...&environment=...`
@@ -19,10 +19,13 @@ Current Hub read API slice:
 - `GET /api/v1/coverage?org=...&project=...&environment=...&app=...&since=...&limit=...`
 - `GET /api/v1/deployments?org=...&project=...&environment=...&app=...`
 - `GET /api/v1/browser/scripts?org=...&project=...&environment=...&app=...&page=...&kind=...&since=...&limit=...`
+- `GET /api/v1/browser/script-allowlist?org=...&project=...&environment=...&app=...&page=...&kind=...&status=...`
+- `POST /api/v1/browser/script-allowlist?org=...&project=...&environment=...&app=...`
+- `PATCH /api/v1/browser/script-allowlist/{id}/status?org=...&project=...&environment=...&app=...`
 - `GET /api/v1/inventory/topology?org=...&project=...&environment=...`
 - `GET /api/v1/inventory/apps?org=...&project=...&environment=...`
 - `GET /api/v1/inventory/services?org=...&project=...&environment=...&app=...`
 - `GET /api/v1/inventory/hosts?org=...&project=...&environment=...`
 - `GET /api/v1/inventory/agents?org=...&project=...&environment=...&host=...`
 
-These endpoints are the first backend surface for the future Findings, Timeline, Coverage, Inventory, Deployments, and Browser Scripts views. Finding status actions now support `open`, `acknowledged`, `false_positive`, and `resolved`. Browser allowlist mutations are still planned.
+These endpoints are the first backend surface for the future Findings, Timeline, Coverage, Inventory, Deployments, and Browser Scripts views. Finding status actions now support `open`, `acknowledged`, `false_positive`, and `resolved`. Browser allowlist actions can create reviewed entries and toggle them between `active` and `disabled`.

@@ -413,4 +413,4 @@ Done:
 
 Next:
 
-1. Add browser allowlist mutation APIs for dashboard triage.
+1. Add finding-to-allowlist handoff helpers for browser drift findings.

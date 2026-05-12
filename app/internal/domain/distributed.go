@@ -145,3 +145,9 @@ type BrowserScriptAllowlistEntry struct {
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 }
+
+type BrowserScriptAllowlistStatusUpdate struct {
+	Status     string
+	Reason     string
+	ApprovedBy string
+}

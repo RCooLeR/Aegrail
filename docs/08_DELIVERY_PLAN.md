@@ -22,6 +22,7 @@ Aegrail already has:
 - browser crawl ingest into Hub events
 - browser script drift findings and allowlist workflow
 - finding lifecycle status actions
+- browser script allowlist mutation APIs
 - Pantheon WordPress monitoring plan
 - dashboard and multi-site agent config plans
 - multi-site Agent YAML config loading, validation, file watching, log tailing, database checks with local diff state, browser crawling, and continuous `agent run`
@@ -170,6 +171,9 @@ Current API slice:
 - `GET /api/v1/coverage`
 - `GET /api/v1/deployments`
 - `GET /api/v1/browser/scripts`
+- `GET /api/v1/browser/script-allowlist`
+- `POST /api/v1/browser/script-allowlist`
+- `PATCH /api/v1/browser/script-allowlist/{id}/status`
 - `GET /api/v1/inventory/apps`
 - `GET /api/v1/inventory/services`
 - `GET /api/v1/inventory/hosts`

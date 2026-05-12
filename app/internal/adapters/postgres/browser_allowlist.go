@@ -111,3 +111,46 @@ func (r *BrowserScriptAllowlistRepository) ListBrowserScriptAllowlistEntries(ctx
 	}
 	return entries, rows.Err()
 }
+
+func (r *BrowserScriptAllowlistRepository) UpdateBrowserScriptAllowlistEntryStatus(ctx context.Context, entryID domain.ID, environmentID domain.ID, appID domain.ID, update domain.BrowserScriptAllowlistStatusUpdate) (domain.BrowserScriptAllowlistEntry, error) {
+	const query = `
+		UPDATE hub_browser_script_allowlist
+		SET status = $4,
+			reason = $5,
+			approved_by = $6,
+			updated_at = now()
+		WHERE id = $1
+			AND environment_id = $2
+			AND app_id = $3
+		RETURNING id::text, organization_id::text, project_id::text, environment_id::text,
+			app_id::text, page_url, kind, value, reason, approved_by, status, created_at, updated_at
+	`
+	var entry domain.BrowserScriptAllowlistEntry
+	if err := r.pool.QueryRow(
+		ctx,
+		query,
+		entryID,
+		environmentID,
+		appID,
+		update.Status,
+		update.Reason,
+		update.ApprovedBy,
+	).Scan(
+		&entry.ID,
+		&entry.OrganizationID,
+		&entry.ProjectID,
+		&entry.EnvironmentID,
+		&entry.AppID,
+		&entry.PageURL,
+		&entry.Kind,
+		&entry.Value,
+		&entry.Reason,
+		&entry.ApprovedBy,
+		&entry.Status,
+		&entry.CreatedAt,
+		&entry.UpdatedAt,
+	); err != nil {
+		return domain.BrowserScriptAllowlistEntry{}, err
+	}
+	return entry, nil
+}

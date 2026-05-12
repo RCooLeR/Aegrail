@@ -168,6 +168,19 @@ Approved drift values are stored in the Hub browser script allowlist. Entries ca
 - `inline_hash`
 - `tag_manager_id`
 
+Allowlist entries can be managed from the CLI:
+
+```bash
+aegrail hub browser-scripts allow --org acme --project customer-site --env production --app main-web --kind domain --value cdn.vendor.example --reason reviewed --approved-by roman
+aegrail hub browser-scripts status --org acme --project customer-site --env production --app main-web --id allowlist-id --status disabled --reason vendor-removed --approved-by roman
+```
+
+The dashboard-facing Hub API exposes the same workflow:
+
+- `GET /api/v1/browser/script-allowlist`
+- `POST /api/v1/browser/script-allowlist`
+- `PATCH /api/v1/browser/script-allowlist/{id}/status`
+
 ## WordPress-Specific Value
 
 WordPress-specific presets should seed:
