@@ -139,6 +139,7 @@ Current Pantheon direction:
 Current browser crawler direction:
 
 - Treat browser crawling as a generic collector with WordPress-aware presets.
+- `aegrail collector browser crawl` can already fetch supplied URLs, parse initial HTML, inventory scripts, redact script URLs, hash inline scripts, and detect obvious tag-manager IDs.
 - Use a real browser mode so dynamic scripts injected by page builders, widgets, consent tools, and tag managers are visible.
 - Wait for `DOMContentLoaded`, `load`, network quiet, optional tag-manager settling, and a bounded extra settle delay.
 - Compare script domains and hashes against per-page baselines.

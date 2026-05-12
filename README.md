@@ -37,6 +37,7 @@ Runtime app groups:
 go run ./cmd/aegrail hub --help
 go run ./cmd/aegrail agent --help
 go run ./cmd/aegrail collector --help
+go run ./cmd/aegrail collector browser crawl --url https://example.com --format json
 ```
 
 Start local infrastructure:

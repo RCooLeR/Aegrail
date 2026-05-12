@@ -1,6 +1,6 @@
 # Browser Crawler And JavaScript Monitoring Plan
 
-Status: planned
+Status: planned; initial static script inventory implemented
 Date: 2026-05-12
 
 ## Goal
@@ -35,11 +35,22 @@ Aegrail needs a real browser mode, not only `GET /page` parsing.
 The collector should live under the generic `collector` runtime app, with WordPress-aware presets:
 
 ```text
-aegrail collector browser crawl --url https://example.com --preset wordpress
-aegrail collector browser crawl --url https://example.com --url https://example.com/contact --wait-tag-manager --save-baseline
+aegrail collector browser crawl --url https://example.com --format json
+aegrail collector browser crawl --url https://example.com --url https://example.com/contact --max-pages 10
 ```
 
-Planned implementation approach:
+Current implementation:
+
+- fetches supplied HTTP/HTTPS URLs
+- parses initial HTML
+- resolves external script URLs
+- redacts sensitive query parameters
+- hashes inline script bodies
+- detects obvious Google Tag Manager and Google tag IDs
+- emits a warning when Tag Manager is present because rendered browser mode is required to see later injected scripts
+- outputs table or JSON
+
+Planned rendered-browser implementation:
 
 - Use a headless browser through a Go adapter such as Chrome DevTools Protocol.
 - Keep browser automation behind a port so the collector can be tested with fake page results.

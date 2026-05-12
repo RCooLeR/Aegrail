@@ -198,5 +198,6 @@ Last updated: 2026-05-12
 - [ ] FUT-007 Slack, Teams, or email alerts.
 - [ ] FUT-008 Pantheon provider collector for SFTP logs and DB snapshots.
 - [ ] FUT-009 Pantheon WordPress Multisite network inventory and snapshot support.
-- [ ] FUT-010 Browser crawler collector for rendered-page JavaScript inventory.
+- [~] FUT-010 Browser crawler collector for rendered-page JavaScript inventory.
 - [ ] FUT-011 Tag-manager and third-party script allowlist/baseline support.
+- [x] FUT-012 Initial browser crawler for static HTML script inventory.

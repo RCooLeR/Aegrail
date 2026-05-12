@@ -142,6 +142,7 @@ func collectorCommand(meta domain.AppMeta) *urfavecli.Command {
 		Name:  "collector",
 		Usage: "run app and database collector workflows",
 		Subcommands: []*urfavecli.Command{
+			collectorBrowserCommand(meta),
 			{
 				Name:  "db",
 				Usage: "run database collector workflows",
