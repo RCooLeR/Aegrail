@@ -106,7 +106,7 @@ Last updated: 2026-05-13
 - [x] Define rule interface and registry.
 - [x] Define versioned rule metadata.
 - [x] Add generic suspicious path rules.
-- [ ] Add admin request anomaly rules.
+- [x] Add admin request anomaly rules.
 - [ ] Add traffic spike rules.
 - [ ] Add risk scoring.
 - [x] Add finding status lifecycle.

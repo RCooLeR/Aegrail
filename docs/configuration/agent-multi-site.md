@@ -413,7 +413,8 @@ Done:
 15. Add deployment-aware scoring so deploy windows reduce low/medium noise without hiding high-risk changes.
 16. Add fixture-based rule evaluation sets for clean, compromised, browser-injected, multi-host drift, and deploy-window cases.
 17. Add generic suspicious path rules for PHP/webroot tampering.
+18. Add admin request anomaly rules for suspicious login/admin traffic patterns.
 
 Next:
 
-1. Add admin request anomaly rules for suspicious login/admin traffic patterns.
+1. Add traffic spike rules for request-volume and error-rate anomalies.

@@ -120,6 +120,7 @@ func correlateTimelineEvents(events []domain.TimelineEvent, window time.Duration
 	seen := map[string]struct{}{}
 	suppressedFollowups := map[string]struct{}{}
 	coveredFileEvents := map[string]struct{}{}
+	coveredWebEvents := map[string]struct{}{}
 	for i, event := range events {
 		if isDatabaseSnapshotDiffEvent(event) {
 			addCorrelationChain(&chains, seen, buildDatabaseSnapshotDiffChain(event))
@@ -141,6 +142,7 @@ func correlateTimelineEvents(events []domain.TimelineEvent, window time.Duration
 					suppressedFollowups[correlationPairKey(fileEvent, tail)] = struct{}{}
 				}
 				coveredFileEvents[correlationEventKey(fileEvent)] = struct{}{}
+				coveredWebEvents[correlationEventKey(event)] = struct{}{}
 				chain := buildCorrelationChain(ruleID, title, chainEvents)
 				addCorrelationChain(&chains, seen, chain)
 			}
@@ -174,6 +176,9 @@ func correlateTimelineEvents(events []domain.TimelineEvent, window time.Duration
 		if !ok {
 			continue
 		}
+		addCorrelationChain(&chains, seen, chain)
+	}
+	for _, chain := range buildAdminRequestAnomalyChains(events, coveredWebEvents) {
 		addCorrelationChain(&chains, seen, chain)
 	}
 	slices.SortFunc(chains, func(a CorrelationChain, b CorrelationChain) int {

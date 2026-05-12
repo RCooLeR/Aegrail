@@ -23,6 +23,7 @@ func TestDefaultRuleRegistryIncludesCurrentRuleMetadata(t *testing.T) {
 		"wordpress-admin-user-added",
 		"prestashop-payment-configuration-changed",
 		"browser-script-domain-new",
+		"web-admin-success-after-failures",
 		"file-php-in-writable-path",
 	} {
 		if _, ok := seen[id]; !ok {
@@ -53,6 +54,11 @@ func TestRuleMetadataAddsVersionAndActionHints(t *testing.T) {
 	rule, ok = metadata["rule"].(map[string]any)
 	if !ok || rule["category"] != string(RuleCategoryFilePath) {
 		t.Fatalf("file rule metadata = %#v, want file_path category", metadata)
+	}
+	metadata = ruleMetadata("web-admin-success-after-failures", nil)
+	rule, ok = metadata["rule"].(map[string]any)
+	if !ok || rule["category"] != string(RuleCategoryWebRequest) {
+		t.Fatalf("web request rule metadata = %#v, want web_request category", metadata)
 	}
 	if ruleHasActionHint("wordpress-admin-user-added", RuleActionAllowBrowserScript) {
 		t.Fatal("wordpress admin rule should not support browser script allowlist action")

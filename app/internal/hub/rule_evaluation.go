@@ -137,6 +137,20 @@ func builtInRuleEvaluationCases() []ruleEvaluationCase {
 		},
 		{
 			fixture: RuleEvaluationFixture{
+				ID:          "admin-request-anomalies",
+				Name:        "Admin Request Anomalies",
+				Kind:        "web_request",
+				Description: "Suspicious admin/login request patterns should produce deterministic web request findings.",
+			},
+			expected: []RuleEvaluationExpectedSignal{
+				{ID: "web-admin-success-after-failures", Severity: domain.SeverityHigh, Confidence: domain.ConfidenceMedium},
+				{ID: "web-admin-login-post-burst", Severity: domain.SeverityMedium, Confidence: domain.ConfidenceMedium},
+				{ID: "web-admin-tool-probe", Severity: domain.SeverityLow, Confidence: domain.ConfidenceMedium},
+			},
+			evaluate: evaluateAdminRequestAnomalyFixture,
+		},
+		{
+			fixture: RuleEvaluationFixture{
 				ID:          "wordpress-admin-role-change",
 				Name:        "WordPress Admin Role Change",
 				Kind:        "database_snapshot",
@@ -308,6 +322,22 @@ func evaluateGenericSuspiciousFilePathFixture(now time.Time) []RuleEvaluationSig
 			"relative_path": "wp-content/uploads/logo.png",
 			"sha256":        "static",
 		}),
+	}, 30*time.Minute)
+}
+
+func evaluateAdminRequestAnomalyFixture(now time.Time) []RuleEvaluationSignal {
+	return correlationEvaluationSignals([]domain.TimelineEvent{
+		evaluationAdminAccessEvent("evt-admin-fail-1", now, "GET", "/wp-admin/", 403, "203.0.113.10"),
+		evaluationAdminAccessEvent("evt-admin-fail-2", now.Add(time.Minute), "GET", "/wp-admin/", 403, "203.0.113.10"),
+		evaluationAdminAccessEvent("evt-admin-fail-3", now.Add(2*time.Minute), "GET", "/wp-admin/", 403, "203.0.113.10"),
+		evaluationAdminAccessEvent("evt-admin-success", now.Add(3*time.Minute), "POST", "/wp-login.php?redirect_to=/wp-admin/", 302, "203.0.113.10"),
+		evaluationAdminAccessEvent("evt-login-post-1", now.Add(10*time.Minute), "POST", "/wp-login.php", 200, "203.0.113.20"),
+		evaluationAdminAccessEvent("evt-login-post-2", now.Add(11*time.Minute), "POST", "/wp-login.php", 200, "203.0.113.20"),
+		evaluationAdminAccessEvent("evt-login-post-3", now.Add(12*time.Minute), "POST", "/wp-login.php", 200, "203.0.113.20"),
+		evaluationAdminAccessEvent("evt-login-post-4", now.Add(13*time.Minute), "POST", "/wp-login.php", 200, "203.0.113.20"),
+		evaluationAdminAccessEvent("evt-login-post-5", now.Add(14*time.Minute), "POST", "/wp-login.php", 200, "203.0.113.20"),
+		evaluationAdminAccessEvent("evt-tool-probe", now.Add(20*time.Minute), "GET", "/phpmyadmin/index.php", 404, "203.0.113.30"),
+		evaluationAdminAccessEvent("evt-admin-ajax", now.Add(21*time.Minute), "POST", "/wp-admin/admin-ajax.php", 200, "203.0.113.40"),
 	}, 30*time.Minute)
 }
 
@@ -563,6 +593,15 @@ func evaluationBrowserScriptEvent(id string, eventTime time.Time, pageURL string
 	payload["page_url"] = pageURL
 	payload["final_url"] = pageURL
 	return evaluationTimelineEvent(id, eventTime, "browser.script.observed", payloadStringAny(payload, "url", pageURL), domain.SeverityInfo, payload)
+}
+
+func evaluationAdminAccessEvent(id string, eventTime time.Time, method string, path string, status int, remoteAddr string) domain.TimelineEvent {
+	return evaluationTimelineEvent(id, eventTime, "log.access", "access.log", domain.SeverityInfo, map[string]any{
+		"method":      method,
+		"path":        path,
+		"status_code": status,
+		"remote_addr": remoteAddr,
+	})
 }
 
 func evaluationOrganization() domain.Organization {

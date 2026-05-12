@@ -52,6 +52,15 @@ Current deterministic generic file path rules:
 
 These rules are generated from normalized file timeline events. They are emitted for standalone suspicious file changes, but the same file event is not duplicated as a standalone path finding when it is already part of a stronger web-to-file or file-to-sensitive-follow-up chain.
 
+Current deterministic admin request anomaly rules:
+
+- `web-admin-success-after-failures`
+- `web-admin-failed-request-burst`
+- `web-admin-login-post-burst`
+- `web-admin-tool-probe`
+
+These rules are generated from normalized access-log timeline events. They use request method, redacted path, status code, and a remote-address fingerprint. Raw remote addresses should not be surfaced in finding summaries.
+
 ### WordPress
 
 High-signal findings:
@@ -234,7 +243,7 @@ Hub rules are registered with versioned metadata:
 - evidence types
 - dashboard/action hints
 
-Current categories are `correlation`, `database_snapshot`, `browser_script`, and `file_baseline`. Findings copy the matching rule metadata into their own metadata, and the Hub exposes the registry through `GET /api/v1/rules`. This lets the CLI, dashboard, and reports use the same rule labels and actions.
+Current categories are `correlation`, `database_snapshot`, `browser_script`, `web_request`, `file_path`, and `file_baseline`. Findings copy the matching rule metadata into their own metadata, and the Hub exposes the registry through `GET /api/v1/rules`. This lets the CLI, dashboard, and reports use the same rule labels and actions.
 
 ## Finding Lifecycle
 
@@ -295,6 +304,7 @@ Aegrail needs fixture-based evaluation sets:
 - compromised WordPress uploads
 - WordPress administrator role change
 - generic suspicious file paths
+- admin request anomalies
 - PrestaShop module drift
 - PrestaShop employee privilege escalation
 - browser script injection

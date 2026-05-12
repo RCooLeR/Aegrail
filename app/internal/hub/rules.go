@@ -14,6 +14,7 @@ const (
 	RuleCategoryCorrelation      RuleCategory = "correlation"
 	RuleCategoryDatabaseSnapshot RuleCategory = "database_snapshot"
 	RuleCategoryBrowserScript    RuleCategory = "browser_script"
+	RuleCategoryWebRequest       RuleCategory = "web_request"
 	RuleCategoryFilePath         RuleCategory = "file_path"
 	RuleCategoryFileBaseline     RuleCategory = "file_baseline"
 )
@@ -191,6 +192,10 @@ func defaultRuleDefinitions() []RuleDefinition {
 		"browser-inline-script-changed",
 		"browser-tag-manager-id-new",
 		"browser-script-drift",
+		"web-admin-success-after-failures",
+		"web-admin-failed-request-burst",
+		"web-admin-login-post-burst",
+		"web-admin-tool-probe",
 		"file-php-in-writable-path",
 		"file-sensitive-config-changed",
 		"file-suspicious-path-pattern",
@@ -217,6 +222,11 @@ func inferRuleDefinition(id string) RuleDefinition {
 		definition.Platforms = []string{"web"}
 		definition.EvidenceTypes = []string{"browser"}
 		definition.ActionHints = []RuleActionHint{RuleActionAcknowledge, RuleActionMarkFalsePositive, RuleActionInspectDeployment, RuleActionAllowBrowserScript}
+	case isWebRequestRuleID(id):
+		definition.Category = RuleCategoryWebRequest
+		definition.Platforms = []string{"generic_php", "wordpress", "prestashop"}
+		definition.EvidenceTypes = []string{"log"}
+		definition.ActionHints = []RuleActionHint{RuleActionAcknowledge, RuleActionMarkFalsePositive, RuleActionInspectTimeline}
 	case id == "file-baseline-drift":
 		definition.Category = RuleCategoryFileBaseline
 		definition.Platforms = []string{"generic_php"}
@@ -332,6 +342,18 @@ func isFilePathRuleID(id string) bool {
 		"file-suspicious-path-pattern",
 		"file-plugin-theme-module-changed",
 		"file-php-changed":
+		return true
+	default:
+		return false
+	}
+}
+
+func isWebRequestRuleID(id string) bool {
+	switch id {
+	case "web-admin-success-after-failures",
+		"web-admin-failed-request-burst",
+		"web-admin-login-post-burst",
+		"web-admin-tool-probe":
 		return true
 	default:
 		return false

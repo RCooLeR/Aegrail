@@ -28,6 +28,7 @@ Aegrail already has:
 - deployment-aware finding scoring for browser drift and database snapshot findings
 - built-in rule fixture evaluation sets for clean, suspicious, browser drift, deployment-window, and multi-host drift cases
 - generic suspicious file path findings for PHP/webroot tampering
+- admin request anomaly findings for suspicious login/admin traffic
 - Pantheon WordPress monitoring plan
 - dashboard and multi-site agent config plans
 - multi-site Agent YAML config loading, validation, file watching, log tailing, database checks with local diff state, browser crawling, and continuous `agent run`
@@ -143,12 +144,14 @@ Deliverables:
 - deployment-aware scoring
 - fixture-based rule evaluation sets
 - generic suspicious path rules
+- admin request anomaly rules
 
 Exit criteria:
 
 - every finding points to evidence
 - repeated scans do not flood duplicate findings
 - suspicious file paths can produce standalone findings without duplicating stronger incident chains
+- admin/login access-log anomalies can produce standalone findings without raw IPs in summaries
 - deployment windows influence risk without hiding suspicious changes
 - built-in fixtures verify clean, suspicious, browser, deployment, and multi-host drift behavior
 - finding triage status can be updated without losing deterministic evidence refreshes

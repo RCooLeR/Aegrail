@@ -82,6 +82,7 @@ Evaluation tests:
 - clean WordPress fixture
 - compromised WordPress fixture
 - generic suspicious file path fixture
+- admin request anomaly fixture
 - clean PrestaShop fixture
 - compromised PrestaShop fixture
 - browser script drift fixture

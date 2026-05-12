@@ -3,6 +3,7 @@ package hub
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -325,6 +326,60 @@ func TestCorrelateEventsBuildsSuspiciousFilePathChains(t *testing.T) {
 	}
 }
 
+func TestCorrelateEventsBuildsAdminRequestAnomalyChains(t *testing.T) {
+	now := time.Date(2026, 5, 12, 13, 30, 0, 0, time.UTC)
+	events := []domain.TimelineEvent{
+		adminAccessEvent("evt-admin-fail-1", now, "GET", "/wp-admin/", 403, "203.0.113.10"),
+		adminAccessEvent("evt-admin-fail-2", now.Add(time.Minute), "GET", "/wp-admin/", 403, "203.0.113.10"),
+		adminAccessEvent("evt-admin-fail-3", now.Add(2*time.Minute), "GET", "/wp-admin/", 403, "203.0.113.10"),
+		adminAccessEvent("evt-admin-success", now.Add(3*time.Minute), "POST", "/wp-login.php?redirect_to=/wp-admin/&token=abc", 302, "203.0.113.10"),
+		adminAccessEvent("evt-login-post-1", now.Add(10*time.Minute), "POST", "/wp-login.php", 200, "203.0.113.20"),
+		adminAccessEvent("evt-login-post-2", now.Add(11*time.Minute), "POST", "/wp-login.php", 200, "203.0.113.20"),
+		adminAccessEvent("evt-login-post-3", now.Add(12*time.Minute), "POST", "/wp-login.php", 200, "203.0.113.20"),
+		adminAccessEvent("evt-login-post-4", now.Add(13*time.Minute), "POST", "/wp-login.php", 200, "203.0.113.20"),
+		adminAccessEvent("evt-login-post-5", now.Add(14*time.Minute), "POST", "/wp-login.php", 200, "203.0.113.20"),
+		adminAccessEvent("evt-tool-probe", now.Add(20*time.Minute), "GET", "/phpmyadmin/index.php", 404, "203.0.113.30"),
+		adminAccessEvent("evt-admin-ajax", now.Add(21*time.Minute), "POST", "/wp-admin/admin-ajax.php", 200, "203.0.113.40"),
+		adminAccessEvent("evt-unknown-fail-1", now.Add(22*time.Minute), "GET", "/wp-admin/", 403, ""),
+		adminAccessEvent("evt-unknown-fail-2", now.Add(23*time.Minute), "GET", "/wp-admin/", 403, ""),
+		adminAccessEvent("evt-unknown-fail-3", now.Add(24*time.Minute), "GET", "/wp-admin/", 403, ""),
+		adminAccessEvent("evt-unknown-success", now.Add(25*time.Minute), "POST", "/wp-login.php", 302, ""),
+	}
+
+	chains := correlateTimelineEvents(events, 30*time.Minute)
+	byRule := map[string]CorrelationChain{}
+	for _, chain := range chains {
+		byRule[chain.RuleID] = chain
+	}
+	for _, ruleID := range []string{
+		"web-admin-success-after-failures",
+		"web-admin-login-post-burst",
+		"web-admin-tool-probe",
+	} {
+		if _, ok := byRule[ruleID]; !ok {
+			t.Fatalf("chains = %#v, missing %s", chains, ruleID)
+		}
+	}
+	if _, ok := byRule["web-admin-failed-request-burst"]; ok {
+		t.Fatalf("chains = %#v, failure burst should be suppressed by success-after-failures", chains)
+	}
+	if len(chains) != 3 {
+		t.Fatalf("chains = %#v, want three admin request anomaly findings", chains)
+	}
+	if byRule["web-admin-success-after-failures"].Severity != domain.SeverityHigh ||
+		byRule["web-admin-success-after-failures"].Confidence != domain.ConfidenceMedium {
+		t.Fatalf("success chain = %#v, want high/medium", byRule["web-admin-success-after-failures"])
+	}
+	if len(byRule["web-admin-login-post-burst"].Events) != 5 {
+		t.Fatalf("login post burst = %#v, want five events", byRule["web-admin-login-post-burst"])
+	}
+	for _, event := range byRule["web-admin-success-after-failures"].Events {
+		if strings.Contains(event.Target, "?") {
+			t.Fatalf("success chain event target = %q, want query string redacted", event.Target)
+		}
+	}
+}
+
 func TestListTimelineEventsResolvesEnvironmentAndOptionalApp(t *testing.T) {
 	inventory := newMemoryInventoryRepository()
 	ingest := &memoryIngestRepository{}
@@ -433,6 +488,24 @@ func (r *memoryHubFindingRepository) GetHubFinding(ctx context.Context, findingI
 		return finding, nil
 	}
 	return domain.HubFinding{}, fmt.Errorf("finding %q was not found", findingID)
+}
+
+func adminAccessEvent(id string, eventTime time.Time, method string, path string, status int, remoteAddr string) domain.TimelineEvent {
+	return domain.TimelineEvent{
+		ID:        domain.ID(id),
+		HostSlug:  "web-01",
+		EventTime: eventTime,
+		EventType: "log.access",
+		Target:    "access.log",
+		Severity:  domain.SeverityInfo,
+		Message:   fmt.Sprintf("HTTP %d %s %s", status, method, path),
+		Payload: map[string]any{
+			"method":      method,
+			"path":        path,
+			"status_code": status,
+			"remote_addr": remoteAddr,
+		},
+	}
 }
 
 func (r *memoryHubFindingRepository) UpdateHubFindingStatus(ctx context.Context, findingID domain.ID, environmentID domain.ID, update domain.HubFindingStatusUpdate) (domain.HubFinding, error) {
