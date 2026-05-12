@@ -1,0 +1,245 @@
+package httpadapter
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/rcooler/aegrail/internal/domain"
+	hubapp "github.com/rcooler/aegrail/internal/hub"
+)
+
+func TestHubRouterListsInventoryTopology(t *testing.T) {
+	repo := newHTTPTestInventoryRepository()
+	router := NewHubRouter(domain.AppMeta{Name: "Aegrail", Binary: "aegrail", Version: "test"}, hubapp.New(hubapp.Dependencies{Inventory: repo}), HubOptions{})
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/inventory/topology?org=acme&project=customer-site&environment=production", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Counts map[string]int `json:"counts"`
+		Apps   []struct {
+			Slug string `json:"slug"`
+			Kind string `json:"kind"`
+		} `json:"apps"`
+		Services []struct {
+			Slug string `json:"slug"`
+			Role string `json:"role"`
+		} `json:"services"`
+		Hosts []struct {
+			Slug   string            `json:"slug"`
+			Labels map[string]string `json:"labels"`
+		} `json:"hosts"`
+		Agents []struct {
+			AgentID string `json:"agent_id"`
+		} `json:"agents"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("Decode returned error: %v", err)
+	}
+	if body.Counts["apps"] != 1 || body.Counts["services"] != 1 || body.Counts["hosts"] != 1 || body.Counts["agents"] != 1 {
+		t.Fatalf("counts = %#v, want one app/service/host/agent", body.Counts)
+	}
+	if body.Apps[0].Slug != "main-web" || body.Apps[0].Kind != "wordpress" {
+		t.Fatalf("apps = %#v", body.Apps)
+	}
+	if body.Services[0].Slug != "frontend" || body.Services[0].Role != "web" {
+		t.Fatalf("services = %#v", body.Services)
+	}
+	if body.Hosts[0].Slug != "web-01" || body.Hosts[0].Labels["pool"] != "blue" {
+		t.Fatalf("hosts = %#v", body.Hosts)
+	}
+	if body.Agents[0].AgentID != "agt_web_01" {
+		t.Fatalf("agents = %#v", body.Agents)
+	}
+}
+
+func TestHubRouterListsAgentsForHost(t *testing.T) {
+	repo := newHTTPTestInventoryRepository()
+	router := NewHubRouter(domain.AppMeta{Name: "Aegrail", Binary: "aegrail", Version: "test"}, hubapp.New(hubapp.Dependencies{Inventory: repo}), HubOptions{})
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/inventory/agents?org=acme&project=customer-site&environment=production&host=web-01", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Count  int `json:"count"`
+		Agents []struct {
+			AgentID     string `json:"agent_id"`
+			Fingerprint string `json:"fingerprint"`
+		} `json:"agents"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("Decode returned error: %v", err)
+	}
+	if body.Count != 1 || body.Agents[0].AgentID != "agt_web_01" || body.Agents[0].Fingerprint != "SHA256:test" {
+		t.Fatalf("body = %#v, want web-01 agent", body)
+	}
+}
+
+type httpTestInventoryRepository struct {
+	org         domain.Organization
+	project     domain.Project
+	environment domain.Environment
+	apps        []domain.MonitoredApp
+	services    map[domain.ID][]domain.Service
+	hosts       []domain.Host
+	agents      map[domain.ID][]domain.Agent
+}
+
+func newHTTPTestInventoryRepository() *httpTestInventoryRepository {
+	now := time.Date(2026, 5, 12, 17, 0, 0, 0, time.UTC)
+	org := domain.Organization{ID: "org-1", Slug: "acme", Name: "Acme", CreatedAt: now, UpdatedAt: now}
+	project := domain.Project{ID: "project-1", OrganizationID: org.ID, Slug: "customer-site", Name: "Customer Site", CreatedAt: now, UpdatedAt: now}
+	environment := domain.Environment{ID: "env-1", ProjectID: project.ID, Slug: "production", Name: "Production", CreatedAt: now, UpdatedAt: now}
+	app := domain.MonitoredApp{ID: "app-1", EnvironmentID: environment.ID, Slug: "main-web", Name: "Main Web", Kind: "wordpress", CreatedAt: now, UpdatedAt: now}
+	service := domain.Service{ID: "service-1", AppID: app.ID, Slug: "frontend", Name: "Frontend", Role: "web", CreatedAt: now, UpdatedAt: now}
+	host := domain.Host{ID: "host-1", EnvironmentID: environment.ID, Slug: "web-01", Hostname: "web-01", Region: "eu-central", Labels: map[string]string{"pool": "blue"}, CreatedAt: now, UpdatedAt: now}
+	lastSeen := now
+	agent := domain.Agent{ID: "agent-1", HostID: host.ID, AgentID: "agt_web_01", Fingerprint: "SHA256:test", Version: "test", LastSeenAt: &lastSeen, CreatedAt: now, UpdatedAt: now}
+	return &httpTestInventoryRepository{
+		org:         org,
+		project:     project,
+		environment: environment,
+		apps:        []domain.MonitoredApp{app},
+		services:    map[domain.ID][]domain.Service{app.ID: {service}},
+		hosts:       []domain.Host{host},
+		agents:      map[domain.ID][]domain.Agent{host.ID: {agent}},
+	}
+}
+
+func (r *httpTestInventoryRepository) SaveOrganization(ctx context.Context, organization domain.Organization) (domain.Organization, error) {
+	return organization, nil
+}
+
+func (r *httpTestInventoryRepository) ListOrganizations(ctx context.Context) ([]domain.Organization, error) {
+	return []domain.Organization{r.org}, nil
+}
+
+func (r *httpTestInventoryRepository) FindOrganizationBySlug(ctx context.Context, slug string) (domain.Organization, bool, error) {
+	return r.org, slug == r.org.Slug, nil
+}
+
+func (r *httpTestInventoryRepository) SaveProject(ctx context.Context, project domain.Project) (domain.Project, error) {
+	return project, nil
+}
+
+func (r *httpTestInventoryRepository) ListProjects(ctx context.Context, organizationID domain.ID) ([]domain.Project, error) {
+	if organizationID != r.org.ID {
+		return nil, nil
+	}
+	return []domain.Project{r.project}, nil
+}
+
+func (r *httpTestInventoryRepository) FindProjectBySlug(ctx context.Context, organizationID domain.ID, slug string) (domain.Project, bool, error) {
+	return r.project, organizationID == r.org.ID && slug == r.project.Slug, nil
+}
+
+func (r *httpTestInventoryRepository) SaveEnvironment(ctx context.Context, environment domain.Environment) (domain.Environment, error) {
+	return environment, nil
+}
+
+func (r *httpTestInventoryRepository) ListEnvironments(ctx context.Context, projectID domain.ID) ([]domain.Environment, error) {
+	if projectID != r.project.ID {
+		return nil, nil
+	}
+	return []domain.Environment{r.environment}, nil
+}
+
+func (r *httpTestInventoryRepository) FindEnvironmentBySlug(ctx context.Context, projectID domain.ID, slug string) (domain.Environment, bool, error) {
+	return r.environment, projectID == r.project.ID && slug == r.environment.Slug, nil
+}
+
+func (r *httpTestInventoryRepository) SaveMonitoredApp(ctx context.Context, app domain.MonitoredApp) (domain.MonitoredApp, error) {
+	return app, nil
+}
+
+func (r *httpTestInventoryRepository) ListMonitoredApps(ctx context.Context, environmentID domain.ID) ([]domain.MonitoredApp, error) {
+	if environmentID != r.environment.ID {
+		return nil, nil
+	}
+	return append([]domain.MonitoredApp(nil), r.apps...), nil
+}
+
+func (r *httpTestInventoryRepository) FindMonitoredAppBySlug(ctx context.Context, environmentID domain.ID, slug string) (domain.MonitoredApp, bool, error) {
+	for _, app := range r.apps {
+		if app.EnvironmentID == environmentID && app.Slug == slug {
+			return app, true, nil
+		}
+	}
+	return domain.MonitoredApp{}, false, nil
+}
+
+func (r *httpTestInventoryRepository) SaveService(ctx context.Context, service domain.Service) (domain.Service, error) {
+	return service, nil
+}
+
+func (r *httpTestInventoryRepository) ListServices(ctx context.Context, appID domain.ID) ([]domain.Service, error) {
+	return append([]domain.Service(nil), r.services[appID]...), nil
+}
+
+func (r *httpTestInventoryRepository) FindServiceBySlug(ctx context.Context, appID domain.ID, slug string) (domain.Service, bool, error) {
+	for _, service := range r.services[appID] {
+		if service.Slug == slug {
+			return service, true, nil
+		}
+	}
+	return domain.Service{}, false, nil
+}
+
+func (r *httpTestInventoryRepository) SaveHost(ctx context.Context, host domain.Host) (domain.Host, error) {
+	return host, nil
+}
+
+func (r *httpTestInventoryRepository) ListHosts(ctx context.Context, environmentID domain.ID) ([]domain.Host, error) {
+	if environmentID != r.environment.ID {
+		return nil, nil
+	}
+	return append([]domain.Host(nil), r.hosts...), nil
+}
+
+func (r *httpTestInventoryRepository) FindHostBySlug(ctx context.Context, environmentID domain.ID, slug string) (domain.Host, bool, error) {
+	for _, host := range r.hosts {
+		if host.EnvironmentID == environmentID && host.Slug == slug {
+			return host, true, nil
+		}
+	}
+	return domain.Host{}, false, nil
+}
+
+func (r *httpTestInventoryRepository) SaveAgent(ctx context.Context, agent domain.Agent) (domain.Agent, error) {
+	return agent, nil
+}
+
+func (r *httpTestInventoryRepository) ListAgents(ctx context.Context, hostID domain.ID) ([]domain.Agent, error) {
+	return append([]domain.Agent(nil), r.agents[hostID]...), nil
+}
+
+func (r *httpTestInventoryRepository) FindAgentByAgentID(ctx context.Context, agentID string) (domain.Agent, bool, error) {
+	for _, agents := range r.agents {
+		for _, agent := range agents {
+			if agent.AgentID == agentID {
+				return agent, true, nil
+			}
+		}
+	}
+	return domain.Agent{}, false, nil
+}
+
+func (r *httpTestInventoryRepository) SaveDeploymentMarker(ctx context.Context, marker domain.DeploymentMarker) (domain.DeploymentMarker, error) {
+	return marker, nil
+}
+
+func (r *httpTestInventoryRepository) ListDeploymentMarkers(ctx context.Context, environmentID domain.ID, appID domain.ID) ([]domain.DeploymentMarker, error) {
+	return nil, nil
+}

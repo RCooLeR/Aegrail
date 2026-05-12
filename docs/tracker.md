@@ -113,11 +113,11 @@ Last updated: 2026-05-12
 ## Phase 5: Hub API And Dashboard
 
 - [x] Document dashboard information architecture and API direction.
-- [ ] Add Hub read API for inventory.
+- [x] Add Hub read API for inventory.
 - [x] Add Hub read API for events/timeline.
 - [x] Add Hub read API for findings.
 - [x] Add Hub read API for config coverage.
-- [ ] Add Hub read API for agents.
+- [x] Add Hub read API for agents.
 - [ ] Add Hub read API for deployments.
 - [ ] Add Hub read API for browser script observations.
 - [ ] Create `dashboard/` TypeScript React Bootstrap app.

@@ -58,6 +58,11 @@ func NewHubRouter(meta domain.AppMeta, hub *hubapp.Hub, options HubOptions) http
 	router.Get("/api/v1/findings", listFindingsHandler(hub))
 	router.Get("/api/v1/timeline", listTimelineHandler(hub))
 	router.Get("/api/v1/coverage", listCoverageHandler(hub))
+	router.Get("/api/v1/inventory/apps", listInventoryAppsHandler(hub))
+	router.Get("/api/v1/inventory/services", listInventoryServicesHandler(hub))
+	router.Get("/api/v1/inventory/hosts", listInventoryHostsHandler(hub))
+	router.Get("/api/v1/inventory/agents", listInventoryAgentsHandler(hub))
+	router.Get("/api/v1/inventory/topology", listInventoryTopologyHandler(hub))
 	return router
 }
 
@@ -119,6 +124,46 @@ type configCoverageResponse struct {
 	CoverageLevel   string            `json:"coverage_level"`
 	Labels          map[string]string `json:"labels"`
 	Payload         map[string]any    `json:"payload"`
+}
+
+type monitoredAppResponse struct {
+	ID        string    `json:"id"`
+	Slug      string    `json:"slug"`
+	Name      string    `json:"name"`
+	Kind      string    `json:"kind"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type serviceResponse struct {
+	ID        string    `json:"id"`
+	AppID     string    `json:"app_id"`
+	Slug      string    `json:"slug"`
+	Name      string    `json:"name"`
+	Role      string    `json:"role"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type hostResponse struct {
+	ID        string            `json:"id"`
+	Slug      string            `json:"slug"`
+	Hostname  string            `json:"hostname"`
+	Region    string            `json:"region,omitempty"`
+	Labels    map[string]string `json:"labels"`
+	CreatedAt time.Time         `json:"created_at"`
+	UpdatedAt time.Time         `json:"updated_at"`
+}
+
+type agentResponse struct {
+	ID          string     `json:"id"`
+	HostID      string     `json:"host_id"`
+	AgentID     string     `json:"agent_id"`
+	Fingerprint string     `json:"fingerprint"`
+	Version     string     `json:"version,omitempty"`
+	LastSeenAt  *time.Time `json:"last_seen_at,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
 type ingestEventsRequest struct {
@@ -301,6 +346,158 @@ func listCoverageHandler(hub *hubapp.Hub) http.HandlerFunc {
 	}
 }
 
+func listInventoryAppsHandler(hub *hubapp.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		apps, err := hub.ListMonitoredApps(r.Context(), r.URL.Query().Get("org"), r.URL.Query().Get("project"), r.URL.Query().Get("environment"))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		records := make([]monitoredAppResponse, 0, len(apps))
+		for _, app := range apps {
+			records = append(records, monitoredAppRecord(app))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"count": len(records),
+			"apps":  records,
+		})
+	}
+}
+
+func listInventoryServicesHandler(hub *hubapp.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		services, err := hub.ListServices(r.Context(), r.URL.Query().Get("org"), r.URL.Query().Get("project"), r.URL.Query().Get("environment"), r.URL.Query().Get("app"))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		records := make([]serviceResponse, 0, len(services))
+		for _, service := range services {
+			records = append(records, serviceRecord(service))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"count":    len(records),
+			"services": records,
+		})
+	}
+}
+
+func listInventoryHostsHandler(hub *hubapp.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		hosts, err := hub.ListHosts(r.Context(), r.URL.Query().Get("org"), r.URL.Query().Get("project"), r.URL.Query().Get("environment"))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		records := make([]hostResponse, 0, len(hosts))
+		for _, host := range hosts {
+			records = append(records, hostRecord(host))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"count": len(records),
+			"hosts": records,
+		})
+	}
+}
+
+func listInventoryAgentsHandler(hub *hubapp.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		agents, err := hub.ListAgents(r.Context(), r.URL.Query().Get("org"), r.URL.Query().Get("project"), r.URL.Query().Get("environment"), r.URL.Query().Get("host"))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		records := make([]agentResponse, 0, len(agents))
+		for _, agent := range agents {
+			records = append(records, agentRecord(agent))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"count":  len(records),
+			"agents": records,
+		})
+	}
+}
+
+func listInventoryTopologyHandler(hub *hubapp.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		org := r.URL.Query().Get("org")
+		project := r.URL.Query().Get("project")
+		environment := r.URL.Query().Get("environment")
+
+		apps, err := hub.ListMonitoredApps(r.Context(), org, project, environment)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		hosts, err := hub.ListHosts(r.Context(), org, project, environment)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		appRecords := make([]monitoredAppResponse, 0, len(apps))
+		serviceRecords := []serviceResponse{}
+		for _, app := range apps {
+			appRecords = append(appRecords, monitoredAppRecord(app))
+			services, err := hub.ListServices(r.Context(), org, project, environment, app.Slug)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			for _, service := range services {
+				serviceRecords = append(serviceRecords, serviceRecord(service))
+			}
+		}
+
+		hostRecords := make([]hostResponse, 0, len(hosts))
+		agentRecords := []agentResponse{}
+		for _, host := range hosts {
+			hostRecords = append(hostRecords, hostRecord(host))
+			agents, err := hub.ListAgents(r.Context(), org, project, environment, host.Slug)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			for _, agent := range agents {
+				agentRecords = append(agentRecords, agentRecord(agent))
+			}
+		}
+
+		writeJSON(w, http.StatusOK, map[string]any{
+			"counts": map[string]int{
+				"apps":     len(appRecords),
+				"services": len(serviceRecords),
+				"hosts":    len(hostRecords),
+				"agents":   len(agentRecords),
+			},
+			"apps":     appRecords,
+			"services": serviceRecords,
+			"hosts":    hostRecords,
+			"agents":   agentRecords,
+		})
+	}
+}
+
 func (r ingestEventsRequest) toInput(signature string) (hubapp.IngestEventsInput, error) {
 	events := make([]hubapp.IngestEventInput, 0, len(r.Events))
 	for _, event := range r.Events {
@@ -442,6 +639,54 @@ func configCoverageRecord(record hubapp.ConfigCoverageRecord) configCoverageResp
 		CoverageLevel:   record.CoverageLevel,
 		Labels:          nonNilResponseStringMap(record.Labels),
 		Payload:         nonNilResponseMap(record.Payload),
+	}
+}
+
+func monitoredAppRecord(app domain.MonitoredApp) monitoredAppResponse {
+	return monitoredAppResponse{
+		ID:        string(app.ID),
+		Slug:      app.Slug,
+		Name:      app.Name,
+		Kind:      app.Kind,
+		CreatedAt: app.CreatedAt,
+		UpdatedAt: app.UpdatedAt,
+	}
+}
+
+func serviceRecord(service domain.Service) serviceResponse {
+	return serviceResponse{
+		ID:        string(service.ID),
+		AppID:     string(service.AppID),
+		Slug:      service.Slug,
+		Name:      service.Name,
+		Role:      service.Role,
+		CreatedAt: service.CreatedAt,
+		UpdatedAt: service.UpdatedAt,
+	}
+}
+
+func hostRecord(host domain.Host) hostResponse {
+	return hostResponse{
+		ID:        string(host.ID),
+		Slug:      host.Slug,
+		Hostname:  host.Hostname,
+		Region:    host.Region,
+		Labels:    nonNilResponseStringMap(host.Labels),
+		CreatedAt: host.CreatedAt,
+		UpdatedAt: host.UpdatedAt,
+	}
+}
+
+func agentRecord(agent domain.Agent) agentResponse {
+	return agentResponse{
+		ID:          string(agent.ID),
+		HostID:      string(agent.HostID),
+		AgentID:     agent.AgentID,
+		Fingerprint: agent.Fingerprint,
+		Version:     agent.Version,
+		LastSeenAt:  agent.LastSeenAt,
+		CreatedAt:   agent.CreatedAt,
+		UpdatedAt:   agent.UpdatedAt,
 	}
 }
 

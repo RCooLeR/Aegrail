@@ -378,6 +378,7 @@ Current implementation:
 - Payloads include enabled collectors, file profiles, log kinds, database engines/profiles, browser crawl settings, and WordPress Multisite metadata.
 - Coverage levels are `none`, `partial`, `strong`, and `complete`.
 - The Hub exposes latest coverage records through `GET /api/v1/coverage`.
+- The Hub exposes monitored topology through `GET /api/v1/inventory/topology` plus granular apps, services, hosts, and agents endpoints.
 
 ## Implementation Steps
 
@@ -395,8 +396,9 @@ Done:
 10. Turn first-wave DB diff events into deterministic Hub findings.
 11. Add redacted entity-level snapshots for WordPress users/options/plugins/themes and PrestaShop employees/modules.
 12. Report config coverage to the Hub for dashboard views.
+13. Add Hub inventory read APIs for apps, services, hosts, agents, and topology.
 
 Next:
 
 1. Add exact cron, post, widget, builder-content, and PrestaShop configuration parsers.
-2. Add Hub inventory read APIs for agents, hosts, services, and apps.
+2. Add Hub deployment and browser-script read APIs for dashboard views.
