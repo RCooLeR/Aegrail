@@ -191,6 +191,7 @@ Initial entities:
 - `normalized_events`: canonical events from logs, DB snapshots, file scans, and git diffs.
 - `organizations`, `projects`, `environments`, `monitored_apps`, `services`, `hosts`, `agents`: distributed inventory for Hub deployments.
 - `deployment_markers`: release windows and deployment metadata for risk scoring.
+- `hub_findings`: distributed deterministic findings from Hub correlation and baseline workflows.
 - `snapshots`: named point-in-time captures for DB state, file inventory, module list, user list, config list.
 - `baseline_diffs`: comparison results between two snapshots.
 - `detected_findings`: deterministic rule and diff findings.
@@ -352,7 +353,8 @@ aegrail hub serve
 aegrail hub ingest event
 aegrail hub ingest batch list
 aegrail hub baseline compare-files
-aegrail hub correlate events
+aegrail hub correlate events --save
+aegrail hub findings list
 aegrail agent install
 aegrail agent start
 aegrail agent start --log /var/log/nginx/access.log

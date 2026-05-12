@@ -67,7 +67,7 @@ Responsibilities:
 - compare per-host and shared app baselines
 - understand deployment windows
 - run deterministic rules and baseline diffs
-- generate timelines, findings, alerts, and reports
+- persist deduplicated findings for timelines, alerts, reports, and later dashboard/API reads
 
 ### Dashboard / CLI
 
@@ -217,7 +217,8 @@ suspicious login activity -> file change on web-02 -> database privilege change 
 Current correlation command:
 
 ```powershell
-aegrail hub correlate events --org acme --project customer-site --env production --app main-web --since 24h --window 30m
+aegrail hub correlate events --org acme --project customer-site --env production --app main-web --since 24h --window 30m --save
+aegrail hub findings list --org acme --project customer-site --env production --app main-web
 ```
 
 The first deterministic correlation rules look for:
@@ -226,6 +227,8 @@ The first deterministic correlation rules look for:
 - high-signal file changes followed by sensitive database changes
 - high-signal file changes followed by persistence signals such as cron or service changes
 - a probable incident chain when those signals happen in sequence inside the selected window
+
+When `--save` is used, each chain becomes a `hub_findings` row keyed by environment, rule ID, and stable correlation dedupe key. Re-running the same correlation refreshes the finding instead of duplicating it.
 
 ## Implementation Phases
 
@@ -238,6 +241,7 @@ The first deterministic correlation rules look for:
 7. Add single-site inventory bootstrap for WordPress and PrestaShop.
 8. Add cross-host file observation comparison.
 9. Add first correlation rules across hosts, apps, services, and DB events.
+10. Persist and deduplicate Hub findings from deterministic correlation runs.
 
 Current signed ingest endpoint:
 

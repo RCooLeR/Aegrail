@@ -24,6 +24,7 @@ func hubCorrelationCommand(meta domain.AppMeta) *urfavecli.Command {
 					&urfavecli.StringFlag{Name: "since", Value: "24h", Usage: "lookback window such as 24h, 7d, or an RFC3339 timestamp"},
 					&urfavecli.DurationFlag{Name: "window", Value: 30 * time.Minute, Usage: "maximum time between correlated events"},
 					&urfavecli.IntFlag{Name: "limit", Value: 1000, Usage: "maximum timeline events to inspect"},
+					&urfavecli.BoolFlag{Name: "save", Usage: "save or refresh matching Hub findings"},
 				),
 				Action: func(c *urfavecli.Context) error {
 					since, err := parseLookback(c.String("since"), time.Now)
@@ -44,6 +45,7 @@ func hubCorrelationCommand(meta domain.AppMeta) *urfavecli.Command {
 						Since:            since,
 						Window:           c.Duration("window"),
 						Limit:            c.Int("limit"),
+						SaveFindings:     c.Bool("save"),
 					})
 					if err != nil {
 						return err
@@ -53,6 +55,9 @@ func hubCorrelationCommand(meta domain.AppMeta) *urfavecli.Command {
 						return nil
 					}
 
+					if c.Bool("save") {
+						fmt.Fprintf(c.App.Writer, "Saved or refreshed %d finding(s).\n", len(result.Findings))
+					}
 					writer := tabwriter.NewWriter(c.App.Writer, 0, 0, 2, ' ', 0)
 					fmt.Fprintln(writer, "CHAIN\tSEVERITY\tCONFIDENCE\tRULE\tEVENTS\tSUMMARY")
 					for index, chain := range result.Chains {

@@ -21,15 +21,19 @@ type CorrelateEventsInput struct {
 	Since            time.Time
 	Window           time.Duration
 	Limit            int
+	SaveFindings     bool
 }
 
 type CorrelateEventsResult struct {
-	Environment domain.Environment
-	App         domain.MonitoredApp
-	Since       time.Time
-	Window      time.Duration
-	Events      int
-	Chains      []CorrelationChain
+	Organization domain.Organization
+	Project      domain.Project
+	Environment  domain.Environment
+	App          domain.MonitoredApp
+	Since        time.Time
+	Window       time.Duration
+	Events       int
+	Chains       []CorrelationChain
+	Findings     []domain.HubFinding
 }
 
 type CorrelationChain struct {
@@ -52,6 +56,8 @@ type CorrelationEvent struct {
 	Message   string
 }
 
+const correlationRuleVersion = "2026-05-12.1"
+
 func (h *Hub) CorrelateEvents(ctx context.Context, input CorrelateEventsInput) (CorrelateEventsResult, error) {
 	if h.ingest == nil {
 		return CorrelateEventsResult{}, errors.New("ingest repository is not configured")
@@ -59,7 +65,7 @@ func (h *Hub) CorrelateEvents(ctx context.Context, input CorrelateEventsInput) (
 	if err := h.requireInventory(); err != nil {
 		return CorrelateEventsResult{}, err
 	}
-	environment, err := h.resolveEnvironmentPath(ctx, input.OrganizationSlug, input.ProjectSlug, input.EnvironmentSlug)
+	org, project, environment, err := h.resolveEnvironmentContext(ctx, input.OrganizationSlug, input.ProjectSlug, input.EnvironmentSlug)
 	if err != nil {
 		return CorrelateEventsResult{}, err
 	}
@@ -82,13 +88,26 @@ func (h *Hub) CorrelateEvents(ctx context.Context, input CorrelateEventsInput) (
 		return CorrelateEventsResult{}, err
 	}
 	chains := correlateTimelineEvents(events, window)
+	findings := correlationFindings(org, project, environment, app, chains)
+	if input.SaveFindings && len(findings) > 0 {
+		if h.findings == nil {
+			return CorrelateEventsResult{}, errors.New("finding repository is not configured")
+		}
+		findings, err = h.findings.SaveHubFindings(ctx, findings)
+		if err != nil {
+			return CorrelateEventsResult{}, err
+		}
+	}
 	return CorrelateEventsResult{
-		Environment: environment,
-		App:         app,
-		Since:       input.Since,
-		Window:      window,
-		Events:      len(events),
-		Chains:      chains,
+		Organization: org,
+		Project:      project,
+		Environment:  environment,
+		App:          app,
+		Since:        input.Since,
+		Window:       window,
+		Events:       len(events),
+		Chains:       chains,
+		Findings:     findings,
 	}, nil
 }
 
@@ -364,4 +383,62 @@ func payloadInt(payload map[string]any, key string) int {
 func sha256Short(value string) string {
 	sum := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(sum[:])[:24]
+}
+
+func correlationFindings(org domain.Organization, project domain.Project, environment domain.Environment, app domain.MonitoredApp, chains []CorrelationChain) []domain.HubFinding {
+	findings := make([]domain.HubFinding, 0, len(chains))
+	for _, chain := range chains {
+		if len(chain.Events) == 0 {
+			continue
+		}
+		eventIDs := make([]domain.ID, 0, len(chain.Events))
+		for _, event := range chain.Events {
+			if event.EventID != "" {
+				eventIDs = append(eventIDs, event.EventID)
+			}
+		}
+		findings = append(findings, domain.HubFinding{
+			OrganizationID: org.ID,
+			ProjectID:      project.ID,
+			EnvironmentID:  environment.ID,
+			AppID:          app.ID,
+			RuleID:         chain.RuleID,
+			RuleVersion:    correlationRuleVersion,
+			DedupeKey:      chain.ID,
+			Severity:       chain.Severity,
+			Confidence:     chain.Confidence,
+			Title:          chain.Title,
+			Summary:        chain.Summary,
+			Description:    correlationDescription(chain),
+			EventIDs:       eventIDs,
+			FirstEventAt:   chain.Events[0].EventTime,
+			LastEventAt:    chain.Events[len(chain.Events)-1].EventTime,
+			Metadata:       correlationMetadata(chain),
+		})
+	}
+	return findings
+}
+
+func correlationDescription(chain CorrelationChain) string {
+	return fmt.Sprintf("Aegrail correlated %d timeline event(s): %s", len(chain.Events), chain.Summary)
+}
+
+func correlationMetadata(chain CorrelationChain) map[string]any {
+	events := make([]map[string]any, 0, len(chain.Events))
+	for _, event := range chain.Events {
+		events = append(events, map[string]any{
+			"event_id":   string(event.EventID),
+			"event_time": event.EventTime.Format(time.RFC3339Nano),
+			"host":       event.HostSlug,
+			"type":       event.EventType,
+			"target":     event.Target,
+			"severity":   string(event.Severity),
+			"message":    event.Message,
+		})
+	}
+	return map[string]any{
+		"chain_id": chain.ID,
+		"source":   "hub.correlation",
+		"events":   events,
+	}
 }

@@ -14,17 +14,20 @@ import (
 type Hub struct {
 	inventory ports.InventoryRepository
 	ingest    ports.IngestRepository
+	findings  ports.HubFindingRepository
 }
 
 type Dependencies struct {
 	Inventory ports.InventoryRepository
 	Ingest    ports.IngestRepository
+	Findings  ports.HubFindingRepository
 }
 
 func New(deps Dependencies) *Hub {
 	return &Hub{
 		inventory: deps.Inventory,
 		ingest:    deps.Ingest,
+		findings:  deps.Findings,
 	}
 }
 
@@ -376,22 +379,41 @@ func (h *Hub) resolveProjectPath(ctx context.Context, organizationSlug string, p
 }
 
 func (h *Hub) resolveEnvironmentPath(ctx context.Context, organizationSlug string, projectSlug string, environmentSlug string) (domain.Environment, error) {
-	project, err := h.resolveProjectPath(ctx, organizationSlug, projectSlug)
+	_, _, environment, err := h.resolveEnvironmentContext(ctx, organizationSlug, projectSlug, environmentSlug)
 	if err != nil {
 		return domain.Environment{}, err
+	}
+	return environment, nil
+}
+
+func (h *Hub) resolveEnvironmentContext(ctx context.Context, organizationSlug string, projectSlug string, environmentSlug string) (domain.Organization, domain.Project, domain.Environment, error) {
+	org, err := h.resolveOrganization(ctx, organizationSlug)
+	if err != nil {
+		return domain.Organization{}, domain.Project{}, domain.Environment{}, err
+	}
+	projectSlug, err = domain.NormalizeSlug("project", projectSlug)
+	if err != nil {
+		return domain.Organization{}, domain.Project{}, domain.Environment{}, err
+	}
+	project, ok, err := h.inventory.FindProjectBySlug(ctx, org.ID, projectSlug)
+	if err != nil {
+		return domain.Organization{}, domain.Project{}, domain.Environment{}, err
+	}
+	if !ok {
+		return domain.Organization{}, domain.Project{}, domain.Environment{}, fmt.Errorf("project %q does not exist in organization %q", projectSlug, org.Slug)
 	}
 	slug, err := domain.NormalizeSlug("environment", environmentSlug)
 	if err != nil {
-		return domain.Environment{}, err
+		return domain.Organization{}, domain.Project{}, domain.Environment{}, err
 	}
 	environment, ok, err := h.inventory.FindEnvironmentBySlug(ctx, project.ID, slug)
 	if err != nil {
-		return domain.Environment{}, err
+		return domain.Organization{}, domain.Project{}, domain.Environment{}, err
 	}
 	if !ok {
-		return domain.Environment{}, fmt.Errorf("environment %q does not exist in project %q", slug, project.Slug)
+		return domain.Organization{}, domain.Project{}, domain.Environment{}, fmt.Errorf("environment %q does not exist in project %q", slug, project.Slug)
 	}
-	return environment, nil
+	return org, project, environment, nil
 }
 
 func (h *Hub) resolveAppPath(ctx context.Context, organizationSlug string, projectSlug string, environmentSlug string, appSlug string) (domain.MonitoredApp, error) {

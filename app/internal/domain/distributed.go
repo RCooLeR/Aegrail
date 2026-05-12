@@ -95,3 +95,25 @@ type DeploymentMarker struct {
 	FinishedAt    *time.Time
 	CreatedAt     time.Time
 }
+
+type HubFinding struct {
+	ID             ID
+	OrganizationID ID
+	ProjectID      ID
+	EnvironmentID  ID
+	AppID          ID
+	RuleID         string
+	RuleVersion    string
+	DedupeKey      string
+	Severity       Severity
+	Confidence     Confidence
+	Title          string
+	Summary        string
+	Description    string
+	EventIDs       []ID
+	FirstEventAt   time.Time
+	LastEventAt    time.Time
+	Metadata       map[string]any
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}

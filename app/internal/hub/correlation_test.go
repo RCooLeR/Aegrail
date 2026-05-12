@@ -2,6 +2,7 @@ package hub
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -117,4 +118,168 @@ func TestCorrelateEventsBuildsProbableIncidentChain(t *testing.T) {
 	if len(chain.Events) != 3 {
 		t.Fatalf("chain events = %#v, want 3", chain.Events)
 	}
+}
+
+func TestCorrelateEventsSavesAndDeduplicatesFindings(t *testing.T) {
+	inventory := newMemoryInventoryRepository()
+	ingest := &memoryIngestRepository{}
+	findings := newMemoryHubFindingRepository()
+	hub := New(Dependencies{Inventory: inventory, Ingest: ingest, Findings: findings})
+	ctx := context.Background()
+
+	if _, err := hub.SaveOrganization(ctx, SaveOrganizationInput{Slug: "acme"}); err != nil {
+		t.Fatalf("SaveOrganization returned error: %v", err)
+	}
+	if _, err := hub.SaveProject(ctx, SaveProjectInput{OrganizationSlug: "acme", Slug: "customer-site"}); err != nil {
+		t.Fatalf("SaveProject returned error: %v", err)
+	}
+	environment, err := hub.SaveEnvironment(ctx, SaveEnvironmentInput{OrganizationSlug: "acme", ProjectSlug: "customer-site", Slug: "production"})
+	if err != nil {
+		t.Fatalf("SaveEnvironment returned error: %v", err)
+	}
+	app, err := hub.SaveMonitoredApp(ctx, SaveMonitoredAppInput{OrganizationSlug: "acme", ProjectSlug: "customer-site", EnvironmentSlug: "production", Slug: "main-web", Kind: "wordpress"})
+	if err != nil {
+		t.Fatalf("SaveMonitoredApp returned error: %v", err)
+	}
+	host, err := hub.SaveHost(ctx, SaveHostInput{OrganizationSlug: "acme", ProjectSlug: "customer-site", EnvironmentSlug: "production", Slug: "web-02"})
+	if err != nil {
+		t.Fatalf("SaveHost returned error: %v", err)
+	}
+	agent, err := hub.SaveAgent(ctx, SaveAgentInput{OrganizationSlug: "acme", ProjectSlug: "customer-site", EnvironmentSlug: "production", HostSlug: "web-02", AgentID: "agt_web_02", Fingerprint: "SHA256:test"})
+	if err != nil {
+		t.Fatalf("SaveAgent returned error: %v", err)
+	}
+
+	now := time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
+	ingest.timelineEvents = []domain.TimelineEvent{
+		{
+			ID:              "evt-login",
+			EnvironmentID:   environment.ID,
+			AppID:           app.ID,
+			HostID:          host.ID,
+			HostSlug:        "web-02",
+			AgentID:         agent.ID,
+			AgentExternalID: "agt_web_02",
+			EventTime:       now,
+			EventType:       "log.access",
+			Target:          "/wp-login.php",
+			Severity:        domain.SeverityInfo,
+			Payload: map[string]any{
+				"path":        "/wp-login.php",
+				"status_code": 200,
+			},
+		},
+		{
+			ID:              "evt-file",
+			EnvironmentID:   environment.ID,
+			AppID:           app.ID,
+			HostID:          host.ID,
+			HostSlug:        "web-02",
+			AgentID:         agent.ID,
+			AgentExternalID: "agt_web_02",
+			EventTime:       now.Add(4 * time.Minute),
+			EventType:       "file.created",
+			Target:          "/var/www/wp-content/uploads/avatar.php",
+			Severity:        domain.SeverityHigh,
+			Payload: map[string]any{
+				"relative_path": "wp-content/uploads/avatar.php",
+			},
+		},
+		{
+			ID:              "evt-db",
+			EnvironmentID:   environment.ID,
+			AppID:           app.ID,
+			HostID:          host.ID,
+			HostSlug:        "db-01",
+			AgentID:         agent.ID,
+			AgentExternalID: "agt_db_01",
+			EventTime:       now.Add(8 * time.Minute),
+			EventType:       "db.role_changed",
+			Target:          "users:42",
+			Severity:        domain.SeverityHigh,
+			Message:         "role changed from editor to admin",
+			Payload:         map[string]any{},
+		},
+	}
+
+	input := CorrelateEventsInput{
+		OrganizationSlug: "acme",
+		ProjectSlug:      "customer-site",
+		EnvironmentSlug:  "production",
+		AppSlug:          "main-web",
+		Since:            now.Add(-time.Hour),
+		Window:           30 * time.Minute,
+		SaveFindings:     true,
+	}
+	result, err := hub.CorrelateEvents(ctx, input)
+	if err != nil {
+		t.Fatalf("CorrelateEvents returned error: %v", err)
+	}
+	if len(result.Findings) != 1 {
+		t.Fatalf("saved findings = %#v, want 1", result.Findings)
+	}
+	if result.Findings[0].RuleID != "probable-incident-chain" || result.Findings[0].DedupeKey == "" {
+		t.Fatalf("saved finding = %#v", result.Findings[0])
+	}
+
+	if _, err := hub.CorrelateEvents(ctx, input); err != nil {
+		t.Fatalf("second CorrelateEvents returned error: %v", err)
+	}
+	stored, err := hub.ListHubFindings(ctx, ListHubFindingsInput{
+		OrganizationSlug: "acme",
+		ProjectSlug:      "customer-site",
+		EnvironmentSlug:  "production",
+		AppSlug:          "main-web",
+	})
+	if err != nil {
+		t.Fatalf("ListHubFindings returned error: %v", err)
+	}
+	if len(stored) != 1 {
+		t.Fatalf("stored findings = %#v, want one deduplicated row", stored)
+	}
+	if got, want := len(stored[0].EventIDs), 3; got != want {
+		t.Fatalf("stored event ids = %d, want %d", got, want)
+	}
+}
+
+type memoryHubFindingRepository struct {
+	byKey map[string]domain.HubFinding
+}
+
+func newMemoryHubFindingRepository() *memoryHubFindingRepository {
+	return &memoryHubFindingRepository{byKey: map[string]domain.HubFinding{}}
+}
+
+func (r *memoryHubFindingRepository) SaveHubFindings(ctx context.Context, findings []domain.HubFinding) ([]domain.HubFinding, error) {
+	saved := make([]domain.HubFinding, 0, len(findings))
+	now := time.Now().UTC()
+	for _, finding := range findings {
+		key := string(finding.EnvironmentID) + ":" + finding.RuleID + ":" + finding.DedupeKey
+		existing, ok := r.byKey[key]
+		if ok {
+			finding.ID = existing.ID
+			finding.CreatedAt = existing.CreatedAt
+		} else {
+			finding.ID = domain.ID(fmt.Sprintf("finding-%d", len(r.byKey)+1))
+			finding.CreatedAt = now
+		}
+		finding.UpdatedAt = now
+		r.byKey[key] = finding
+		saved = append(saved, finding)
+	}
+	return saved, nil
+}
+
+func (r *memoryHubFindingRepository) ListHubFindings(ctx context.Context, environmentID domain.ID, appID domain.ID, limit int) ([]domain.HubFinding, error) {
+	var findings []domain.HubFinding
+	for _, finding := range r.byKey {
+		if finding.EnvironmentID != environmentID {
+			continue
+		}
+		if appID != "" && finding.AppID != appID {
+			continue
+		}
+		findings = append(findings, finding)
+	}
+	return findings, nil
 }

@@ -66,6 +66,7 @@ Last updated: 2026-05-12
 - [x] DB-013 Add distributed inventory tables.
 - [x] DB-014 Add deployment marker tables.
 - [x] DB-015 Add Hub ingest event batch tables.
+- [x] DB-016 Add distributed Hub findings table.
 
 ## Agent And Hub
 
@@ -89,6 +90,7 @@ Last updated: 2026-05-12
 - [x] AH-018 Add log tail watcher loop for web and PHP logs.
 - [x] AH-019 Add inventory bootstrap helper for common single-site WordPress/PrestaShop deployments.
 - [x] AH-020 Add structured Nginx, Apache, and PHP log parsers on top of tailed log events.
+- [x] AH-021 Persist and list deduplicated Hub correlation findings.
 
 ## Evidence Import
 
@@ -155,8 +157,8 @@ Last updated: 2026-05-12
 
 - [ ] R-001 Define rule interface and registry.
 - [ ] R-002 Define versioned rule metadata.
-- [ ] R-003 Store deterministic findings.
-- [ ] R-004 Deduplicate findings across repeated runs.
+- [x] R-003 Store deterministic findings.
+- [x] R-004 Deduplicate findings across repeated runs.
 - [ ] R-005 Add generic suspicious path rules.
 - [ ] R-006 Add admin request anomaly rules.
 - [ ] R-007 Add traffic spike rules.

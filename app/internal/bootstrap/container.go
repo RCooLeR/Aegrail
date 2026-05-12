@@ -69,6 +69,7 @@ func (c *Container) ConnectDatabase(ctx context.Context) error {
 	c.Hub = hub.New(hub.Dependencies{
 		Inventory: postgres.NewInventoryRepository(pool),
 		Ingest:    postgres.NewIngestRepository(pool),
+		Findings:  postgres.NewHubFindingRepository(pool),
 	})
 	return nil
 }

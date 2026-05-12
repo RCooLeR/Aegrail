@@ -150,6 +150,7 @@ Deliverables:
 - Rule registry.
 - Rule metadata: ID, name, version, severity, confidence, tags.
 - Rule result model with evidence refs and recommended next checks.
+- Hub findings persistence for deterministic correlation chains.
 - Generic rules for suspicious paths, admin requests, login anomalies, webshell filenames, and traffic spikes.
 - Risk scoring service that combines rule severity, confidence, and evidence count.
 
@@ -158,6 +159,11 @@ Exit criteria:
 - Rules can be run by site and time window.
 - Findings are deduplicated across repeated runs.
 - Rule output is stable enough for golden tests.
+
+Current status:
+
+- Hub correlation chains can be saved into `hub_findings` with a stable dedupe key.
+- `aegrail hub findings list` can inspect persisted distributed findings.
 
 ## Phase 6: Ollama Investigation Layer
 
@@ -253,8 +259,8 @@ Current status:
 - `aegrail inventory bootstrap single-site` creates the first common WordPress or PrestaShop Hub topology in one idempotent step.
 - Tailed Nginx/Apache access logs and PHP error logs now produce structured `log.access` and `log.php_error` events while retaining redacted raw line evidence.
 - `aegrail hub baseline compare-files` compares recent app-relative file observations across reporting hosts.
-- `aegrail hub correlate events` runs the first deterministic incident-chain rules over recent Hub ingest events.
-- Per-agent secrets, richer topology templates, persisted baseline snapshots, and persisted findings remain the next Hub priorities.
+- `aegrail hub correlate events --save` runs the first deterministic incident-chain rules and persists deduplicated Hub findings.
+- Per-agent secrets, richer topology templates, persisted baseline snapshots, and report/export reads from Hub findings remain the next Hub priorities.
 
 ## Phase 10: Remote Collection and Scheduling
 
