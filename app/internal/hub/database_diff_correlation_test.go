@@ -152,6 +152,94 @@ func TestCorrelateEventsSavesWordPressAdminEntityFinding(t *testing.T) {
 	}
 }
 
+func TestCorrelateEventsAddsDeploymentContextWithoutLoweringHighRiskFinding(t *testing.T) {
+	inventory := newMemoryInventoryRepository()
+	ingest := &memoryIngestRepository{}
+	findings := newMemoryHubFindingRepository()
+	hub := New(Dependencies{Inventory: inventory, Ingest: ingest, Findings: findings})
+	ctx := context.Background()
+
+	environment, app, host, agent := bootstrapDatabaseDiffInventory(t, ctx, hub, "wordpress")
+	now := time.Date(2026, 5, 12, 12, 35, 0, 0, time.UTC)
+	finishedAt := now.Add(10 * time.Minute)
+	if _, err := hub.SaveDeploymentMarker(ctx, SaveDeploymentMarkerInput{
+		OrganizationSlug: "acme",
+		ProjectSlug:      "customer-site",
+		EnvironmentSlug:  "production",
+		AppSlug:          "main-web",
+		Version:          "v1.8.2",
+		CommitSHA:        "a91f72c",
+		Actor:            "github-actions",
+		StartedAt:        now.Add(-10 * time.Minute),
+		FinishedAt:       &finishedAt,
+	}); err != nil {
+		t.Fatalf("SaveDeploymentMarker returned error: %v", err)
+	}
+	ingest.timelineEvents = []domain.TimelineEvent{
+		{
+			ID:              "evt-db-admin-during-deploy",
+			EnvironmentID:   environment.ID,
+			AppID:           app.ID,
+			AppSlug:         app.Slug,
+			HostID:          host.ID,
+			HostSlug:        host.Slug,
+			AgentID:         agent.ID,
+			AgentExternalID: agent.AgentID,
+			EventTime:       now,
+			EventType:       "db.entity.added",
+			Target:          "wordpress:wordpress_user:wordpress_user:abc",
+			Severity:        domain.SeverityHigh,
+			Message:         "Privileged database entity wordpress_user added for wordpress",
+			Labels: map[string]string{
+				"db_profile":     "wordpress",
+				"db_entity_type": "wordpress_user",
+			},
+			Payload: map[string]any{
+				"database":    "wordpress",
+				"profile":     "wordpress",
+				"entity_type": "wordpress_user",
+				"entity_key":  "wordpress_user:abc",
+				"current": map[string]any{
+					"type":       "wordpress_user",
+					"key":        "wordpress_user:abc",
+					"privileged": true,
+					"signature":  "sig-admin",
+					"attributes": map[string]any{
+						"administrator": true,
+						"email_sha256":  "redacted",
+					},
+				},
+			},
+		},
+	}
+
+	result, err := hub.CorrelateEvents(ctx, CorrelateEventsInput{
+		OrganizationSlug: "acme",
+		ProjectSlug:      "customer-site",
+		EnvironmentSlug:  "production",
+		AppSlug:          "main-web",
+		Since:            now.Add(-time.Hour),
+		SaveFindings:     true,
+	})
+	if err != nil {
+		t.Fatalf("CorrelateEvents returned error: %v", err)
+	}
+	if len(result.Findings) != 1 {
+		t.Fatalf("findings = %#v, want one saved finding", result.Findings)
+	}
+	finding := result.Findings[0]
+	if finding.Severity != domain.SeverityHigh {
+		t.Fatalf("finding = %#v, want high-risk admin finding to remain high during deployment", finding)
+	}
+	deploymentContext, ok := finding.Metadata["deployment_context"].(map[string]any)
+	if !ok || deploymentContext["active"] != true {
+		t.Fatalf("deployment context = %#v, want active context", finding.Metadata["deployment_context"])
+	}
+	if deploymentContext["severity_adjusted"] != false || deploymentContext["original_severity"] != "high" || deploymentContext["adjusted_severity"] != "high" {
+		t.Fatalf("deployment context = %#v, want high severity unchanged", deploymentContext)
+	}
+}
+
 func TestCorrelateEventsBuildsWordPressPluginAndOptionEntityChains(t *testing.T) {
 	now := time.Date(2026, 5, 12, 12, 45, 0, 0, time.UTC)
 	chains := correlateTimelineEvents([]domain.TimelineEvent{

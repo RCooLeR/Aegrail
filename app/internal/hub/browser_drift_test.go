@@ -174,6 +174,68 @@ func TestAnalyzeBrowserScriptDriftSuppressesAllowedValues(t *testing.T) {
 	}
 }
 
+func TestAnalyzeBrowserScriptDriftAddsDeploymentContextAndLowersNoisyMediumFinding(t *testing.T) {
+	inventory := newMemoryInventoryRepository()
+	ingest := &memoryIngestRepository{}
+	hub := New(Dependencies{Inventory: inventory, Ingest: ingest})
+	ctx := context.Background()
+
+	environment, app := bootstrapBrowserDriftInventory(t, ctx, hub)
+	now := time.Date(2026, 5, 12, 12, 15, 0, 0, time.UTC)
+	finishedAt := now.Add(15 * time.Minute)
+	if _, err := hub.SaveDeploymentMarker(ctx, SaveDeploymentMarkerInput{
+		OrganizationSlug: "acme",
+		ProjectSlug:      "customer-site",
+		EnvironmentSlug:  "production",
+		AppSlug:          "main-web",
+		Version:          "v1.8.2",
+		CommitSHA:        "a91f72c",
+		Actor:            "github-actions",
+		StartedAt:        now.Add(-15 * time.Minute),
+		FinishedAt:       &finishedAt,
+	}); err != nil {
+		t.Fatalf("SaveDeploymentMarker returned error: %v", err)
+	}
+
+	pageURL := "https://example.test"
+	ingest.timelineEvents = []domain.TimelineEvent{
+		browserScriptTimelineEvent("evt-base-domain", environment.ID, app.ID, now.Add(-48*time.Hour), pageURL, map[string]any{
+			"source_type": "dom",
+			"domain":      "static.example.test",
+		}),
+		browserScriptTimelineEvent("evt-new-domain", environment.ID, app.ID, now, pageURL, map[string]any{
+			"source_type": "network",
+			"domain":      "cdn.release.example",
+		}),
+	}
+
+	result, err := hub.AnalyzeBrowserScriptDrift(ctx, AnalyzeBrowserScriptDriftInput{
+		OrganizationSlug: "acme",
+		ProjectSlug:      "customer-site",
+		EnvironmentSlug:  "production",
+		AppSlug:          "main-web",
+		BaselineSince:    now.Add(-30 * 24 * time.Hour),
+		ObserveSince:     now.Add(-24 * time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("AnalyzeBrowserScriptDrift returned error: %v", err)
+	}
+	if len(result.Findings) != 1 {
+		t.Fatalf("findings = %#v, want one drift finding", result.Findings)
+	}
+	finding := result.Findings[0]
+	if finding.RuleID != "browser-script-domain-new" || finding.Severity != domain.SeverityLow {
+		t.Fatalf("finding = %#v, want browser domain drift lowered to low during deployment", finding)
+	}
+	deploymentContext, ok := finding.Metadata["deployment_context"].(map[string]any)
+	if !ok || deploymentContext["active"] != true {
+		t.Fatalf("deployment context = %#v, want active context", finding.Metadata["deployment_context"])
+	}
+	if deploymentContext["severity_adjusted"] != true || deploymentContext["original_severity"] != "medium" || deploymentContext["adjusted_severity"] != "low" {
+		t.Fatalf("deployment context = %#v, want medium-to-low adjustment", deploymentContext)
+	}
+}
+
 func TestUpdateBrowserScriptAllowlistStatusDisablesSuppression(t *testing.T) {
 	inventory := newMemoryInventoryRepository()
 	ingest := &memoryIngestRepository{}

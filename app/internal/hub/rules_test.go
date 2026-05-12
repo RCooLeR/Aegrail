@@ -42,6 +42,12 @@ func TestRuleMetadataAddsVersionAndActionHints(t *testing.T) {
 	if !ruleHasActionHint("browser-script-domain-new", RuleActionAllowBrowserScript) {
 		t.Fatal("browser script domain rule missing allow_browser_script action hint")
 	}
+	if !ruleHasActionHint("browser-script-domain-new", RuleActionInspectDeployment) {
+		t.Fatal("browser script domain rule missing inspect_deployment action hint")
+	}
+	if !ruleHasActionHint("wordpress-admin-user-added", RuleActionInspectDeployment) {
+		t.Fatal("wordpress admin rule missing inspect_deployment action hint")
+	}
 	if ruleHasActionHint("wordpress-admin-user-added", RuleActionAllowBrowserScript) {
 		t.Fatal("wordpress admin rule should not support browser script allowlist action")
 	}

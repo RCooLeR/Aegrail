@@ -410,7 +410,8 @@ Done:
 12. Report config coverage to the Hub for dashboard views.
 13. Add Hub inventory read APIs for apps, services, hosts, agents, and topology.
 14. Add Hub deployment and browser-script observation read APIs for dashboard views.
+15. Add deployment-aware scoring so deploy windows reduce low/medium noise without hiding high-risk changes.
 
 Next:
 
-1. Add deployment-aware scoring so deploy windows reduce noise without hiding suspicious changes.
+1. Add fixture-based rule evaluation sets for clean, compromised, browser-injected, multi-host drift, and deploy-window cases.

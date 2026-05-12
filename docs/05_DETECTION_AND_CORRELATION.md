@@ -185,6 +185,21 @@ Confidence should reflect evidence quality:
 - correlation with other events
 - allowlist status
 
+## Deployment-Aware Scoring
+
+Deployment markers are first-class scoring context. When a finding overlaps a deployment window for the same app, or an environment-wide deployment window, Aegrail adds `deployment_context` metadata to the finding.
+
+Current behavior:
+
+- deployment windows include a small padding before and after the recorded deployment time
+- unfinished deployment markers are treated as active for a short default window
+- medium browser-script drift and medium database snapshot noise can be reduced to low
+- low expected-change noise can be reduced to info
+- high and critical findings are never lowered only because a deployment was active
+- correlation-chain findings keep their severity; the deployment context is attached for operator review
+
+This means an expected plugin/module/script change during a known release can be quieter, while administrator creation, privilege escalation, payment configuration changes, suspicious cron tasks, and incident chains still stay prominent.
+
 ## Deduplication
 
 Findings should have stable dedupe keys so repeated scans do not flood the operator.

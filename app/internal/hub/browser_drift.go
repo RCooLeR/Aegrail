@@ -91,6 +91,10 @@ func (h *Hub) AnalyzeBrowserScriptDrift(ctx context.Context, input AnalyzeBrowse
 	}
 	drifts := detectBrowserScriptDrifts(baseline, observed, allowlist)
 	findings := browserScriptDriftFindings(org, project, environment, app, drifts)
+	findings, err = h.applyDeploymentContextToFindings(ctx, environment.ID, app.ID, findings)
+	if err != nil {
+		return BrowserScriptDriftResult{}, err
+	}
 	if input.SaveFindings && len(findings) > 0 {
 		if h.findings == nil {
 			return BrowserScriptDriftResult{}, errors.New("finding repository is not configured")

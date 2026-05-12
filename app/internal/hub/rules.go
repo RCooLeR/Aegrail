@@ -208,22 +208,22 @@ func inferRuleDefinition(id string) RuleDefinition {
 		definition.Category = RuleCategoryBrowserScript
 		definition.Platforms = []string{"web"}
 		definition.EvidenceTypes = []string{"browser"}
-		definition.ActionHints = []RuleActionHint{RuleActionAcknowledge, RuleActionMarkFalsePositive, RuleActionAllowBrowserScript}
+		definition.ActionHints = []RuleActionHint{RuleActionAcknowledge, RuleActionMarkFalsePositive, RuleActionInspectDeployment, RuleActionAllowBrowserScript}
 	case strings.HasPrefix(id, "wordpress-"):
 		definition.Category = RuleCategoryDatabaseSnapshot
 		definition.Platforms = []string{"wordpress"}
 		definition.EvidenceTypes = []string{"database"}
-		definition.ActionHints = []RuleActionHint{RuleActionAcknowledge, RuleActionMarkFalsePositive, RuleActionInspectDatabase, RuleActionInspectTimeline}
+		definition.ActionHints = []RuleActionHint{RuleActionAcknowledge, RuleActionMarkFalsePositive, RuleActionInspectDatabase, RuleActionInspectTimeline, RuleActionInspectDeployment}
 	case strings.HasPrefix(id, "prestashop-"):
 		definition.Category = RuleCategoryDatabaseSnapshot
 		definition.Platforms = []string{"prestashop"}
 		definition.EvidenceTypes = []string{"database"}
-		definition.ActionHints = []RuleActionHint{RuleActionAcknowledge, RuleActionMarkFalsePositive, RuleActionInspectDatabase, RuleActionInspectTimeline}
+		definition.ActionHints = []RuleActionHint{RuleActionAcknowledge, RuleActionMarkFalsePositive, RuleActionInspectDatabase, RuleActionInspectTimeline, RuleActionInspectDeployment}
 	case strings.HasPrefix(id, "database-"):
 		definition.Category = RuleCategoryDatabaseSnapshot
 		definition.Platforms = []string{"generic"}
 		definition.EvidenceTypes = []string{"database"}
-		definition.ActionHints = []RuleActionHint{RuleActionAcknowledge, RuleActionMarkFalsePositive, RuleActionInspectDatabase}
+		definition.ActionHints = []RuleActionHint{RuleActionAcknowledge, RuleActionMarkFalsePositive, RuleActionInspectDatabase, RuleActionInspectDeployment}
 	default:
 		definition.Category = RuleCategoryCorrelation
 		definition.Platforms = []string{"generic_php"}

@@ -111,7 +111,7 @@ Last updated: 2026-05-13
 - [ ] Add risk scoring.
 - [x] Add finding status lifecycle.
 - [x] Add finding-to-allowlist handoff command.
-- [ ] Add deployment-aware scoring.
+- [x] Add deployment-aware scoring.
 - [ ] Add fixture-based rule evaluation sets.
 
 ## Phase 5: Hub API And Dashboard

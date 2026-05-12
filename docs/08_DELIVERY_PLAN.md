@@ -25,6 +25,7 @@ Aegrail already has:
 - browser script allowlist mutation APIs
 - browser drift finding-to-allowlist handoff command and API
 - versioned Hub rule registry with categories, platforms, evidence types, and action hints
+- deployment-aware finding scoring for browser drift and database snapshot findings
 - Pantheon WordPress monitoring plan
 - dashboard and multi-site agent config plans
 - multi-site Agent YAML config loading, validation, file watching, log tailing, database checks with local diff state, browser crawling, and continuous `agent run`
