@@ -431,7 +431,13 @@ func importLocalCommand(meta domain.AppMeta, name string, sourceType string, usa
 }
 
 func analyzeCommand(meta domain.AppMeta) *urfavecli.Command {
-	return placeholderCommand(meta, "analyze", "run deterministic analysis and optional Ollama synthesis")
+	return &urfavecli.Command{
+		Name:  "analyze",
+		Usage: "run deterministic analysis and optional model-assisted workflows",
+		Subcommands: []*urfavecli.Command{
+			analyzeModelCommand(meta),
+		},
+	}
 }
 
 func diffCommand(meta domain.AppMeta) *urfavecli.Command {

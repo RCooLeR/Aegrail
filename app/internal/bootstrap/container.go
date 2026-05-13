@@ -5,6 +5,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rcooler/aegrail/internal/adapters/filesystem"
+	"github.com/rcooler/aegrail/internal/adapters/ollama"
 	"github.com/rcooler/aegrail/internal/adapters/postgres"
 	"github.com/rcooler/aegrail/internal/agent"
 	"github.com/rcooler/aegrail/internal/collector"
@@ -25,6 +26,7 @@ type Container struct {
 	Hub       *hub.Hub
 	Agent     *agent.Runtime
 	Collector *collector.Runtime
+	Model     ports.ModelGateway
 }
 
 func NewContainer(meta domain.AppMeta) (*Container, error) {
@@ -38,6 +40,16 @@ func NewContainer(meta domain.AppMeta) (*Container, error) {
 		Scanner:   scanner,
 		Archive:   archive,
 	})
+	modelGateway, err := ollama.NewGateway(ollama.Config{
+		BaseURL:            cfg.Ollama.BaseURL,
+		InvestigationModel: cfg.Ollama.InvestigationModel,
+		EmbeddingModel:     cfg.Ollama.EmbeddingModel,
+		Offline:            cfg.Ollama.Offline,
+		Timeout:            cfg.Ollama.Timeout,
+	})
+	if err != nil {
+		return nil, err
+	}
 
 	return &Container{
 		meta:      meta,
@@ -48,6 +60,7 @@ func NewContainer(meta domain.AppMeta) (*Container, error) {
 		Hub:       hub.New(hub.Dependencies{}),
 		Agent:     agent.NewRuntime(agent.Config{QueueDir: ".aegrail/queue"}),
 		Collector: collector.NewRuntime(collector.Config{Name: "default"}),
+		Model:     modelGateway,
 	}, nil
 }
 

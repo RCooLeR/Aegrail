@@ -60,7 +60,7 @@ func LoadConfig() Config {
 		Ollama: OllamaConfig{
 			BaseURL:            envString("AEGRAIL_OLLAMA_BASE_URL", "http://localhost:11434"),
 			InvestigationModel: envString("AEGRAIL_OLLAMA_INVESTIGATION_MODEL", "qwen3:30b"),
-			EmbeddingModel:     envString("AEGRAIL_OLLAMA_EMBEDDING_MODEL", "qwen3-embedding"),
+			EmbeddingModel:     envString("AEGRAIL_OLLAMA_EMBEDDING_MODEL", "qwen3-embedding:0.6b"),
 			Offline:            envBool("AEGRAIL_OLLAMA_OFFLINE", false),
 			Timeout:            envDuration("AEGRAIL_OLLAMA_TIMEOUT", 2*time.Minute),
 		},

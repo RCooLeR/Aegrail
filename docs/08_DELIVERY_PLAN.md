@@ -19,6 +19,7 @@ Aegrail already has:
 - Markdown technical findings report output
 - Markdown manager summary report output
 - CSV timeline report output
+- Ollama model gateway with health, generation, embedding, offline-mode, and fake-test adapters
 - cross-host file baseline comparison
 - event correlation findings
 - browser crawler with static and rendered modes
@@ -222,6 +223,7 @@ Exit criteria:
 - reports include source finding IDs and evidence refs
 - model output is labeled as analysis
 - deterministic JSON, Markdown, and CSV report generation works without Ollama
+- model gateway can be smoke-tested independently from deterministic reports
 
 ## Phase 7: Remote Collection And Scheduling
 

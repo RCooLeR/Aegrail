@@ -44,6 +44,15 @@ Initial backend:
 
 Model names must be config-driven. The code should not hard-code a preferred investigation model or embedding model.
 
+Current implementation:
+
+- `ports.ModelGateway` defines health, generation, and embedding calls.
+- `internal/adapters/ollama` implements the gateway using Ollama `/api/tags`, `/api/generate`, and embedding endpoints.
+- `internal/adapters/modeltest` provides a deterministic fake gateway for tests.
+- `AEGRAIL_OLLAMA_BASE_URL`, `AEGRAIL_OLLAMA_INVESTIGATION_MODEL`, `AEGRAIL_OLLAMA_EMBEDDING_MODEL`, `AEGRAIL_OLLAMA_TIMEOUT`, and `AEGRAIL_OLLAMA_OFFLINE` configure the runtime.
+- `aegrail analyze model status` verifies the configured local model gateway without requiring database access.
+- `aegrail analyze model prompt` and `aegrail analyze model embed` are smoke-test commands, not full report synthesis yet.
+
 ## Evidence Bundle Contract
 
 The model receives a redacted evidence bundle, not arbitrary raw data.

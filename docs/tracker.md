@@ -142,13 +142,13 @@ Last updated: 2026-05-13
 - [x] Add Markdown manager summary.
 - [x] Add CSV timeline export.
 - [ ] Add report renderer golden tests.
-- [ ] Add Ollama model gateway.
-- [ ] Add configurable investigation model.
-- [ ] Add configurable embedding model.
+- [x] Add Ollama model gateway.
+- [x] Add configurable investigation model.
+- [x] Add configurable embedding model.
 - [ ] Build compact redacted evidence bundles.
 - [ ] Store prompt template version with LLM reports.
-- [ ] Support offline AI mode.
-- [ ] Add fake model adapter for tests.
+- [x] Support offline AI mode.
+- [x] Add fake model adapter for tests.
 
 ## Phase 7: Remote Collection And Scheduling
 
