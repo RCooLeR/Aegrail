@@ -16,6 +16,7 @@ type Hub struct {
 	ingest           ports.IngestRepository
 	findings         ports.HubFindingRepository
 	browserAllowlist ports.BrowserScriptAllowlistRepository
+	modelReports     ports.ModelAnalysisReportRepository
 }
 
 type Dependencies struct {
@@ -23,6 +24,7 @@ type Dependencies struct {
 	Ingest           ports.IngestRepository
 	Findings         ports.HubFindingRepository
 	BrowserAllowlist ports.BrowserScriptAllowlistRepository
+	ModelReports     ports.ModelAnalysisReportRepository
 }
 
 func New(deps Dependencies) *Hub {
@@ -31,6 +33,7 @@ func New(deps Dependencies) *Hub {
 		ingest:           deps.Ingest,
 		findings:         deps.Findings,
 		browserAllowlist: deps.BrowserAllowlist,
+		modelReports:     deps.ModelReports,
 	}
 }
 

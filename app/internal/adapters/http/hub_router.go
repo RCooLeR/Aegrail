@@ -59,6 +59,8 @@ func NewHubRouter(meta domain.AppMeta, hub *hubapp.Hub, options HubOptions) http
 	router.Get("/api/v1/findings", listFindingsHandler(hub))
 	router.Patch("/api/v1/findings/{id}/status", updateFindingStatusHandler(hub))
 	router.Post("/api/v1/findings/{id}/browser-script-allowlist", allowBrowserScriptFromFindingHandler(hub))
+	router.Get("/api/v1/reports/model-analysis", listModelAnalysisReportsHandler(hub))
+	router.Get("/api/v1/reports/model-analysis/{id}", getModelAnalysisReportHandler(hub))
 	router.Get("/api/v1/timeline", listTimelineHandler(hub))
 	router.Get("/api/v1/coverage", listCoverageHandler(hub))
 	router.Get("/api/v1/deployments", listDeploymentsHandler(hub))
@@ -231,6 +233,32 @@ type browserScriptAllowlistEntryResponse struct {
 	Status     string    `json:"status"`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+type modelAnalysisReportResponse struct {
+	ID                             string         `json:"id"`
+	AppID                          string         `json:"app_id,omitempty"`
+	Schema                         string         `json:"schema"`
+	Status                         string         `json:"status"`
+	ModelProvider                  string         `json:"model_provider,omitempty"`
+	ModelName                      string         `json:"model_name,omitempty"`
+	PromptTemplateID               string         `json:"prompt_template_id"`
+	PromptTemplateVersion          string         `json:"prompt_template_version"`
+	PromptTemplateSHA256           string         `json:"prompt_template_sha256"`
+	PromptSHA256                   string         `json:"prompt_sha256"`
+	EvidenceBundleSchema           string         `json:"evidence_bundle_schema"`
+	EvidenceBundleSHA256           string         `json:"evidence_bundle_sha256"`
+	EvidenceBundleRedactionVersion string         `json:"evidence_bundle_redaction_version"`
+	EvidenceBundleGeneratedAt      time.Time      `json:"evidence_bundle_generated_at"`
+	SourceFindingIDs               []string       `json:"source_finding_ids"`
+	Analysis                       string         `json:"analysis,omitempty"`
+	Error                          string         `json:"error,omitempty"`
+	TotalDurationMillis            int64          `json:"total_duration_millis,omitempty"`
+	PromptEvalCount                int            `json:"prompt_eval_count,omitempty"`
+	EvalCount                      int            `json:"eval_count,omitempty"`
+	GeneratedAt                    time.Time      `json:"generated_at"`
+	Metadata                       map[string]any `json:"metadata"`
+	CreatedAt                      time.Time      `json:"created_at"`
 }
 
 type ruleDefinitionResponse struct {
@@ -459,6 +487,62 @@ func allowBrowserScriptFromFindingHandler(hub *hubapp.Hub) http.HandlerFunc {
 		writeJSON(w, http.StatusCreated, map[string]any{
 			"finding": hubFindingRecord(result.Finding),
 			"entry":   browserScriptAllowlistEntryRecord(result.Entry),
+		})
+	}
+}
+
+func listModelAnalysisReportsHandler(hub *hubapp.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		limit, err := parseQueryLimit(r, 50)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		reports, err := hub.ListModelAnalysisReports(r.Context(), hubapp.ListModelAnalysisReportsInput{
+			OrganizationSlug: r.URL.Query().Get("org"),
+			ProjectSlug:      r.URL.Query().Get("project"),
+			EnvironmentSlug:  r.URL.Query().Get("environment"),
+			AppSlug:          r.URL.Query().Get("app"),
+			Limit:            limit,
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		records := make([]modelAnalysisReportResponse, 0, len(reports))
+		for _, report := range reports {
+			records = append(records, modelAnalysisReportRecord(report))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"count":   len(records),
+			"reports": records,
+		})
+	}
+}
+
+func getModelAnalysisReportHandler(hub *hubapp.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		report, err := hub.GetModelAnalysisReport(r.Context(), hubapp.GetModelAnalysisReportInput{
+			OrganizationSlug: r.URL.Query().Get("org"),
+			ProjectSlug:      r.URL.Query().Get("project"),
+			EnvironmentSlug:  r.URL.Query().Get("environment"),
+			AppSlug:          r.URL.Query().Get("app"),
+			ReportID:         chi.URLParam(r, "id"),
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"report": modelAnalysisReportRecord(report),
 		})
 	}
 }
@@ -1117,6 +1201,34 @@ func browserScriptAllowlistEntryRecord(entry domain.BrowserScriptAllowlistEntry)
 		Status:     browserScriptAllowlistStatus(entry),
 		CreatedAt:  entry.CreatedAt,
 		UpdatedAt:  entry.UpdatedAt,
+	}
+}
+
+func modelAnalysisReportRecord(report domain.ModelAnalysisReport) modelAnalysisReportResponse {
+	return modelAnalysisReportResponse{
+		ID:                             string(report.ID),
+		AppID:                          string(report.AppID),
+		Schema:                         report.ReportSchema,
+		Status:                         report.Status,
+		ModelProvider:                  report.ModelProvider,
+		ModelName:                      report.ModelName,
+		PromptTemplateID:               report.PromptTemplateID,
+		PromptTemplateVersion:          report.PromptTemplateVersion,
+		PromptTemplateSHA256:           report.PromptTemplateSHA256,
+		PromptSHA256:                   report.PromptSHA256,
+		EvidenceBundleSchema:           report.EvidenceBundleSchema,
+		EvidenceBundleSHA256:           report.EvidenceBundleSHA256,
+		EvidenceBundleRedactionVersion: report.EvidenceBundleRedactionVersion,
+		EvidenceBundleGeneratedAt:      report.EvidenceBundleGeneratedAt,
+		SourceFindingIDs:               stringDomainIDs(report.SourceFindingIDs),
+		Analysis:                       report.Analysis,
+		Error:                          report.Error,
+		TotalDurationMillis:            report.TotalDurationMillis,
+		PromptEvalCount:                report.PromptEvalCount,
+		EvalCount:                      report.EvalCount,
+		GeneratedAt:                    report.GeneratedAt,
+		Metadata:                       nonNilResponseMap(report.Metadata),
+		CreatedAt:                      report.CreatedAt,
 	}
 }
 

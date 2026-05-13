@@ -84,6 +84,7 @@ func (c *Container) ConnectDatabase(ctx context.Context) error {
 		Ingest:           postgres.NewIngestRepository(pool),
 		Findings:         postgres.NewHubFindingRepository(pool),
 		BrowserAllowlist: postgres.NewBrowserScriptAllowlistRepository(pool),
+		ModelReports:     postgres.NewModelAnalysisReportRepository(pool),
 	})
 	return nil
 }

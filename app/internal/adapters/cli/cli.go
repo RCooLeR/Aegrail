@@ -467,6 +467,7 @@ func reportCommand(meta domain.AppMeta) *urfavecli.Command {
 		Subcommands: []*urfavecli.Command{
 			hubFindingsReportCommand(meta),
 			evidenceBundleReportCommand(meta),
+			modelAnalysisReportCommand(meta),
 			timelineReportCommand(meta),
 		},
 	}

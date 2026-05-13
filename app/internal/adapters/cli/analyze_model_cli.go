@@ -174,6 +174,7 @@ func modelReportCommand(meta domain.AppMeta) *urfavecli.Command {
 			&urfavecli.IntFlag{Name: "max-events", Value: 8, Usage: "maximum compact evidence events per finding"},
 			&urfavecli.IntFlag{Name: "max-metadata-depth", Value: 4, Usage: "maximum nested metadata depth"},
 			&urfavecli.IntFlag{Name: "max-string-length", Value: 500, Usage: "maximum string length in redacted metadata"},
+			&urfavecli.BoolFlag{Name: "save", Usage: "persist the generated report in the Hub"},
 			&urfavecli.BoolFlag{Name: "compact", Usage: "write compact JSON without indentation"},
 		),
 		Action: func(c *urfavecli.Context) error {
@@ -216,6 +217,19 @@ func modelReportCommand(meta domain.AppMeta) *urfavecli.Command {
 			}, now)
 			if err != nil {
 				return err
+			}
+			if c.Bool("save") {
+				saved, err := container.Hub.SaveModelAnalysisReport(c.Context, hubapp.SaveModelAnalysisReportInput{
+					OrganizationSlug: c.String("org"),
+					ProjectSlug:      c.String("project"),
+					EnvironmentSlug:  c.String("env"),
+					AppSlug:          c.String("app"),
+					Report:           reports.DomainModelAnalysisReport(report),
+				})
+				if err != nil {
+					return err
+				}
+				report = reports.ApplySavedModelAnalysisReport(report, saved)
 			}
 
 			writer, closeWriter, err := reportWriter(c, c.String("output"))

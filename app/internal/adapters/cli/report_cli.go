@@ -1,11 +1,13 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/rcooler/aegrail/internal/domain"
@@ -172,6 +174,79 @@ func evidenceBundleReportCommand(meta domain.AppMeta) *urfavecli.Command {
 	}
 }
 
+func modelAnalysisReportCommand(meta domain.AppMeta) *urfavecli.Command {
+	return &urfavecli.Command{
+		Name:  "model-analysis",
+		Usage: "inspect saved model analysis reports",
+		Subcommands: []*urfavecli.Command{
+			modelAnalysisReportListCommand(meta),
+			modelAnalysisReportShowCommand(meta),
+		},
+	}
+}
+
+func modelAnalysisReportListCommand(meta domain.AppMeta) *urfavecli.Command {
+	return &urfavecli.Command{
+		Name:  "list",
+		Usage: "list saved model analysis reports",
+		Flags: append(environmentPathFlags(),
+			&urfavecli.StringFlag{Name: "app", Usage: "optional monitored app slug"},
+			&urfavecli.IntFlag{Name: "limit", Value: 20, Usage: "maximum reports to list"},
+			&urfavecli.StringFlag{Name: "format", Value: "table", Usage: "table or json"},
+		),
+		Action: func(c *urfavecli.Context) error {
+			container, cleanup, err := newDatabaseContainer(c.Context, meta)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+
+			reports, err := container.Hub.ListModelAnalysisReports(c.Context, hubapp.ListModelAnalysisReportsInput{
+				OrganizationSlug: c.String("org"),
+				ProjectSlug:      c.String("project"),
+				EnvironmentSlug:  c.String("env"),
+				AppSlug:          c.String("app"),
+				Limit:            c.Int("limit"),
+			})
+			if err != nil {
+				return err
+			}
+			return writeModelAnalysisReportList(c.App.Writer, c.String("format"), reports)
+		},
+	}
+}
+
+func modelAnalysisReportShowCommand(meta domain.AppMeta) *urfavecli.Command {
+	return &urfavecli.Command{
+		Name:  "show",
+		Usage: "show one saved model analysis report",
+		Flags: append(environmentPathFlags(),
+			&urfavecli.StringFlag{Name: "app", Usage: "optional monitored app slug"},
+			&urfavecli.StringFlag{Name: "id", Required: true, Usage: "model analysis report id"},
+			&urfavecli.StringFlag{Name: "format", Value: "json", Usage: "json or summary"},
+		),
+		Action: func(c *urfavecli.Context) error {
+			container, cleanup, err := newDatabaseContainer(c.Context, meta)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+
+			report, err := container.Hub.GetModelAnalysisReport(c.Context, hubapp.GetModelAnalysisReportInput{
+				OrganizationSlug: c.String("org"),
+				ProjectSlug:      c.String("project"),
+				EnvironmentSlug:  c.String("env"),
+				AppSlug:          c.String("app"),
+				ReportID:         c.String("id"),
+			})
+			if err != nil {
+				return err
+			}
+			return writeModelAnalysisReportDetail(c.App.Writer, c.String("format"), report)
+		},
+	}
+}
+
 func writeHubFindingsReport(w io.Writer, format string, report reports.HubFindingsJSONReport, compact bool) error {
 	switch strings.ToLower(strings.TrimSpace(format)) {
 	case "", "json":
@@ -201,6 +276,137 @@ func writeEvidenceBundleReport(w io.Writer, format string, bundle reports.Eviden
 	default:
 		return fmt.Errorf("unsupported report format %q", format)
 	}
+}
+
+type storedModelAnalysisReportResponse struct {
+	ID                             string         `json:"id"`
+	AppID                          string         `json:"app_id,omitempty"`
+	Schema                         string         `json:"schema"`
+	Status                         string         `json:"status"`
+	ModelProvider                  string         `json:"model_provider,omitempty"`
+	ModelName                      string         `json:"model_name,omitempty"`
+	PromptTemplateID               string         `json:"prompt_template_id"`
+	PromptTemplateVersion          string         `json:"prompt_template_version"`
+	PromptTemplateSHA256           string         `json:"prompt_template_sha256"`
+	PromptSHA256                   string         `json:"prompt_sha256"`
+	EvidenceBundleSchema           string         `json:"evidence_bundle_schema"`
+	EvidenceBundleSHA256           string         `json:"evidence_bundle_sha256"`
+	EvidenceBundleRedactionVersion string         `json:"evidence_bundle_redaction_version"`
+	EvidenceBundleGeneratedAt      time.Time      `json:"evidence_bundle_generated_at"`
+	SourceFindingIDs               []string       `json:"source_finding_ids"`
+	Analysis                       string         `json:"analysis,omitempty"`
+	Error                          string         `json:"error,omitempty"`
+	TotalDurationMillis            int64          `json:"total_duration_millis,omitempty"`
+	PromptEvalCount                int            `json:"prompt_eval_count,omitempty"`
+	EvalCount                      int            `json:"eval_count,omitempty"`
+	GeneratedAt                    time.Time      `json:"generated_at"`
+	Metadata                       map[string]any `json:"metadata"`
+	CreatedAt                      time.Time      `json:"created_at"`
+}
+
+func writeModelAnalysisReportList(w io.Writer, format string, reports []domain.ModelAnalysisReport) error {
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "", "table":
+		if len(reports) == 0 {
+			_, err := fmt.Fprintln(w, "No model analysis reports found.")
+			return err
+		}
+		writer := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(writer, "GENERATED\tSTATUS\tMODEL\tPROMPT\tBUNDLE\tFINDINGS\tID")
+		for _, report := range reports {
+			fmt.Fprintf(
+				writer,
+				"%s\t%s\t%s\t%s\t%s\t%d\t%s\n",
+				report.GeneratedAt.UTC().Format(time.RFC3339),
+				report.Status,
+				emptyDash(report.ModelName),
+				report.PromptTemplateVersion,
+				shortDigest(report.EvidenceBundleSHA256),
+				len(report.SourceFindingIDs),
+				report.ID,
+			)
+		}
+		return writer.Flush()
+	case "json":
+		records := make([]storedModelAnalysisReportResponse, 0, len(reports))
+		for _, report := range reports {
+			records = append(records, storedModelAnalysisReportRecord(report))
+		}
+		return json.NewEncoder(w).Encode(map[string]any{
+			"count":   len(records),
+			"reports": records,
+		})
+	default:
+		return fmt.Errorf("unsupported report format %q", format)
+	}
+}
+
+func writeModelAnalysisReportDetail(w io.Writer, format string, report domain.ModelAnalysisReport) error {
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "", "json":
+		encoder := json.NewEncoder(w)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(storedModelAnalysisReportRecord(report))
+	case "summary":
+		fmt.Fprintf(w, "ID: %s\n", report.ID)
+		fmt.Fprintf(w, "Generated: %s\n", report.GeneratedAt.UTC().Format(time.RFC3339))
+		fmt.Fprintf(w, "Status: %s\n", report.Status)
+		fmt.Fprintf(w, "Model: %s\n", emptyDash(report.ModelName))
+		fmt.Fprintf(w, "Prompt: %s %s\n", report.PromptTemplateID, report.PromptTemplateVersion)
+		fmt.Fprintf(w, "Bundle: %s\n", report.EvidenceBundleSHA256)
+		if report.Error != "" {
+			fmt.Fprintf(w, "Error: %s\n", report.Error)
+		}
+		if report.Analysis != "" {
+			fmt.Fprintf(w, "\n%s\n", compactText(report.Analysis, 2000))
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported report format %q", format)
+	}
+}
+
+func storedModelAnalysisReportRecord(report domain.ModelAnalysisReport) storedModelAnalysisReportResponse {
+	return storedModelAnalysisReportResponse{
+		ID:                             string(report.ID),
+		AppID:                          string(report.AppID),
+		Schema:                         report.ReportSchema,
+		Status:                         report.Status,
+		ModelProvider:                  report.ModelProvider,
+		ModelName:                      report.ModelName,
+		PromptTemplateID:               report.PromptTemplateID,
+		PromptTemplateVersion:          report.PromptTemplateVersion,
+		PromptTemplateSHA256:           report.PromptTemplateSHA256,
+		PromptSHA256:                   report.PromptSHA256,
+		EvidenceBundleSchema:           report.EvidenceBundleSchema,
+		EvidenceBundleSHA256:           report.EvidenceBundleSHA256,
+		EvidenceBundleRedactionVersion: report.EvidenceBundleRedactionVersion,
+		EvidenceBundleGeneratedAt:      report.EvidenceBundleGeneratedAt,
+		SourceFindingIDs:               modelReportFindingIDs(report.SourceFindingIDs),
+		Analysis:                       report.Analysis,
+		Error:                          report.Error,
+		TotalDurationMillis:            report.TotalDurationMillis,
+		PromptEvalCount:                report.PromptEvalCount,
+		EvalCount:                      report.EvalCount,
+		GeneratedAt:                    report.GeneratedAt,
+		Metadata:                       nonNilStoredReportMetadata(report.Metadata),
+		CreatedAt:                      report.CreatedAt,
+	}
+}
+
+func modelReportFindingIDs(ids []domain.ID) []string {
+	values := make([]string, 0, len(ids))
+	for _, id := range ids {
+		values = append(values, string(id))
+	}
+	return values
+}
+
+func nonNilStoredReportMetadata(metadata map[string]any) map[string]any {
+	if metadata == nil {
+		return map[string]any{}
+	}
+	return metadata
 }
 
 func reportWriter(c *urfavecli.Context, outputPath string) (io.Writer, func(), error) {

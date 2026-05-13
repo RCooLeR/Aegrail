@@ -126,6 +126,7 @@ Last updated: 2026-05-13
 - [x] Add Hub read API for agents.
 - [x] Add Hub read API for deployments.
 - [x] Add Hub read API for browser script observations.
+- [x] Add Hub read API for saved model analysis reports.
 - [ ] Create `dashboard/` TypeScript React Bootstrap app.
 - [ ] Build Overview view.
 - [ ] Build Findings and Finding Detail views.
@@ -148,7 +149,8 @@ Last updated: 2026-05-13
 - [x] Build compact redacted evidence bundles.
 - [x] Store prompt template version with LLM reports.
 - [x] Add model-assisted analysis report command.
-- [ ] Persist generated model report records in the Hub.
+- [x] Persist generated model report records in the Hub.
+- [x] Add saved model report list/show CLI.
 - [x] Support offline AI mode.
 - [x] Add fake model adapter for tests.
 

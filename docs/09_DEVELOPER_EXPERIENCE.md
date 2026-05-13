@@ -120,7 +120,9 @@ go run ./cmd/aegrail report evidence-bundle --org acme --project customer-site -
 go run ./cmd/aegrail analyze model status
 go run ./cmd/aegrail analyze model prompt --prompt "Return exactly: aegrail-ok"
 go run ./cmd/aegrail analyze model embed --text "Aegrail evidence"
-go run ./cmd/aegrail analyze model report --org acme --project customer-site --env production --limit 20 --output ..\data\reports\model-analysis.json
+go run ./cmd/aegrail analyze model report --org acme --project customer-site --env production --limit 20 --save --output ..\data\reports\model-analysis.json
+go run ./cmd/aegrail report model-analysis list --org acme --project customer-site --env production
+go run ./cmd/aegrail report model-analysis show --org acme --project customer-site --env production --id <report-id>
 go test ./...
 ```
 
@@ -146,7 +148,7 @@ Developers and operators need:
 - config coverage report
 - JSON, Markdown, manager summary, and CSV timeline report preview
 - redacted evidence bundle preview
-- model gateway status, prompt, embedding smoke tests, and prompt-versioned advisory analysis report preview
+- model gateway status, prompt, embedding smoke tests, saved model report history, and prompt-versioned advisory analysis report preview
 
 ## Documentation Rule
 

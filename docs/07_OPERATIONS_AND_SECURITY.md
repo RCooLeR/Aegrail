@@ -141,7 +141,7 @@ Back up:
 - reports
 - prompt/model metadata
 - redacted evidence bundle hashes
-- model analysis report hashes and statuses when Hub persistence is added
+- model analysis report hashes and statuses
 
 Raw local evidence on agents may need separate host-level backup or retention policy depending on customer requirements.
 

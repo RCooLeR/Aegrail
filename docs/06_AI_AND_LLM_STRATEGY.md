@@ -54,6 +54,8 @@ Current implementation:
 - `aegrail analyze model prompt` and `aegrail analyze model embed` are gateway smoke-test commands.
 - `aegrail report evidence-bundle` exports compact redacted finding evidence for model-assisted analysis.
 - `aegrail analyze model report` builds an evidence bundle, sends it to the configured investigation model, and writes a prompt-versioned advisory analysis report.
+- `aegrail analyze model report --save` persists the generated report in the Hub.
+- `aegrail report model-analysis list` and `aegrail report model-analysis show` inspect saved model reports.
 
 ## Evidence Bundle Contract
 
@@ -111,6 +113,13 @@ Current model-assisted report:
 - final prompt SHA-256 hash
 - provider, model name, offline flag, generation timing, and token counts where available
 - raw generated analysis text, or an error if the model gateway was offline or failed
+
+Saved Hub model reports also store:
+
+- organization, project, environment, and optional app scope
+- model report ID and created time
+- queryable status, model, prompt, bundle, finding IDs, timing, and token-count columns
+- metadata for tool, scope, model base URL, offline state, notice, and deterministic source
 
 Generated analysis should:
 

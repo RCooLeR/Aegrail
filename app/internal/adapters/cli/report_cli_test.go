@@ -142,6 +142,73 @@ func TestWriteEvidenceBundleReportRejectsUnsupportedFormat(t *testing.T) {
 	}
 }
 
+func TestWriteModelAnalysisReportListSupportsTableAndJSON(t *testing.T) {
+	report := domain.ModelAnalysisReport{
+		ID:                    "model-report-1",
+		ReportSchema:          reports.ModelAnalysisReportSchema,
+		Status:                reports.ModelAnalysisStatusCompleted,
+		ModelName:             "qwen3:30b",
+		PromptTemplateID:      reports.ModelAnalysisPromptTemplateID,
+		PromptTemplateVersion: reports.ModelAnalysisPromptTemplateVersion,
+		EvidenceBundleSHA256:  "abcdef1234567890",
+		SourceFindingIDs:      []domain.ID{"finding-1"},
+		GeneratedAt:           time.Date(2026, 5, 13, 10, 0, 0, 0, time.UTC),
+		CreatedAt:             time.Date(2026, 5, 13, 10, 0, 1, 0, time.UTC),
+	}
+
+	var table bytes.Buffer
+	if err := writeModelAnalysisReportList(&table, "table", []domain.ModelAnalysisReport{report}); err != nil {
+		t.Fatalf("writeModelAnalysisReportList(table) returned error: %v", err)
+	}
+	if !strings.Contains(table.String(), "model-report-1") || !strings.Contains(table.String(), "qwen3:30b") {
+		t.Fatalf("table output = %q, want saved report row", table.String())
+	}
+
+	var jsonOutput bytes.Buffer
+	if err := writeModelAnalysisReportList(&jsonOutput, "json", []domain.ModelAnalysisReport{report}); err != nil {
+		t.Fatalf("writeModelAnalysisReportList(json) returned error: %v", err)
+	}
+	if !strings.Contains(jsonOutput.String(), `"count":1`) || !strings.Contains(jsonOutput.String(), `"id":"model-report-1"`) {
+		t.Fatalf("json output = %q, want saved report JSON", jsonOutput.String())
+	}
+}
+
+func TestWriteModelAnalysisReportDetailSupportsJSONAndSummary(t *testing.T) {
+	report := domain.ModelAnalysisReport{
+		ID:                             "model-report-1",
+		ReportSchema:                   reports.ModelAnalysisReportSchema,
+		Status:                         reports.ModelAnalysisStatusFailed,
+		ModelName:                      "qwen3:30b",
+		PromptTemplateID:               reports.ModelAnalysisPromptTemplateID,
+		PromptTemplateVersion:          reports.ModelAnalysisPromptTemplateVersion,
+		PromptTemplateSHA256:           "prompt-template-sha",
+		PromptSHA256:                   "prompt-sha",
+		EvidenceBundleSchema:           reports.EvidenceBundleSchema,
+		EvidenceBundleSHA256:           "bundle-sha",
+		EvidenceBundleRedactionVersion: reports.EvidenceBundleRedactionVersion,
+		SourceFindingIDs:               []domain.ID{"finding-1"},
+		Error:                          "model failed",
+		GeneratedAt:                    time.Date(2026, 5, 13, 10, 0, 0, 0, time.UTC),
+		CreatedAt:                      time.Date(2026, 5, 13, 10, 0, 1, 0, time.UTC),
+	}
+
+	var jsonOutput bytes.Buffer
+	if err := writeModelAnalysisReportDetail(&jsonOutput, "json", report); err != nil {
+		t.Fatalf("writeModelAnalysisReportDetail(json) returned error: %v", err)
+	}
+	if !strings.Contains(jsonOutput.String(), `"status": "failed"`) || !strings.Contains(jsonOutput.String(), `"evidence_bundle_sha256": "bundle-sha"`) {
+		t.Fatalf("json output = %q, want saved report detail", jsonOutput.String())
+	}
+
+	var summary bytes.Buffer
+	if err := writeModelAnalysisReportDetail(&summary, "summary", report); err != nil {
+		t.Fatalf("writeModelAnalysisReportDetail(summary) returned error: %v", err)
+	}
+	if !strings.Contains(summary.String(), "Error: model failed") {
+		t.Fatalf("summary output = %q, want report error", summary.String())
+	}
+}
+
 func TestWriteTimelineReportRejectsUnsupportedFormat(t *testing.T) {
 	err := writeTimelineReport(&bytes.Buffer{}, "json", reports.TimelineCSVReport{})
 	if err == nil || !strings.Contains(err.Error(), `unsupported report format "json"`) {

@@ -22,6 +22,7 @@ Aegrail already has:
 - Ollama model gateway with health, generation, embedding, offline-mode, and fake-test adapters
 - compact redacted evidence bundle export for model-assisted analysis
 - prompt-versioned Ollama advisory analysis report output with bundle and prompt hashes
+- saved Hub model analysis reports with CLI list/show commands and read APIs
 - cross-host file baseline comparison
 - event correlation findings
 - browser crawler with static and rendered modes
@@ -190,6 +191,8 @@ Exit criteria:
 Current API slice:
 
 - `GET /api/v1/findings`
+- `GET /api/v1/reports/model-analysis`
+- `GET /api/v1/reports/model-analysis/{id}`
 - `GET /api/v1/rules`
 - `PATCH /api/v1/findings/{id}/status`
 - `POST /api/v1/findings/{id}/browser-script-allowlist`
@@ -219,6 +222,7 @@ Deliverables:
 - redacted evidence bundle builder
 - prompt templates and versions
 - generated analysis report output
+- generated analysis report Hub persistence
 
 Exit criteria:
 
@@ -226,6 +230,7 @@ Exit criteria:
 - evidence bundles are redacted, compact, and hashable before model use
 - model output is labeled as analysis
 - model reports store prompt template ID, version, template hash, final prompt hash, bundle hash, model name, and offline/failed state
+- saved model reports can be listed and shown through CLI and Hub API
 - deterministic JSON, Markdown, and CSV report generation works without Ollama
 - model gateway can be smoke-tested independently from deterministic reports
 

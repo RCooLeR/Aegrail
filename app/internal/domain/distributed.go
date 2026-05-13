@@ -130,6 +130,35 @@ type HubFindingStatusUpdate struct {
 	Actor  string
 }
 
+type ModelAnalysisReport struct {
+	ID                             ID
+	OrganizationID                 ID
+	ProjectID                      ID
+	EnvironmentID                  ID
+	AppID                          ID
+	ReportSchema                   string
+	Status                         string
+	ModelProvider                  string
+	ModelName                      string
+	PromptTemplateID               string
+	PromptTemplateVersion          string
+	PromptTemplateSHA256           string
+	PromptSHA256                   string
+	EvidenceBundleSchema           string
+	EvidenceBundleSHA256           string
+	EvidenceBundleRedactionVersion string
+	EvidenceBundleGeneratedAt      time.Time
+	SourceFindingIDs               []ID
+	Analysis                       string
+	Error                          string
+	TotalDurationMillis            int64
+	PromptEvalCount                int
+	EvalCount                      int
+	GeneratedAt                    time.Time
+	Metadata                       map[string]any
+	CreatedAt                      time.Time
+}
+
 type BrowserScriptAllowlistEntry struct {
 	ID             ID
 	OrganizationID ID

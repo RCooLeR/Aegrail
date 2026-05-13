@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rcooler/aegrail/internal/domain"
 	"github.com/rcooler/aegrail/internal/ports"
 )
 
@@ -82,8 +83,10 @@ type ModelAnalysisStats struct {
 }
 
 type ModelAnalysisReport struct {
+	ID                  string                         `json:"id,omitempty"`
 	Schema              string                         `json:"schema"`
 	GeneratedAt         time.Time                      `json:"generated_at"`
+	CreatedAt           *time.Time                     `json:"created_at,omitempty"`
 	Tool                ToolInfo                       `json:"tool"`
 	Scope               HubFindingsScope               `json:"scope"`
 	Status              string                         `json:"status"`
@@ -195,6 +198,54 @@ func WriteModelAnalysisReportJSON(w io.Writer, report ModelAnalysisReport, prett
 	return encoder.Encode(report)
 }
 
+func DomainModelAnalysisReport(report ModelAnalysisReport) domain.ModelAnalysisReport {
+	record := domain.ModelAnalysisReport{
+		ID:                             domain.ID(report.ID),
+		ReportSchema:                   report.Schema,
+		Status:                         report.Status,
+		ModelProvider:                  report.Model.Provider,
+		ModelName:                      report.Model.Model,
+		PromptTemplateID:               report.PromptTemplate.ID,
+		PromptTemplateVersion:          report.PromptTemplate.Version,
+		PromptTemplateSHA256:           report.PromptTemplate.SHA256,
+		PromptSHA256:                   report.PromptSHA256,
+		EvidenceBundleSchema:           report.EvidenceBundle.Schema,
+		EvidenceBundleSHA256:           report.EvidenceBundle.SHA256,
+		EvidenceBundleRedactionVersion: report.EvidenceBundle.RedactionVersion,
+		EvidenceBundleGeneratedAt:      report.EvidenceBundle.GeneratedAt,
+		SourceFindingIDs:               domainFindingIDs(report.SourceFindingIDs),
+		Analysis:                       report.Analysis,
+		Error:                          report.Error,
+		GeneratedAt:                    report.GeneratedAt,
+		Metadata: map[string]any{
+			"tool":                 report.Tool,
+			"scope":                report.Scope,
+			"notice":               report.Notice,
+			"finding_count":        report.FindingCount,
+			"model_base_url":       report.Model.BaseURL,
+			"model_offline":        report.Model.Offline,
+			"deterministic_source": report.DeterministicSource,
+		},
+	}
+	if report.CreatedAt != nil {
+		record.CreatedAt = report.CreatedAt.UTC()
+	}
+	if report.Stats != nil {
+		record.TotalDurationMillis = report.Stats.TotalDurationMillis
+		record.PromptEvalCount = report.Stats.PromptEvalCount
+		record.EvalCount = report.Stats.EvalCount
+	}
+	return record
+}
+
+func ApplySavedModelAnalysisReport(report ModelAnalysisReport, saved domain.ModelAnalysisReport) ModelAnalysisReport {
+	report.ID = string(saved.ID)
+	createdAt := saved.CreatedAt.UTC()
+	report.CreatedAt = &createdAt
+	report.GeneratedAt = saved.GeneratedAt.UTC()
+	return report
+}
+
 func baseModelAnalysisReport(bundle EvidenceBundle, options ModelAnalysisOptions, prompt ModelAnalysisPrompt, generatedAt time.Time) ModelAnalysisReport {
 	return ModelAnalysisReport{
 		Schema:           ModelAnalysisReportSchema,
@@ -231,6 +282,16 @@ func modelAnalysisFindingIDs(findings []EvidenceBundleFinding) []string {
 	for _, finding := range findings {
 		if strings.TrimSpace(finding.ID) != "" {
 			ids = append(ids, finding.ID)
+		}
+	}
+	return ids
+}
+
+func domainFindingIDs(values []string) []domain.ID {
+	ids := make([]domain.ID, 0, len(values))
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			ids = append(ids, domain.ID(value))
 		}
 	}
 	return ids
