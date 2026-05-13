@@ -113,6 +113,65 @@ func timelineReportCommand(meta domain.AppMeta) *urfavecli.Command {
 	}
 }
 
+func evidenceBundleReportCommand(meta domain.AppMeta) *urfavecli.Command {
+	return &urfavecli.Command{
+		Name:  "evidence-bundle",
+		Usage: "export a compact redacted evidence bundle for model-assisted analysis",
+		Flags: append(environmentPathFlags(),
+			&urfavecli.StringFlag{Name: "app", Usage: "optional monitored app slug"},
+			&urfavecli.StringFlag{Name: "format", Value: "json", Usage: "output format"},
+			&urfavecli.StringFlag{Name: "output", Aliases: []string{"o"}, Usage: "write bundle to a file instead of stdout"},
+			&urfavecli.IntFlag{Name: "limit", Value: 50, Usage: "maximum findings to include"},
+			&urfavecli.IntFlag{Name: "max-events", Value: 8, Usage: "maximum compact evidence events per finding"},
+			&urfavecli.IntFlag{Name: "max-metadata-depth", Value: 4, Usage: "maximum nested metadata depth"},
+			&urfavecli.IntFlag{Name: "max-string-length", Value: 500, Usage: "maximum string length in redacted metadata"},
+			&urfavecli.BoolFlag{Name: "compact", Usage: "write compact JSON without indentation"},
+		),
+		Action: func(c *urfavecli.Context) error {
+			container, cleanup, err := newDatabaseContainer(c.Context, meta)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+
+			findings, err := container.Hub.ListHubFindings(c.Context, hubapp.ListHubFindingsInput{
+				OrganizationSlug: c.String("org"),
+				ProjectSlug:      c.String("project"),
+				EnvironmentSlug:  c.String("env"),
+				AppSlug:          c.String("app"),
+				Limit:            c.Int("limit"),
+			})
+			if err != nil {
+				return err
+			}
+
+			report := reports.BuildHubFindingsJSONReport(meta, reports.HubFindingsScope{
+				Organization: c.String("org"),
+				Project:      c.String("project"),
+				Environment:  c.String("env"),
+				App:          c.String("app"),
+			}, findings, time.Now().UTC())
+			bundle, err := reports.BuildEvidenceBundle(report, reports.EvidenceBundleOptions{
+				MaxFindings:         c.Int("limit"),
+				MaxEventsPerFinding: c.Int("max-events"),
+				MaxMetadataDepth:    c.Int("max-metadata-depth"),
+				MaxStringLength:     c.Int("max-string-length"),
+			})
+			if err != nil {
+				return err
+			}
+
+			writer, closeWriter, err := reportWriter(c, c.String("output"))
+			if err != nil {
+				return err
+			}
+			defer closeWriter()
+
+			return writeEvidenceBundleReport(writer, c.String("format"), bundle, c.Bool("compact"))
+		},
+	}
+}
+
 func writeHubFindingsReport(w io.Writer, format string, report reports.HubFindingsJSONReport, compact bool) error {
 	switch strings.ToLower(strings.TrimSpace(format)) {
 	case "", "json":
@@ -130,6 +189,15 @@ func writeTimelineReport(w io.Writer, format string, report reports.TimelineCSVR
 	switch strings.ToLower(strings.TrimSpace(format)) {
 	case "", "csv":
 		return reports.WriteTimelineCSV(w, report)
+	default:
+		return fmt.Errorf("unsupported report format %q", format)
+	}
+}
+
+func writeEvidenceBundleReport(w io.Writer, format string, bundle reports.EvidenceBundle, compact bool) error {
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "", "json":
+		return reports.WriteEvidenceBundleJSON(w, bundle, !compact)
 	default:
 		return fmt.Errorf("unsupported report format %q", format)
 	}

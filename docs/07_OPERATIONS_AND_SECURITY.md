@@ -140,6 +140,7 @@ Back up:
 - allowlists
 - reports
 - prompt/model metadata
+- redacted evidence bundle hashes
 
 Raw local evidence on agents may need separate host-level backup or retention policy depending on customer requirements.
 
@@ -150,6 +151,7 @@ Aegrail should degrade gracefully:
 - if Hub is unreachable, agents keep queueing locally
 - if Ollama is down, deterministic findings and reports still work
 - if `AEGRAIL_OLLAMA_OFFLINE=true`, model calls are disabled while deterministic collection, rules, and reports continue
+- if evidence bundles are exported for model use, they must stay compact and redacted before leaving the deterministic pipeline
 - if browser crawling fails, file/log/database monitoring continues
 - if one site config is invalid, validation should identify the site clearly
 - if a database snapshot fails, other configured sites continue

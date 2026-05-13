@@ -116,6 +116,7 @@ go run ./cmd/aegrail hub rules evaluate --fail-on-mismatch
 go run ./cmd/aegrail report hub-findings --format markdown --output ..\data\reports\hub-findings.md
 go run ./cmd/aegrail report hub-findings --format manager-markdown --output ..\data\reports\manager-summary.md
 go run ./cmd/aegrail report timeline --since 24h --format csv --output ..\data\reports\timeline.csv
+go run ./cmd/aegrail report evidence-bundle --limit 20 --output ..\data\reports\evidence-bundle.json
 go run ./cmd/aegrail analyze model status
 go run ./cmd/aegrail analyze model prompt --prompt "Return exactly: aegrail-ok"
 go run ./cmd/aegrail analyze model embed --text "Aegrail evidence"
@@ -143,6 +144,7 @@ Developers and operators need:
 - file baseline comparison
 - config coverage report
 - JSON, Markdown, manager summary, and CSV timeline report preview
+- redacted evidence bundle preview
 - model gateway status, prompt, and embedding smoke tests
 
 ## Documentation Rule

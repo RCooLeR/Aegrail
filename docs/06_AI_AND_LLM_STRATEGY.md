@@ -52,6 +52,7 @@ Current implementation:
 - `AEGRAIL_OLLAMA_BASE_URL`, `AEGRAIL_OLLAMA_INVESTIGATION_MODEL`, `AEGRAIL_OLLAMA_EMBEDDING_MODEL`, `AEGRAIL_OLLAMA_TIMEOUT`, and `AEGRAIL_OLLAMA_OFFLINE` configure the runtime.
 - `aegrail analyze model status` verifies the configured local model gateway without requiring database access.
 - `aegrail analyze model prompt` and `aegrail analyze model embed` are smoke-test commands, not full report synthesis yet.
+- `aegrail report evidence-bundle` exports compact redacted finding evidence for model-assisted analysis.
 
 ## Evidence Bundle Contract
 
@@ -77,6 +78,17 @@ Bundle exclusions:
 - API keys
 - full database rows unless explicitly redacted
 - full raw logs unless summarized and redacted
+
+Current deterministic bundle:
+
+- schema: `aegrail.evidence_bundle.v1`
+- redaction version and rule notes
+- source finding IDs, rule IDs, versions, status, severity, confidence, risk score, and risk band
+- compact event references from finding metadata
+- compact deployment context
+- compact rule metadata and risk factors
+- redacted metadata excerpts with sensitive keys replaced by `[REDACTED]`
+- SHA-256 bundle hash for future prompt/report provenance
 
 ## Report Contract
 

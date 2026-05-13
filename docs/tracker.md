@@ -145,7 +145,7 @@ Last updated: 2026-05-13
 - [x] Add Ollama model gateway.
 - [x] Add configurable investigation model.
 - [x] Add configurable embedding model.
-- [ ] Build compact redacted evidence bundles.
+- [x] Build compact redacted evidence bundles.
 - [ ] Store prompt template version with LLM reports.
 - [x] Support offline AI mode.
 - [x] Add fake model adapter for tests.

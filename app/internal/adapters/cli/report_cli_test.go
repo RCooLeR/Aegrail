@@ -116,6 +116,32 @@ func TestWriteTimelineReportSupportsCSVFormat(t *testing.T) {
 	}
 }
 
+func TestWriteEvidenceBundleReportSupportsJSONFormat(t *testing.T) {
+	bundle := reports.EvidenceBundle{
+		Schema:       reports.EvidenceBundleSchema,
+		BundleSHA256: "abc123",
+		Findings: []reports.EvidenceBundleFinding{
+			{ID: "finding-1", RuleID: "file-php-in-writable-path"},
+		},
+	}
+
+	var jsonOutput bytes.Buffer
+	if err := writeEvidenceBundleReport(&jsonOutput, "json", bundle, false); err != nil {
+		t.Fatalf("writeEvidenceBundleReport(json) returned error: %v", err)
+	}
+	if !strings.Contains(jsonOutput.String(), `"schema": "aegrail.evidence_bundle.v1"`) ||
+		!strings.Contains(jsonOutput.String(), `"bundle_sha256": "abc123"`) {
+		t.Fatalf("json output = %q, want evidence bundle JSON", jsonOutput.String())
+	}
+}
+
+func TestWriteEvidenceBundleReportRejectsUnsupportedFormat(t *testing.T) {
+	err := writeEvidenceBundleReport(&bytes.Buffer{}, "markdown", reports.EvidenceBundle{}, false)
+	if err == nil || !strings.Contains(err.Error(), `unsupported report format "markdown"`) {
+		t.Fatalf("error = %v, want unsupported format", err)
+	}
+}
+
 func TestWriteTimelineReportRejectsUnsupportedFormat(t *testing.T) {
 	err := writeTimelineReport(&bytes.Buffer{}, "json", reports.TimelineCSVReport{})
 	if err == nil || !strings.Contains(err.Error(), `unsupported report format "json"`) {

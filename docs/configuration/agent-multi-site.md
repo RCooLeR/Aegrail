@@ -420,7 +420,8 @@ Done:
 22. Add Markdown manager summary output for persisted Hub findings.
 23. Add CSV timeline export output for Hub timeline events.
 24. Add Ollama model gateway with health, generation, embedding, offline-mode, and fake-test adapters.
+25. Add compact redacted evidence bundle export for persisted Hub findings.
 
 Next:
 
-1. Build compact redacted evidence bundles for model-assisted reports.
+1. Store prompt template version with LLM reports.
