@@ -139,8 +139,8 @@ Last updated: 2026-05-13
 
 - [x] Add JSON findings export.
 - [x] Add Markdown technical report.
-- [ ] Add Markdown manager summary.
-- [ ] Add CSV timeline export.
+- [x] Add Markdown manager summary.
+- [x] Add CSV timeline export.
 - [ ] Add report renderer golden tests.
 - [ ] Add Ollama model gateway.
 - [ ] Add configurable investigation model.

@@ -417,7 +417,9 @@ Done:
 19. Add traffic spike and Tor network context rules for normalized access-log events.
 20. Add deterministic risk scoring metadata across generated finding families.
 21. Add Markdown technical report output for persisted Hub findings.
+22. Add Markdown manager summary output for persisted Hub findings.
+23. Add CSV timeline export output for Hub timeline events.
 
 Next:
 
-1. Add Markdown manager summary output.
+1. Add Ollama model gateway.

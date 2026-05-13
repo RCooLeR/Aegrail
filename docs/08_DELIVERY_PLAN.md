@@ -17,6 +17,8 @@ Aegrail already has:
 - signed Hub ingest API
 - Hub findings persistence and JSON export
 - Markdown technical findings report output
+- Markdown manager summary report output
+- CSV timeline report output
 - cross-host file baseline comparison
 - event correlation findings
 - browser crawler with static and rendered modes
@@ -219,7 +221,7 @@ Exit criteria:
 
 - reports include source finding IDs and evidence refs
 - model output is labeled as analysis
-- deterministic JSON and Markdown report generation works without Ollama
+- deterministic JSON, Markdown, and CSV report generation works without Ollama
 
 ## Phase 7: Remote Collection And Scheduling
 

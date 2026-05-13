@@ -190,6 +190,77 @@ func TestWriteHubFindingsMarkdownRanksFindingsAndIncludesEvidence(t *testing.T) 
 	}
 }
 
+func TestWriteHubFindingsManagerMarkdownSummarizesPriorityAndStatus(t *testing.T) {
+	generatedAt := time.Date(2026, 5, 12, 14, 0, 0, 0, time.UTC)
+	eventTime := time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
+
+	report := BuildHubFindingsJSONReport(
+		domain.AppMeta{Name: "Aegrail", Binary: "aegrail", Version: "test"},
+		HubFindingsScope{Organization: "acme", Project: "customer-site", Environment: "production", App: "main-web"},
+		[]domain.HubFinding{
+			{
+				ID:           "finding-critical",
+				RuleID:       "probable-incident-chain",
+				RuleVersion:  "2026-05-13.1",
+				DedupeKey:    "corr-critical",
+				Severity:     domain.SeverityHigh,
+				Confidence:   domain.ConfidenceHigh,
+				Title:        "Probable incident chain",
+				Summary:      "web-02 log.access /wp-login.php -> web-02 file.created avatar.php",
+				EventIDs:     []domain.ID{"evt-login", "evt-file", "evt-db"},
+				FirstEventAt: eventTime,
+				LastEventAt:  eventTime.Add(5 * time.Minute),
+				Status:       "acknowledged",
+				Metadata: map[string]any{
+					"risk": map[string]any{
+						"score": 92,
+						"band":  "critical",
+					},
+				},
+				CreatedAt: eventTime,
+				UpdatedAt: eventTime,
+			},
+			{
+				ID:           "finding-medium",
+				RuleID:       "wordpress-option-security-changed",
+				RuleVersion:  "2026-05-13.1",
+				DedupeKey:    "corr-medium",
+				Severity:     domain.SeverityMedium,
+				Confidence:   domain.ConfidenceMedium,
+				Title:        "WordPress tracked option changed",
+				Summary:      "wp option changed",
+				EventIDs:     []domain.ID{"evt-option"},
+				FirstEventAt: eventTime.Add(time.Hour),
+				LastEventAt:  eventTime.Add(time.Hour),
+				Metadata: map[string]any{
+					"deployment_context": map[string]any{"active": true},
+					"risk": map[string]any{
+						"score": 46,
+						"band":  "medium",
+					},
+				},
+				CreatedAt: eventTime.Add(time.Hour),
+				UpdatedAt: eventTime.Add(time.Hour),
+			},
+		},
+		generatedAt,
+	)
+
+	var encoded bytes.Buffer
+	if err := WriteHubFindingsManagerMarkdown(&encoded, report); err != nil {
+		t.Fatalf("WriteHubFindingsManagerMarkdown returned error: %v", err)
+	}
+	markdown := encoded.String()
+	assertContains(t, markdown, "# Aegrail Manager Summary")
+	assertContains(t, markdown, "Aegrail found 2 persisted finding(s)")
+	assertContains(t, markdown, "1 finding(s) are critical or high risk")
+	assertContains(t, markdown, "- Acknowledged: 1")
+	assertContains(t, markdown, "- Open: 1")
+	assertContains(t, markdown, "- Findings with active deployment context: 1")
+	assertContains(t, markdown, "- finding-critical: Probable incident chain, critical (92), status acknowledged")
+	assertContains(t, markdown, "Start incident triage for critical and high-risk findings")
+}
+
 func assertContains(t *testing.T, value string, want string) {
 	t.Helper()
 	if !strings.Contains(value, want) {

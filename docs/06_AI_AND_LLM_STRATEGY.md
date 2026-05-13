@@ -75,6 +75,8 @@ Current deterministic reports:
 
 - JSON Hub findings export for machine use
 - Markdown technical report for analyst review, sorted by risk and backed by finding/event references
+- Markdown manager summary for non-technical status, impact, and next steps
+- CSV timeline export for spreadsheet review and incident handoff
 
 Generated analysis should:
 
