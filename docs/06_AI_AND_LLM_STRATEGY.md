@@ -91,7 +91,7 @@ Current deterministic bundle:
 - compact deployment context
 - compact rule metadata and risk factors
 - redacted metadata excerpts with sensitive keys replaced by `[REDACTED]`
-- SHA-256 bundle hash for future prompt/report provenance
+- SHA-256 bundle hash for prompt/report provenance
 
 ## Report Contract
 
