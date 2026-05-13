@@ -416,7 +416,8 @@ Done:
 18. Add admin request anomaly rules for suspicious login/admin traffic patterns.
 19. Add traffic spike and Tor network context rules for normalized access-log events.
 20. Add deterministic risk scoring metadata across generated finding families.
+21. Add Markdown technical report output for persisted Hub findings.
 
 Next:
 
-1. Add Markdown technical report output.
+1. Add Markdown manager summary output.

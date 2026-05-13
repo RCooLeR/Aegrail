@@ -138,7 +138,7 @@ Last updated: 2026-05-13
 ## Phase 6: Reports And AI
 
 - [x] Add JSON findings export.
-- [ ] Add Markdown technical report.
+- [x] Add Markdown technical report.
 - [ ] Add Markdown manager summary.
 - [ ] Add CSV timeline export.
 - [ ] Add report renderer golden tests.

@@ -3,6 +3,7 @@ package reports
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -83,5 +84,115 @@ func TestBuildHubFindingsJSONReportSortsAndEncodesFindings(t *testing.T) {
 	}
 	if decoded.Scope.Organization != "acme" || decoded.Tool.Binary != "aegrail" || decoded.Findings[0].RuleID != "probable-incident-chain" || decoded.Findings[0].RiskScore != 92 {
 		t.Fatalf("decoded report = %#v", decoded)
+	}
+}
+
+func TestWriteHubFindingsMarkdownRanksFindingsAndIncludesEvidence(t *testing.T) {
+	generatedAt := time.Date(2026, 5, 12, 14, 0, 0, 0, time.UTC)
+	older := time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
+	newer := older.Add(time.Hour)
+
+	report := BuildHubFindingsJSONReport(
+		domain.AppMeta{Name: "Aegrail", Binary: "aegrail", Version: "test", Commit: "abc123"},
+		HubFindingsScope{Organization: "acme", Project: "customer-site", Environment: "production", App: "main-web"},
+		[]domain.HubFinding{
+			{
+				ID:           "finding-new-low",
+				RuleID:       "web-tor-request-observed",
+				RuleVersion:  "2026-05-13.1",
+				DedupeKey:    "corr-low",
+				Severity:     domain.SeverityLow,
+				Confidence:   domain.ConfidenceLow,
+				Title:        "Tor-marked request observed",
+				Summary:      "web-01 log.access /",
+				EventIDs:     []domain.ID{"evt-low"},
+				FirstEventAt: newer,
+				LastEventAt:  newer,
+				Metadata: map[string]any{
+					"risk": map[string]any{
+						"score": 18,
+						"band":  "informational",
+					},
+				},
+				CreatedAt: newer,
+				UpdatedAt: newer,
+			},
+			{
+				ID:           "finding-old-critical",
+				RuleID:       "probable-incident-chain",
+				RuleVersion:  "2026-05-13.1",
+				DedupeKey:    "corr-critical",
+				Severity:     domain.SeverityHigh,
+				Confidence:   domain.ConfidenceHigh,
+				Title:        "Probable incident chain",
+				Summary:      "web-02 log.access /wp-login.php -> web-02 file.created avatar.php -> db-01 db.role_changed users:42",
+				Description:  "Aegrail correlated 3 timeline event(s).",
+				EventIDs:     []domain.ID{"evt-login", "evt-file", "evt-db"},
+				FirstEventAt: older,
+				LastEventAt:  older.Add(8 * time.Minute),
+				Metadata: map[string]any{
+					"events": []map[string]any{
+						{
+							"event_id":   "evt-login",
+							"event_time": older.Format(time.RFC3339),
+							"host":       "web-02",
+							"type":       "log.access",
+							"target":     "/wp-login.php",
+						},
+					},
+					"deployment_context": map[string]any{
+						"active":            true,
+						"severity_adjusted": false,
+						"original_severity": "high",
+						"adjusted_severity": "high",
+						"deployments": []map[string]any{
+							{
+								"id":         "dep-1",
+								"version":    "v1.8.2",
+								"commit_sha": "a91f72c",
+								"actor":      "github-actions",
+								"started_at": older.Add(-time.Minute).Format(time.RFC3339),
+							},
+						},
+					},
+					"risk": map[string]any{
+						"score": 92,
+						"band":  "critical",
+						"factors": []map[string]any{
+							{"id": "rule:incident_chain", "points": 12, "reason": "probable multi-step incident chain"},
+						},
+					},
+				},
+				CreatedAt: older,
+				UpdatedAt: older,
+			},
+		},
+		generatedAt,
+	)
+
+	var encoded bytes.Buffer
+	if err := WriteHubFindingsMarkdown(&encoded, report); err != nil {
+		t.Fatalf("WriteHubFindingsMarkdown returned error: %v", err)
+	}
+	markdown := encoded.String()
+	assertContains(t, markdown, "# Aegrail Technical Findings Report")
+	assertContains(t, markdown, "- Organization: acme")
+	assertContains(t, markdown, "| critical | 1 |")
+	assertContains(t, markdown, "- Risk: critical (92)")
+	assertContains(t, markdown, "- evt-login | 2026-05-12T12:00:00Z | web-02 | log.access | /wp-login.php")
+	assertContains(t, markdown, "- Deployment: v1.8.2, actor github-actions")
+	assertContains(t, markdown, "- +12 rule:incident_chain: probable multi-step incident chain")
+
+	criticalIndex := strings.Index(markdown, "### 1. Probable incident chain")
+	lowIndex := strings.Index(markdown, "### 2. Tor-marked request observed")
+	if criticalIndex < 0 || lowIndex < 0 || criticalIndex > lowIndex {
+		t.Fatalf("markdown findings are not risk-ranked:\n%s", markdown)
+	}
+}
+
+func assertContains(t *testing.T, value string, want string) {
+	t.Helper()
+	if !strings.Contains(value, want) {
+		t.Fatalf("value does not contain %q:\n%s", want, value)
 	}
 }

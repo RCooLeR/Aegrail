@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/rcooler/aegrail/internal/domain"
@@ -25,9 +26,6 @@ func hubFindingsReportCommand(meta domain.AppMeta) *urfavecli.Command {
 			&urfavecli.BoolFlag{Name: "compact", Usage: "write compact JSON without indentation"},
 		),
 		Action: func(c *urfavecli.Context) error {
-			if c.String("format") != "json" {
-				return fmt.Errorf("unsupported report format %q", c.String("format"))
-			}
 			container, cleanup, err := newDatabaseContainer(c.Context, meta)
 			if err != nil {
 				return err
@@ -58,8 +56,19 @@ func hubFindingsReportCommand(meta domain.AppMeta) *urfavecli.Command {
 			}
 			defer closeWriter()
 
-			return reports.WriteHubFindingsJSON(writer, report, !c.Bool("compact"))
+			return writeHubFindingsReport(writer, c.String("format"), report, c.Bool("compact"))
 		},
+	}
+}
+
+func writeHubFindingsReport(w io.Writer, format string, report reports.HubFindingsJSONReport, compact bool) error {
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "", "json":
+		return reports.WriteHubFindingsJSON(w, report, !compact)
+	case "markdown", "md":
+		return reports.WriteHubFindingsMarkdown(w, report)
+	default:
+		return fmt.Errorf("unsupported report format %q", format)
 	}
 }
 

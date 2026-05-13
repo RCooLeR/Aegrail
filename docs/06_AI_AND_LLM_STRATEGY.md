@@ -71,6 +71,11 @@ Bundle exclusions:
 
 ## Report Contract
 
+Current deterministic reports:
+
+- JSON Hub findings export for machine use
+- Markdown technical report for analyst review, sorted by risk and backed by finding/event references
+
 Generated analysis should:
 
 - state that it is generated analysis

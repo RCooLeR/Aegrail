@@ -113,6 +113,7 @@ go run ./cmd/aegrail agent status
 go run ./cmd/aegrail agent start --once --root /var/www/site --profile wordpress
 go run ./cmd/aegrail collector browser crawl --url https://example.com --rendered --wait-tag-manager --timeout 30s --format json
 go run ./cmd/aegrail hub rules evaluate --fail-on-mismatch
+go run ./cmd/aegrail report hub-findings --format markdown --output ..\data\reports\hub-findings.md
 go test ./...
 ```
 
@@ -136,7 +137,7 @@ Developers and operators need:
 - browser script baseline and allowlist inspector
 - file baseline comparison
 - config coverage report
-- report preview
+- JSON and Markdown findings report preview
 - model prompt preview
 
 ## Documentation Rule
