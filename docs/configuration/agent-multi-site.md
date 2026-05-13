@@ -421,7 +421,8 @@ Done:
 23. Add CSV timeline export output for Hub timeline events.
 24. Add Ollama model gateway with health, generation, embedding, offline-mode, and fake-test adapters.
 25. Add compact redacted evidence bundle export for persisted Hub findings.
+26. Add prompt-versioned model analysis report output with bundle, prompt, and model provenance.
 
 Next:
 
-1. Store prompt template version with LLM reports.
+1. Persist generated model report records in the Hub for dashboard review.

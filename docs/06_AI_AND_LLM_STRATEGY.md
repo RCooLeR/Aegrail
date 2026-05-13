@@ -51,8 +51,9 @@ Current implementation:
 - `internal/adapters/modeltest` provides a deterministic fake gateway for tests.
 - `AEGRAIL_OLLAMA_BASE_URL`, `AEGRAIL_OLLAMA_INVESTIGATION_MODEL`, `AEGRAIL_OLLAMA_EMBEDDING_MODEL`, `AEGRAIL_OLLAMA_TIMEOUT`, and `AEGRAIL_OLLAMA_OFFLINE` configure the runtime.
 - `aegrail analyze model status` verifies the configured local model gateway without requiring database access.
-- `aegrail analyze model prompt` and `aegrail analyze model embed` are smoke-test commands, not full report synthesis yet.
+- `aegrail analyze model prompt` and `aegrail analyze model embed` are gateway smoke-test commands.
 - `aegrail report evidence-bundle` exports compact redacted finding evidence for model-assisted analysis.
+- `aegrail analyze model report` builds an evidence bundle, sends it to the configured investigation model, and writes a prompt-versioned advisory analysis report.
 
 ## Evidence Bundle Contract
 
@@ -98,6 +99,18 @@ Current deterministic reports:
 - Markdown technical report for analyst review, sorted by risk and backed by finding/event references
 - Markdown manager summary for non-technical status, impact, and next steps
 - CSV timeline export for spreadsheet review and incident handoff
+
+Current model-assisted report:
+
+- schema: `aegrail.model_analysis_report.v1`
+- status: `completed`, `offline`, or `failed`
+- advisory notice that deterministic findings remain the source of truth
+- source finding IDs
+- evidence bundle schema, redaction version, generated time, and SHA-256 hash
+- prompt template ID, version, and SHA-256 hash
+- final prompt SHA-256 hash
+- provider, model name, offline flag, generation timing, and token counts where available
+- raw generated analysis text, or an error if the model gateway was offline or failed
 
 Generated analysis should:
 
@@ -157,6 +170,12 @@ Cache or report metadata should include:
 - generated time
 
 When prompt rules change, bump the prompt version.
+
+Current prompt template:
+
+- ID: `aegrail.incident_analysis`
+- Version: `2026-05-13.1`
+- Output intent: concise Markdown with executive summary, probable incident chain, priority findings, next checks, and uncertainty/gaps.
 
 ## Safety
 

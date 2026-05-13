@@ -113,13 +113,14 @@ go run ./cmd/aegrail agent status
 go run ./cmd/aegrail agent start --once --root /var/www/site --profile wordpress
 go run ./cmd/aegrail collector browser crawl --url https://example.com --rendered --wait-tag-manager --timeout 30s --format json
 go run ./cmd/aegrail hub rules evaluate --fail-on-mismatch
-go run ./cmd/aegrail report hub-findings --format markdown --output ..\data\reports\hub-findings.md
-go run ./cmd/aegrail report hub-findings --format manager-markdown --output ..\data\reports\manager-summary.md
-go run ./cmd/aegrail report timeline --since 24h --format csv --output ..\data\reports\timeline.csv
-go run ./cmd/aegrail report evidence-bundle --limit 20 --output ..\data\reports\evidence-bundle.json
+go run ./cmd/aegrail report hub-findings --org acme --project customer-site --env production --format markdown --output ..\data\reports\hub-findings.md
+go run ./cmd/aegrail report hub-findings --org acme --project customer-site --env production --format manager-markdown --output ..\data\reports\manager-summary.md
+go run ./cmd/aegrail report timeline --org acme --project customer-site --env production --since 24h --format csv --output ..\data\reports\timeline.csv
+go run ./cmd/aegrail report evidence-bundle --org acme --project customer-site --env production --limit 20 --output ..\data\reports\evidence-bundle.json
 go run ./cmd/aegrail analyze model status
 go run ./cmd/aegrail analyze model prompt --prompt "Return exactly: aegrail-ok"
 go run ./cmd/aegrail analyze model embed --text "Aegrail evidence"
+go run ./cmd/aegrail analyze model report --org acme --project customer-site --env production --limit 20 --output ..\data\reports\model-analysis.json
 go test ./...
 ```
 
@@ -145,7 +146,7 @@ Developers and operators need:
 - config coverage report
 - JSON, Markdown, manager summary, and CSV timeline report preview
 - redacted evidence bundle preview
-- model gateway status, prompt, and embedding smoke tests
+- model gateway status, prompt, embedding smoke tests, and prompt-versioned advisory analysis report preview
 
 ## Documentation Rule
 

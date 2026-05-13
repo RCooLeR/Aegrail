@@ -146,7 +146,9 @@ Last updated: 2026-05-13
 - [x] Add configurable investigation model.
 - [x] Add configurable embedding model.
 - [x] Build compact redacted evidence bundles.
-- [ ] Store prompt template version with LLM reports.
+- [x] Store prompt template version with LLM reports.
+- [x] Add model-assisted analysis report command.
+- [ ] Persist generated model report records in the Hub.
 - [x] Support offline AI mode.
 - [x] Add fake model adapter for tests.
 

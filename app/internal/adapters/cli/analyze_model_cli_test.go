@@ -1,11 +1,14 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/rcooler/aegrail/internal/reports"
 )
 
 func TestAnalyzeModelStatusListsConfiguredOllamaModels(t *testing.T) {
@@ -85,6 +88,37 @@ func TestAnalyzeModelEmbedUsesGateway(t *testing.T) {
 	stdout := runCLICapture(t, "aegrail", "analyze", "model", "embed", "--text", "hello")
 	if !strings.Contains(stdout, "Model embedding-test produced 1 embedding vector(s), dimension 2.") {
 		t.Fatalf("stdout = %q, want embedding summary", stdout)
+	}
+}
+
+func TestWriteModelAnalysisReportSupportsJSONFormat(t *testing.T) {
+	report := reports.ModelAnalysisReport{
+		Schema: reports.ModelAnalysisReportSchema,
+		Status: reports.ModelAnalysisStatusCompleted,
+		PromptTemplate: reports.ModelAnalysisPromptTemplate{
+			ID:      reports.ModelAnalysisPromptTemplateID,
+			Version: reports.ModelAnalysisPromptTemplateVersion,
+			SHA256:  "abc123",
+		},
+		EvidenceBundle: reports.ModelAnalysisEvidenceBundleRef{SHA256: "bundle123"},
+		Analysis:       "generated analysis",
+	}
+
+	var output bytes.Buffer
+	if err := writeModelAnalysisReport(&output, "json", report, false); err != nil {
+		t.Fatalf("writeModelAnalysisReport(json) returned error: %v", err)
+	}
+	if !strings.Contains(output.String(), `"schema": "aegrail.model_analysis_report.v1"`) ||
+		!strings.Contains(output.String(), `"version": "2026-05-13.1"`) ||
+		!strings.Contains(output.String(), `"sha256": "bundle123"`) {
+		t.Fatalf("json output = %q, want model analysis report JSON", output.String())
+	}
+}
+
+func TestWriteModelAnalysisReportRejectsUnsupportedFormat(t *testing.T) {
+	err := writeModelAnalysisReport(&bytes.Buffer{}, "markdown", reports.ModelAnalysisReport{}, false)
+	if err == nil || !strings.Contains(err.Error(), `unsupported report format "markdown"`) {
+		t.Fatalf("error = %v, want unsupported format", err)
 	}
 }
 

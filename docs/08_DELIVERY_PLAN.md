@@ -21,6 +21,7 @@ Aegrail already has:
 - CSV timeline report output
 - Ollama model gateway with health, generation, embedding, offline-mode, and fake-test adapters
 - compact redacted evidence bundle export for model-assisted analysis
+- prompt-versioned Ollama advisory analysis report output with bundle and prompt hashes
 - cross-host file baseline comparison
 - event correlation findings
 - browser crawler with static and rendered modes
@@ -217,13 +218,14 @@ Deliverables:
 - Ollama model gateway
 - redacted evidence bundle builder
 - prompt templates and versions
-- generated analysis storage
+- generated analysis report output
 
 Exit criteria:
 
 - reports include source finding IDs and evidence refs
 - evidence bundles are redacted, compact, and hashable before model use
 - model output is labeled as analysis
+- model reports store prompt template ID, version, template hash, final prompt hash, bundle hash, model name, and offline/failed state
 - deterministic JSON, Markdown, and CSV report generation works without Ollama
 - model gateway can be smoke-tested independently from deterministic reports
 
