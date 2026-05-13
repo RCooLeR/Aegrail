@@ -64,6 +64,7 @@ Unit tests:
 - config validation
 - rule scoring
 - finding dedupe
+- risk scoring metadata
 - browser script observation parsing
 
 Integration tests:

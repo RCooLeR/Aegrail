@@ -95,6 +95,7 @@ func (h *Hub) AnalyzeBrowserScriptDrift(ctx context.Context, input AnalyzeBrowse
 	if err != nil {
 		return BrowserScriptDriftResult{}, err
 	}
+	findings = applyRiskScoringToFindings(findings)
 	if input.SaveFindings && len(findings) > 0 {
 		if h.findings == nil {
 			return BrowserScriptDriftResult{}, errors.New("finding repository is not configured")

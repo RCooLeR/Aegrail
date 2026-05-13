@@ -214,6 +214,40 @@ Confidence should reflect evidence quality:
 - correlation with other events
 - allowlist status
 
+## Risk Scoring
+
+Aegrail attaches deterministic risk metadata to generated Hub findings. The score does not replace severity or confidence; it combines them with rule category, rule-specific impact, evidence count, multi-host context, and deployment context.
+
+Current risk metadata shape:
+
+```json
+{
+  "risk": {
+    "version": "2026-05-13.1",
+    "score": 92,
+    "band": "critical",
+    "severity": "high",
+    "confidence": "high",
+    "rule_id": "probable-incident-chain",
+    "rule_category": "correlation",
+    "event_count": 3,
+    "host_count": 2,
+    "deployment_active": false,
+    "factors": []
+  }
+}
+```
+
+Current bands:
+
+- `critical`: 85-100
+- `high`: 65-84
+- `medium`: 40-64
+- `low`: 20-39
+- `informational`: 0-19
+
+Risk scoring runs after deployment-aware severity adjustment, so expected deployment-window noise scores lower while high-risk privileged, payment, persistence, and incident-chain findings stay prominent. JSON finding reports surface `risk_score` and `risk_band` from this metadata.
+
 ## Deployment-Aware Scoring
 
 Deployment markers are first-class scoring context. When a finding overlaps a deployment window for the same app, or an environment-wide deployment window, Aegrail adds `deployment_context` metadata to the finding.

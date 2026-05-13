@@ -83,6 +83,10 @@ func TestCorrelateEventsSavesWordPressDatabaseDiffFinding(t *testing.T) {
 	if len(finding.EventIDs) != 1 || finding.EventIDs[0] != "evt-db-admin" {
 		t.Fatalf("event ids = %#v, want source DB event", finding.EventIDs)
 	}
+	risk, ok := finding.Metadata["risk"].(map[string]any)
+	if !ok || risk["score"] == nil || risk["band"] == "" {
+		t.Fatalf("risk metadata = %#v, want scored finding", finding.Metadata["risk"])
+	}
 }
 
 func TestCorrelateEventsSavesWordPressAdminEntityFinding(t *testing.T) {

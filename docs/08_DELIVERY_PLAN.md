@@ -26,6 +26,7 @@ Aegrail already has:
 - browser drift finding-to-allowlist handoff command and API
 - versioned Hub rule registry with categories, platforms, evidence types, and action hints
 - deployment-aware finding scoring for browser drift and database snapshot findings
+- deterministic risk scoring metadata for generated Hub findings
 - eleven built-in rule fixture evaluation cases covering clean, suspicious, file path, admin request, traffic/Tor, database snapshot, browser drift, deployment-window, and multi-host drift signals
 - generic suspicious file path findings for PHP/webroot tampering
 - admin request anomaly findings for suspicious login/admin traffic
@@ -157,6 +158,7 @@ Exit criteria:
 - admin/login access-log anomalies can produce standalone findings without raw IPs in summaries
 - request volume, server-error, distributed admin POST, and Tor-marked request findings can be produced from normalized access-log events
 - deployment windows influence risk without hiding suspicious changes
+- generated findings include deterministic risk score, risk band, and scoring factor metadata
 - built-in fixtures verify clean, suspicious, file path, admin request, database snapshot, browser, deployment, and multi-host drift behavior
 - finding triage status can be updated without losing deterministic evidence refreshes
 

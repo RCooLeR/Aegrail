@@ -415,7 +415,8 @@ Done:
 17. Add generic suspicious path rules for PHP/webroot tampering.
 18. Add admin request anomaly rules for suspicious login/admin traffic patterns.
 19. Add traffic spike and Tor network context rules for normalized access-log events.
+20. Add deterministic risk scoring metadata across generated finding families.
 
 Next:
 
-1. Add risk scoring across deterministic finding families.
+1. Add Markdown technical report output.

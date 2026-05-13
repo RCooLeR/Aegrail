@@ -40,6 +40,8 @@ type HubFindingJSONRecord struct {
 	DedupeKey       string         `json:"dedupe_key"`
 	Severity        string         `json:"severity"`
 	Confidence      string         `json:"confidence"`
+	RiskScore       int            `json:"risk_score,omitempty"`
+	RiskBand        string         `json:"risk_band,omitempty"`
 	Title           string         `json:"title"`
 	Summary         string         `json:"summary"`
 	Description     string         `json:"description"`
@@ -113,6 +115,8 @@ func hubFindingJSONRecord(finding domain.HubFinding) HubFindingJSONRecord {
 		DedupeKey:       finding.DedupeKey,
 		Severity:        string(finding.Severity),
 		Confidence:      string(finding.Confidence),
+		RiskScore:       hubFindingRiskScore(metadata),
+		RiskBand:        hubFindingRiskBand(metadata),
 		Title:           finding.Title,
 		Summary:         finding.Summary,
 		Description:     finding.Description,
@@ -128,6 +132,32 @@ func hubFindingJSONRecord(finding domain.HubFinding) HubFindingJSONRecord {
 		CreatedAt:       finding.CreatedAt,
 		UpdatedAt:       finding.UpdatedAt,
 	}
+}
+
+func hubFindingRiskScore(metadata map[string]any) int {
+	risk, ok := metadata["risk"].(map[string]any)
+	if !ok {
+		return 0
+	}
+	switch score := risk["score"].(type) {
+	case int:
+		return score
+	case int64:
+		return int(score)
+	case float64:
+		return int(score)
+	default:
+		return 0
+	}
+}
+
+func hubFindingRiskBand(metadata map[string]any) string {
+	risk, ok := metadata["risk"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	band, _ := risk["band"].(string)
+	return band
 }
 
 func hubFindingStatus(finding domain.HubFinding) string {

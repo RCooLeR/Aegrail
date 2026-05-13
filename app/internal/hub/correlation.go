@@ -93,6 +93,7 @@ func (h *Hub) CorrelateEvents(ctx context.Context, input CorrelateEventsInput) (
 	if err != nil {
 		return CorrelateEventsResult{}, err
 	}
+	findings = applyRiskScoringToFindings(findings)
 	if input.SaveFindings && len(findings) > 0 {
 		if h.findings == nil {
 			return CorrelateEventsResult{}, errors.New("finding repository is not configured")

@@ -110,7 +110,7 @@ Last updated: 2026-05-13
 - [x] Add admin request anomaly rules.
 - [x] Add traffic spike rules.
 - [x] Add Tor network context detector for normalized access-log events.
-- [ ] Add risk scoring.
+- [x] Add risk scoring.
 - [x] Add finding status lifecycle.
 - [x] Add finding-to-allowlist handoff command.
 - [x] Add deployment-aware scoring.
