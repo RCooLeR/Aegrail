@@ -24,11 +24,9 @@ Supporting specs:
 - [Browser Crawler And JavaScript Monitoring](docs/collectors/browser-crawler.md)
 - [Dashboard API Pointer](docs/dashboard.md)
 - [Pantheon WordPress Monitoring](docs/platforms/pantheon-wordpress.md)
-- [Tracker](docs/tracker.md)
 - [Architecture Decisions](docs/decisions)
 - [Brand Assets](docs/brand/README.md)
 - [Local Services](services/README.md)
-
 ## Core Principles
 
 - Evidence-first: collect and store deterministic evidence before generating analysis.
@@ -50,4 +48,4 @@ go run ./cmd/aegrail db migrate
 go test ./...
 ```
 
-See [Developer Experience](docs/09_DEVELOPER_EXPERIENCE.md) for local commands and test strategy.
+See the [documentation index](docs/README.md) for command references and the local runbook.

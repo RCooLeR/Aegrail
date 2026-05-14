@@ -9,5 +9,3 @@ The Agent, Collector, Hub, inventory, queue, and cross-host correlation model no
 - [Evidence Collection](04_EVIDENCE_COLLECTION.md)
 - [Detection And Correlation](05_DETECTION_AND_CORRELATION.md)
 - [Operations And Security](07_OPERATIONS_AND_SECURITY.md)
-
-Detailed implementation tasks remain in [Tracker](tracker.md).
