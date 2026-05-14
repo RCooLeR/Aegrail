@@ -158,11 +158,11 @@ func NormalizeServerConfig(config ServerConfig) ServerConfig {
 	config.Identity.AgentID = strings.TrimSpace(config.Identity.AgentID)
 	config.Identity.Region = strings.TrimSpace(config.Identity.Region)
 	config.Identity.Labels = cloneStringMap(config.Identity.Labels)
-	config.Runtime.QueueDir = strings.TrimSpace(config.Runtime.QueueDir)
+	config.Runtime.QueueDir = expandConfigPath(config.Runtime.QueueDir)
 	if config.Runtime.QueueDir == "" {
 		config.Runtime.QueueDir = ".aegrail/queue"
 	}
-	config.Runtime.StateDir = strings.TrimSpace(config.Runtime.StateDir)
+	config.Runtime.StateDir = expandConfigPath(config.Runtime.StateDir)
 	if config.Runtime.StateDir == "" {
 		config.Runtime.StateDir = filepath.Join(filepath.Dir(config.Runtime.QueueDir), "state")
 	}
@@ -185,13 +185,13 @@ func NormalizeServerConfig(config ServerConfig) ServerConfig {
 		if site.Service == "" {
 			site.Service = "frontend"
 		}
-		site.Root = strings.TrimSpace(site.Root)
+		site.Root = expandConfigPath(site.Root)
 		site.Labels = cloneStringMap(site.Labels)
 		site.Files.Profiles = normalizeStringSlice(site.Files.Profiles, true)
-		site.Files.ExtraPaths = normalizeStringSlice(site.Files.ExtraPaths, false)
-		site.Files.Exclude = normalizeStringSlice(site.Files.Exclude, false)
+		site.Files.ExtraPaths = normalizePathSlice(site.Files.ExtraPaths)
+		site.Files.Exclude = normalizePathSlice(site.Files.Exclude)
 		for logIndex := range site.Logs {
-			site.Logs[logIndex].Path = strings.TrimSpace(site.Logs[logIndex].Path)
+			site.Logs[logIndex].Path = expandConfigPath(site.Logs[logIndex].Path)
 			site.Logs[logIndex].Kind = strings.ToLower(strings.TrimSpace(site.Logs[logIndex].Kind))
 		}
 		for dbIndex := range site.Databases {
@@ -212,6 +212,10 @@ func NormalizeServerConfig(config ServerConfig) ServerConfig {
 		}
 	}
 	return config
+}
+
+func expandConfigPath(value string) string {
+	return strings.TrimSpace(os.ExpandEnv(value))
 }
 
 func ValidateServerConfig(config ServerConfig) error {
@@ -377,7 +381,7 @@ func ResolveServerConfigSecret(config ServerConfig, override string) string {
 	return strings.TrimSpace(os.Getenv(config.Hub.IngestSecretEnv))
 }
 
-func (r *Runtime) RunServerConfigOnce(ctx context.Context, config ServerConfig, secret string, sendLimit int) (ServerRunResult, error) {
+func (r *Runtime) RunServerConfigOnce(ctx context.Context, config ServerConfig, secret string, sendLimit int, bootstrap bool) (ServerRunResult, error) {
 	config = NormalizeServerConfig(config)
 	if err := ValidateServerConfig(config); err != nil {
 		return ServerRunResult{}, err
@@ -405,6 +409,7 @@ func (r *Runtime) RunServerConfigOnce(ctx context.Context, config ServerConfig, 
 				Profiles:  site.Files.Profiles,
 				Exclude:   site.Files.Exclude,
 				StatePath: siteStatePath(config, site, "file-watch.json"),
+				NoEvents:  bootstrap,
 				App:       site.App,
 				Service:   site.Service,
 				Region:    config.Identity.Region,
@@ -425,6 +430,7 @@ func (r *Runtime) RunServerConfigOnce(ctx context.Context, config ServerConfig, 
 			logResult, err := r.ScanLogPaths(ctx, LogWatchOptions{
 				Paths:     logPaths,
 				StatePath: siteStatePath(config, site, "log-tail.json"),
+				NoEvents:  bootstrap,
 				App:       site.App,
 				Service:   site.Service,
 				Region:    config.Identity.Region,
@@ -441,7 +447,13 @@ func (r *Runtime) RunServerConfigOnce(ctx context.Context, config ServerConfig, 
 		result.Sites = append(result.Sites, siteResult)
 	}
 
-	if strings.TrimSpace(secret) != "" {
+	if bootstrap {
+		status, err := r.Status(ctx)
+		if err != nil {
+			return result, err
+		}
+		result.Pending = status.Pending
+	} else if strings.TrimSpace(secret) != "" {
 		sendResult, err := r.SendQueued(ctx, secret, sendLimit)
 		if err != nil {
 			return result, err
@@ -496,6 +508,23 @@ func normalizeStringSlice(values []string, lower bool) []string {
 		if lower {
 			value = strings.ToLower(value)
 		}
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		normalized = append(normalized, value)
+	}
+	return normalized
+}
+
+func normalizePathSlice(values []string) []string {
+	seen := map[string]struct{}{}
+	normalized := make([]string, 0, len(values))
+	for _, value := range values {
+		value = expandConfigPath(value)
 		if value == "" {
 			continue
 		}

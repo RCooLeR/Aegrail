@@ -50,7 +50,7 @@ func TestEvidenceArchiveCopiesFiles(t *testing.T) {
 	}
 
 	archive := NewEvidenceArchive(filepath.Join(root, "data"))
-	refs, err := archive.StoreLocalEvidence(context.Background(), "petlink", "import-1", domain.EvidenceManifest{
+	refs, err := archive.StoreLocalEvidence(context.Background(), "demo-site", "import-1", domain.EvidenceManifest{
 		Files: []domain.EvidenceFile{
 			{
 				SourcePath:   src,

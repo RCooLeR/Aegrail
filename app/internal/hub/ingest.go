@@ -46,6 +46,12 @@ type IngestEventsResult struct {
 	Reused bool
 }
 
+const (
+	autoCorrelationLookback = 30 * time.Minute
+	autoCorrelationWindow   = 30 * time.Minute
+	autoCorrelationLimit    = 5000
+)
+
 func (h *Hub) IngestEvents(ctx context.Context, input IngestEventsInput) (IngestEventsResult, error) {
 	if h.ingest == nil {
 		return IngestEventsResult{}, errors.New("ingest repository is not configured")
@@ -84,12 +90,14 @@ func (h *Hub) IngestEvents(ctx context.Context, input IngestEventsInput) (Ingest
 	}
 
 	var appID domain.ID
+	appSlug := strings.TrimSpace(input.AppSlug)
 	if strings.TrimSpace(input.AppSlug) != "" {
 		app, err := h.resolveAppPath(ctx, input.OrganizationSlug, input.ProjectSlug, input.EnvironmentSlug, input.AppSlug)
 		if err != nil {
 			return IngestEventsResult{}, err
 		}
 		appID = app.ID
+		appSlug = app.Slug
 	}
 
 	var serviceID domain.ID
@@ -147,11 +155,60 @@ func (h *Hub) IngestEvents(ctx context.Context, input IngestEventsInput) (Ingest
 	if err != nil {
 		return IngestEventsResult{}, err
 	}
+	if created {
+		h.autoCorrelateIngestEvents(ctx, org.Slug, project.Slug, environment.Slug, appSlug, savedEvents)
+	}
 	return IngestEventsResult{
 		Batch:  savedBatch,
 		Events: savedEvents,
 		Reused: !created,
 	}, nil
+}
+
+func (h *Hub) autoCorrelateIngestEvents(ctx context.Context, organizationSlug string, projectSlug string, environmentSlug string, appSlug string, events []domain.IngestEvent) {
+	if h.findings == nil || len(events) == 0 || !shouldAutoCorrelateIngestEvents(events) {
+		return
+	}
+	since := earliestIngestEventTime(events)
+	if since.IsZero() {
+		since = time.Now().UTC()
+	}
+	_, _ = h.CorrelateEvents(ctx, CorrelateEventsInput{
+		OrganizationSlug: organizationSlug,
+		ProjectSlug:      projectSlug,
+		EnvironmentSlug:  environmentSlug,
+		AppSlug:          appSlug,
+		Since:            since.Add(-autoCorrelationLookback),
+		Window:           autoCorrelationWindow,
+		Limit:            autoCorrelationLimit,
+		SaveFindings:     true,
+	})
+}
+
+func shouldAutoCorrelateIngestEvents(events []domain.IngestEvent) bool {
+	for _, event := range events {
+		eventType := strings.ToLower(strings.TrimSpace(event.EventType))
+		if strings.HasPrefix(eventType, "db.") ||
+			strings.HasPrefix(eventType, "file.") ||
+			eventType == "log.access" ||
+			eventType == "log.php_error" {
+			return true
+		}
+	}
+	return false
+}
+
+func earliestIngestEventTime(events []domain.IngestEvent) time.Time {
+	var earliest time.Time
+	for _, event := range events {
+		if event.EventTime.IsZero() {
+			continue
+		}
+		if earliest.IsZero() || event.EventTime.Before(earliest) {
+			earliest = event.EventTime
+		}
+	}
+	return earliest
 }
 
 func (h *Hub) ListIngestBatches(ctx context.Context, organizationSlug string, projectSlug string, environmentSlug string, limit int) ([]domain.IngestBatch, error) {

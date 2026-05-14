@@ -17,6 +17,8 @@ type Hub struct {
 	findings         ports.HubFindingRepository
 	browserAllowlist ports.BrowserScriptAllowlistRepository
 	modelReports     ports.ModelAnalysisReportRepository
+	users            ports.HubUserRepository
+	userSecretKey    string
 }
 
 type Dependencies struct {
@@ -25,6 +27,8 @@ type Dependencies struct {
 	Findings         ports.HubFindingRepository
 	BrowserAllowlist ports.BrowserScriptAllowlistRepository
 	ModelReports     ports.ModelAnalysisReportRepository
+	Users            ports.HubUserRepository
+	UserSecretKey    string
 }
 
 func New(deps Dependencies) *Hub {
@@ -34,6 +38,8 @@ func New(deps Dependencies) *Hub {
 		findings:         deps.Findings,
 		browserAllowlist: deps.BrowserAllowlist,
 		modelReports:     deps.ModelReports,
+		users:            deps.Users,
+		userSecretKey:    strings.TrimSpace(deps.UserSecretKey),
 	}
 }
 

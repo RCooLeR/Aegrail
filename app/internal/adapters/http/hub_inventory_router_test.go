@@ -61,6 +61,53 @@ func TestHubRouterListsInventoryTopology(t *testing.T) {
 	}
 }
 
+func TestHubRouterListsInventoryScopes(t *testing.T) {
+	repo := newHTTPTestInventoryRepository()
+	router := NewHubRouter(domain.AppMeta{Name: "Aegrail", Binary: "aegrail", Version: "test"}, hubapp.New(hubapp.Dependencies{Inventory: repo}), HubOptions{})
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/inventory/scopes", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Count         int `json:"count"`
+		Projects      int `json:"projects"`
+		Environments  int `json:"environments"`
+		Apps          int `json:"apps"`
+		Organizations []struct {
+			Slug     string `json:"slug"`
+			Name     string `json:"name"`
+			Projects []struct {
+				Slug         string `json:"slug"`
+				Name         string `json:"name"`
+				Environments []struct {
+					Slug string `json:"slug"`
+					Apps []struct {
+						Slug string `json:"slug"`
+						Kind string `json:"kind"`
+					} `json:"apps"`
+				} `json:"environments"`
+			} `json:"projects"`
+		} `json:"organizations"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("Decode returned error: %v", err)
+	}
+	if body.Count != 1 || body.Projects != 1 || body.Environments != 1 || body.Apps != 1 {
+		t.Fatalf("counts = %#v, want one organization/project/environment/app", body)
+	}
+	if body.Organizations[0].Slug != "acme" || body.Organizations[0].Projects[0].Slug != "customer-site" {
+		t.Fatalf("organizations = %#v", body.Organizations)
+	}
+	environment := body.Organizations[0].Projects[0].Environments[0]
+	if environment.Slug != "production" || environment.Apps[0].Slug != "main-web" || environment.Apps[0].Kind != "wordpress" {
+		t.Fatalf("environment = %#v", environment)
+	}
+}
+
 func TestHubRouterListsAgentsForHost(t *testing.T) {
 	repo := newHTTPTestInventoryRepository()
 	router := NewHubRouter(domain.AppMeta{Name: "Aegrail", Binary: "aegrail", Version: "test"}, hubapp.New(hubapp.Dependencies{Inventory: repo}), HubOptions{})

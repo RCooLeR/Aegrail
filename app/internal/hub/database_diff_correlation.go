@@ -595,9 +595,28 @@ func databaseSnapshotChangeSummary(event domain.TimelineEvent) string {
 	}
 	entity := payloadStringAny(event.Payload, "entity_type", "")
 	if entity != "" {
-		return strings.TrimPrefix(event.EventType, "db.entity.") + " " + entity
+		summary := strings.TrimPrefix(event.EventType, "db.entity.") + " " + entity
+		if display := databaseEntityAccountDisplay(event); display != "" {
+			summary += " account " + display
+		}
+		return summary
 	}
 	return ""
+}
+
+func databaseEntityAccountDisplay(event domain.TimelineEvent) string {
+	current := payloadMap(event.Payload, "current")
+	previous := payloadMap(event.Payload, "previous")
+	currentAttributes := payloadMap(current, "attributes")
+	previousAttributes := payloadMap(previous, "attributes")
+	return firstNonEmpty(
+		payloadStringAny(currentAttributes, "account_display", ""),
+		payloadStringAny(currentAttributes, "email_masked", ""),
+		payloadStringAny(currentAttributes, "login_masked", ""),
+		payloadStringAny(previousAttributes, "account_display", ""),
+		payloadStringAny(previousAttributes, "email_masked", ""),
+		payloadStringAny(previousAttributes, "login_masked", ""),
+	)
 }
 
 func payloadMap(payload map[string]any, key string) map[string]any {

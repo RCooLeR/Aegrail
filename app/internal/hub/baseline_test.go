@@ -2,6 +2,7 @@ package hub
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -131,7 +132,48 @@ type memoryIngestRepository struct {
 }
 
 func (r *memoryIngestRepository) SaveIngestBatch(ctx context.Context, batch domain.IngestBatch, events []domain.IngestEvent) (domain.IngestBatch, []domain.IngestEvent, bool, error) {
-	return batch, events, true, nil
+	now := time.Now().UTC()
+	if batch.ID == "" {
+		batch.ID = domain.ID(fmt.Sprintf("batch-%d", len(r.timelineEvents)+1))
+	}
+	if batch.CreatedAt.IsZero() {
+		batch.CreatedAt = now
+	}
+	savedEvents := make([]domain.IngestEvent, 0, len(events))
+	for _, event := range events {
+		if event.ID == "" {
+			event.ID = domain.ID(fmt.Sprintf("event-%d", len(r.timelineEvents)+1))
+		}
+		if event.BatchID == "" {
+			event.BatchID = batch.ID
+		}
+		if event.CreatedAt.IsZero() {
+			event.CreatedAt = now
+		}
+		savedEvents = append(savedEvents, event)
+		r.timelineEvents = append(r.timelineEvents, domain.TimelineEvent{
+			ID:             event.ID,
+			BatchID:        event.BatchID,
+			OrganizationID: event.OrganizationID,
+			ProjectID:      event.ProjectID,
+			EnvironmentID:  event.EnvironmentID,
+			AppID:          event.AppID,
+			ServiceID:      event.ServiceID,
+			HostID:         event.HostID,
+			AgentID:        event.AgentID,
+			EventTime:      event.EventTime,
+			ReceivedAt:     event.ReceivedAt,
+			EventType:      event.EventType,
+			Target:         event.Target,
+			Severity:       event.Severity,
+			Message:        event.Message,
+			Region:         event.Region,
+			Labels:         event.Labels,
+			Payload:        event.Payload,
+			CreatedAt:      event.CreatedAt,
+		})
+	}
+	return batch, savedEvents, true, nil
 }
 
 func (r *memoryIngestRepository) ListIngestBatches(ctx context.Context, environmentID domain.ID, limit int) ([]domain.IngestBatch, error) {

@@ -180,3 +180,42 @@ type BrowserScriptAllowlistStatusUpdate struct {
 	Reason     string
 	ApprovedBy string
 }
+
+type HubUser struct {
+	ID                   ID
+	Email                string
+	DisplayName          string
+	AccessLevel          string
+	Status               string
+	PasswordHash         string
+	PasswordSetAt        *time.Time
+	TwoFactorRequired    bool
+	TwoFactorEnabled     bool
+	TOTPSecretCiphertext string
+	TOTPEnrolledAt       *time.Time
+	LastLoginAt          *time.Time
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
+}
+
+type HubUserUpdate struct {
+	DisplayName       string
+	AccessLevel       string
+	Status            string
+	TwoFactorRequired bool
+}
+
+type HubUserTOTPUpdate struct {
+	SecretCiphertext string
+	EnrolledAt       time.Time
+}
+
+type HubUserSession struct {
+	ID         ID
+	UserID     ID
+	TokenHash  string
+	ExpiresAt  time.Time
+	RevokedAt  *time.Time
+	CreatedAt  time.Time
+	LastSeenAt time.Time
+}

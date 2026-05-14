@@ -40,6 +40,7 @@ type HTTPConfig struct {
 type HubConfig struct {
 	IngestSecret        string
 	IngestSignatureSkew time.Duration
+	UserSecretKey       string
 }
 
 type LoggingConfig struct {
@@ -70,6 +71,7 @@ func LoadConfig() Config {
 		Hub: HubConfig{
 			IngestSecret:        envString("AEGRAIL_HUB_INGEST_SECRET", ""),
 			IngestSignatureSkew: envDuration("AEGRAIL_HUB_INGEST_SIGNATURE_SKEW", 5*time.Minute),
+			UserSecretKey:       envString("AEGRAIL_HUB_USER_SECRET", envString("AEGRAIL_HUB_INGEST_SECRET", "")),
 		},
 		Logging: LoggingConfig{
 			Level:  envString("AEGRAIL_LOG_LEVEL", "info"),

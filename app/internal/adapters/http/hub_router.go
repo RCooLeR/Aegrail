@@ -2,6 +2,7 @@ package httpadapter
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -20,13 +21,17 @@ import (
 )
 
 const (
-	headerSignature = "X-Aegrail-Signature"
-	headerTimestamp = "X-Aegrail-Timestamp"
+	headerSignature      = "X-Aegrail-Signature"
+	headerTimestamp      = "X-Aegrail-Timestamp"
+	hubSessionCookieName = "aegrail_session"
 )
+
+type hubUserContextKey struct{}
 
 type HubOptions struct {
 	IngestSecret        string
 	IngestSignatureSkew time.Duration
+	DashboardDir        string
 	Now                 func() time.Time
 }
 
@@ -54,25 +59,34 @@ func NewHubRouter(meta domain.AppMeta, hub *hubapp.Hub, options HubOptions) http
 			"mode":    "hub",
 		})
 	})
-	router.Get("/api/v1/rules", listRulesHandler(hub))
 	router.Post("/api/v1/ingest/events", ingestEventsHandler(hub, options))
-	router.Get("/api/v1/findings", listFindingsHandler(hub))
-	router.Patch("/api/v1/findings/{id}/status", updateFindingStatusHandler(hub))
-	router.Post("/api/v1/findings/{id}/browser-script-allowlist", allowBrowserScriptFromFindingHandler(hub))
-	router.Get("/api/v1/reports/model-analysis", listModelAnalysisReportsHandler(hub))
-	router.Get("/api/v1/reports/model-analysis/{id}", getModelAnalysisReportHandler(hub))
-	router.Get("/api/v1/timeline", listTimelineHandler(hub))
-	router.Get("/api/v1/coverage", listCoverageHandler(hub))
-	router.Get("/api/v1/deployments", listDeploymentsHandler(hub))
-	router.Get("/api/v1/browser/scripts", listBrowserScriptsHandler(hub))
-	router.Get("/api/v1/browser/script-allowlist", listBrowserScriptAllowlistHandler(hub))
-	router.Post("/api/v1/browser/script-allowlist", allowBrowserScriptHandler(hub))
-	router.Patch("/api/v1/browser/script-allowlist/{id}/status", updateBrowserScriptAllowlistStatusHandler(hub))
-	router.Get("/api/v1/inventory/apps", listInventoryAppsHandler(hub))
-	router.Get("/api/v1/inventory/services", listInventoryServicesHandler(hub))
-	router.Get("/api/v1/inventory/hosts", listInventoryHostsHandler(hub))
-	router.Get("/api/v1/inventory/agents", listInventoryAgentsHandler(hub))
-	router.Get("/api/v1/inventory/topology", listInventoryTopologyHandler(hub))
+	router.Get("/api/v1/auth/me", getHubAuthMeHandler(hub, options))
+	router.Post("/api/v1/auth/login", loginHubUserHandler(hub, options))
+	router.Post("/api/v1/auth/logout", logoutHubUserHandler(hub, options))
+	router.Get("/api/v1/rules", withHubAuth(hub, options, "viewer", listRulesHandler(hub)))
+	router.Get("/api/v1/findings", withHubAuth(hub, options, "viewer", listFindingsHandler(hub)))
+	router.Patch("/api/v1/findings/{id}/status", withHubAuth(hub, options, "operator", updateFindingStatusHandler(hub)))
+	router.Post("/api/v1/findings/{id}/browser-script-allowlist", withHubAuth(hub, options, "operator", allowBrowserScriptFromFindingHandler(hub)))
+	router.Get("/api/v1/reports/model-analysis", withHubAuth(hub, options, "viewer", listModelAnalysisReportsHandler(hub)))
+	router.Get("/api/v1/reports/model-analysis/{id}", withHubAuth(hub, options, "viewer", getModelAnalysisReportHandler(hub)))
+	router.Get("/api/v1/timeline", withHubAuth(hub, options, "viewer", listTimelineHandler(hub)))
+	router.Get("/api/v1/coverage", withHubAuth(hub, options, "viewer", listCoverageHandler(hub)))
+	router.Get("/api/v1/deployments", withHubAuth(hub, options, "viewer", listDeploymentsHandler(hub)))
+	router.Get("/api/v1/browser/scripts", withHubAuth(hub, options, "viewer", listBrowserScriptsHandler(hub)))
+	router.Get("/api/v1/browser/script-allowlist", withHubAuth(hub, options, "viewer", listBrowserScriptAllowlistHandler(hub)))
+	router.Post("/api/v1/browser/script-allowlist", withHubAuth(hub, options, "operator", allowBrowserScriptHandler(hub)))
+	router.Patch("/api/v1/browser/script-allowlist/{id}/status", withHubAuth(hub, options, "operator", updateBrowserScriptAllowlistStatusHandler(hub)))
+	router.Get("/api/v1/access/users", withHubAuth(hub, options, "admin", listHubUsersHandler(hub)))
+	router.Post("/api/v1/access/users", createHubUserHandler(hub, options))
+	router.Patch("/api/v1/access/users/{id}", withHubAuth(hub, options, "admin", updateHubUserHandler(hub)))
+	router.Post("/api/v1/access/users/{id}/totp", withHubAuth(hub, options, "admin", generateHubUserTOTPHandler(hub)))
+	router.Get("/api/v1/inventory/scopes", withHubAuth(hub, options, "viewer", listInventoryScopesHandler(hub)))
+	router.Get("/api/v1/inventory/apps", withHubAuth(hub, options, "viewer", listInventoryAppsHandler(hub)))
+	router.Get("/api/v1/inventory/services", withHubAuth(hub, options, "viewer", listInventoryServicesHandler(hub)))
+	router.Get("/api/v1/inventory/hosts", withHubAuth(hub, options, "viewer", listInventoryHostsHandler(hub)))
+	router.Get("/api/v1/inventory/agents", withHubAuth(hub, options, "viewer", listInventoryAgentsHandler(hub)))
+	router.Get("/api/v1/inventory/topology", withHubAuth(hub, options, "viewer", listInventoryTopologyHandler(hub)))
+	mountDashboard(router, options.DashboardDir)
 	return router
 }
 
@@ -139,6 +153,35 @@ type configCoverageResponse struct {
 	CoverageLevel   string            `json:"coverage_level"`
 	Labels          map[string]string `json:"labels"`
 	Payload         map[string]any    `json:"payload"`
+}
+
+type organizationResponse struct {
+	ID        string            `json:"id"`
+	Slug      string            `json:"slug"`
+	Name      string            `json:"name"`
+	Projects  []projectResponse `json:"projects"`
+	CreatedAt time.Time         `json:"created_at"`
+	UpdatedAt time.Time         `json:"updated_at"`
+}
+
+type projectResponse struct {
+	ID             string                `json:"id"`
+	OrganizationID string                `json:"organization_id"`
+	Slug           string                `json:"slug"`
+	Name           string                `json:"name"`
+	Environments   []environmentResponse `json:"environments"`
+	CreatedAt      time.Time             `json:"created_at"`
+	UpdatedAt      time.Time             `json:"updated_at"`
+}
+
+type environmentResponse struct {
+	ID        string                 `json:"id"`
+	ProjectID string                 `json:"project_id"`
+	Slug      string                 `json:"slug"`
+	Name      string                 `json:"name"`
+	Apps      []monitoredAppResponse `json:"apps"`
+	CreatedAt time.Time              `json:"created_at"`
+	UpdatedAt time.Time              `json:"updated_at"`
 }
 
 type monitoredAppResponse struct {
@@ -235,6 +278,33 @@ type browserScriptAllowlistEntryResponse struct {
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
+type hubUserResponse struct {
+	ID                string     `json:"id"`
+	Email             string     `json:"email"`
+	DisplayName       string     `json:"display_name"`
+	AccessLevel       string     `json:"access_level"`
+	Status            string     `json:"status"`
+	TwoFactorRequired bool       `json:"two_factor_required"`
+	TwoFactorEnabled  bool       `json:"two_factor_enabled"`
+	TOTPEnrolledAt    *time.Time `json:"totp_enrolled_at,omitempty"`
+	LastLoginAt       *time.Time `json:"last_login_at,omitempty"`
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
+}
+
+type hubUserTOTPEnrollmentResponse struct {
+	OTPAuthURL    string `json:"otpauth_url"`
+	QRCodeDataURL string `json:"qr_code_data_url"`
+	Secret        string `json:"secret"`
+}
+
+type hubAuthMeResponse struct {
+	Authenticated     bool             `json:"authenticated"`
+	AuthConfigured    bool             `json:"auth_configured"`
+	RequiresBootstrap bool             `json:"requires_bootstrap"`
+	User              *hubUserResponse `json:"user,omitempty"`
+}
+
 type modelAnalysisReportResponse struct {
 	ID                             string         `json:"id"`
 	AppID                          string         `json:"app_id,omitempty"`
@@ -323,6 +393,32 @@ type updateBrowserScriptAllowlistStatusRequest struct {
 	Status     string `json:"status"`
 	Reason     string `json:"reason"`
 	ApprovedBy string `json:"approved_by"`
+}
+
+type createHubUserRequest struct {
+	Email             string `json:"email"`
+	DisplayName       string `json:"display_name"`
+	AccessLevel       string `json:"access_level"`
+	Password          string `json:"password"`
+	Status            string `json:"status"`
+	TwoFactorRequired bool   `json:"two_factor_required"`
+}
+
+type updateHubUserRequest struct {
+	DisplayName       string `json:"display_name"`
+	AccessLevel       string `json:"access_level"`
+	Status            string `json:"status"`
+	TwoFactorRequired bool   `json:"two_factor_required"`
+}
+
+type generateHubUserTOTPRequest struct {
+	Issuer string `json:"issuer"`
+}
+
+type loginHubUserRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+	TOTPCode string `json:"totp_code"`
 }
 
 func ingestEventsHandler(hub *hubapp.Hub, options HubOptions) http.HandlerFunc {
@@ -781,6 +877,305 @@ func updateBrowserScriptAllowlistStatusHandler(hub *hubapp.Hub) http.HandlerFunc
 	}
 }
 
+func getHubAuthMeHandler(hub *hubapp.Hub, options HubOptions) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		if !hub.HubUsersConfigured() {
+			writeJSON(w, http.StatusOK, hubAuthMeResponse{
+				Authenticated:  true,
+				AuthConfigured: false,
+			})
+			return
+		}
+		count, err := hub.CountHubUsers(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not check hub users")
+			return
+		}
+		if count == 0 {
+			writeJSON(w, http.StatusOK, hubAuthMeResponse{
+				Authenticated:     false,
+				AuthConfigured:    true,
+				RequiresBootstrap: true,
+			})
+			return
+		}
+		user, ok, err := authenticatedHubUser(r, hub, options)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not check session")
+			return
+		}
+		if !ok {
+			writeJSON(w, http.StatusOK, hubAuthMeResponse{
+				Authenticated:  false,
+				AuthConfigured: true,
+			})
+			return
+		}
+		record := hubUserRecord(user)
+		writeJSON(w, http.StatusOK, hubAuthMeResponse{
+			Authenticated:  true,
+			AuthConfigured: true,
+			User:           &record,
+		})
+	}
+}
+
+func loginHubUserHandler(hub *hubapp.Hub, options HubOptions) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		var request loginHubUserRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		now := options.Now().UTC()
+		result, err := hub.LoginHubUser(r.Context(), hubapp.LoginHubUserInput{
+			Email:    request.Email,
+			Password: request.Password,
+			TOTPCode: request.TOTPCode,
+			Now:      now,
+		})
+		if errors.Is(err, hubapp.ErrHubMFARequired) {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{
+				"error":        "mfa required",
+				"mfa_required": true,
+			})
+			return
+		}
+		if errors.Is(err, hubapp.ErrHubInvalidCredentials) {
+			writeError(w, http.StatusUnauthorized, "invalid email or password")
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		http.SetCookie(w, hubSessionCookie(result.Token, result.ExpiresAt, r))
+		writeJSON(w, http.StatusOK, map[string]any{
+			"user":       hubUserRecord(result.User),
+			"expires_at": result.ExpiresAt,
+		})
+	}
+}
+
+func logoutHubUserHandler(hub *hubapp.Hub, options HubOptions) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		if cookie, err := r.Cookie(hubSessionCookieName); err == nil {
+			if err := hub.LogoutHubUser(r.Context(), cookie.Value, options.Now().UTC()); err != nil {
+				writeError(w, http.StatusInternalServerError, "could not revoke session")
+				return
+			}
+		}
+		http.SetCookie(w, clearHubSessionCookie(r))
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
+func listHubUsersHandler(hub *hubapp.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		users, err := hub.ListHubUsers(r.Context())
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		records := make([]hubUserResponse, 0, len(users))
+		for _, user := range users {
+			records = append(records, hubUserRecord(user))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"count": len(records),
+			"users": records,
+		})
+	}
+}
+
+func createHubUserHandler(hub *hubapp.Hub, options HubOptions) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		bootstrap := false
+		if hub.HubUsersConfigured() {
+			count, err := hub.CountHubUsers(r.Context())
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "could not check hub users")
+				return
+			}
+			bootstrap = count == 0
+			if !bootstrap {
+				user, ok := requireHubUser(w, r, hub, options, "admin")
+				if !ok {
+					return
+				}
+				_ = user
+			}
+		}
+		var request createHubUserRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		if bootstrap {
+			request.AccessLevel = "owner"
+			request.Status = "active"
+		}
+		user, err := hub.CreateHubUser(r.Context(), hubapp.CreateHubUserInput{
+			Email:             request.Email,
+			DisplayName:       request.DisplayName,
+			AccessLevel:       request.AccessLevel,
+			Password:          request.Password,
+			Status:            request.Status,
+			TwoFactorRequired: request.TwoFactorRequired,
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"user": hubUserRecord(user),
+		})
+	}
+}
+
+func updateHubUserHandler(hub *hubapp.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		var request updateHubUserRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		user, err := hub.UpdateHubUser(r.Context(), hubapp.UpdateHubUserInput{
+			UserID:            chi.URLParam(r, "id"),
+			DisplayName:       request.DisplayName,
+			AccessLevel:       request.AccessLevel,
+			Status:            request.Status,
+			TwoFactorRequired: request.TwoFactorRequired,
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"user": hubUserRecord(user),
+		})
+	}
+}
+
+func generateHubUserTOTPHandler(hub *hubapp.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		var request generateHubUserTOTPRequest
+		if r.Body != nil && r.ContentLength != 0 {
+			if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+				writeError(w, http.StatusBadRequest, "invalid JSON body")
+				return
+			}
+		}
+		result, err := hub.GenerateHubUserTOTP(r.Context(), hubapp.GenerateHubUserTOTPInput{
+			UserID: chi.URLParam(r, "id"),
+			Issuer: request.Issuer,
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"user": hubUserRecord(result.User),
+			"enrollment": hubUserTOTPEnrollmentResponse{
+				OTPAuthURL:    result.OTPAuthURL,
+				QRCodeDataURL: result.QRCodeDataURL,
+				Secret:        result.Secret,
+			},
+		})
+	}
+}
+
+func listInventoryScopesHandler(hub *hubapp.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		organizations, err := hub.ListOrganizations(r.Context())
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		records := make([]organizationResponse, 0, len(organizations))
+		projectCount := 0
+		environmentCount := 0
+		appCount := 0
+		for _, organization := range organizations {
+			orgRecord := organizationRecord(organization)
+			projects, err := hub.ListProjects(r.Context(), organization.Slug)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			orgRecord.Projects = make([]projectResponse, 0, len(projects))
+			projectCount += len(projects)
+			for _, project := range projects {
+				projectRecord := projectRecord(project)
+				environments, err := hub.ListEnvironments(r.Context(), organization.Slug, project.Slug)
+				if err != nil {
+					writeError(w, http.StatusBadRequest, err.Error())
+					return
+				}
+				projectRecord.Environments = make([]environmentResponse, 0, len(environments))
+				environmentCount += len(environments)
+				for _, environment := range environments {
+					environmentRecord := environmentRecord(environment)
+					apps, err := hub.ListMonitoredApps(r.Context(), organization.Slug, project.Slug, environment.Slug)
+					if err != nil {
+						writeError(w, http.StatusBadRequest, err.Error())
+						return
+					}
+					environmentRecord.Apps = make([]monitoredAppResponse, 0, len(apps))
+					appCount += len(apps)
+					for _, app := range apps {
+						environmentRecord.Apps = append(environmentRecord.Apps, monitoredAppRecord(app))
+					}
+					projectRecord.Environments = append(projectRecord.Environments, environmentRecord)
+				}
+				orgRecord.Projects = append(orgRecord.Projects, projectRecord)
+			}
+			records = append(records, orgRecord)
+		}
+
+		writeJSON(w, http.StatusOK, map[string]any{
+			"count":         len(records),
+			"projects":      projectCount,
+			"environments":  environmentCount,
+			"apps":          appCount,
+			"organizations": records,
+		})
+	}
+}
+
 func listInventoryAppsHandler(hub *hubapp.Hub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if hub == nil {
@@ -1096,6 +1491,38 @@ func configCoverageRecord(record hubapp.ConfigCoverageRecord) configCoverageResp
 	}
 }
 
+func organizationRecord(organization domain.Organization) organizationResponse {
+	return organizationResponse{
+		ID:        string(organization.ID),
+		Slug:      organization.Slug,
+		Name:      organization.Name,
+		CreatedAt: organization.CreatedAt,
+		UpdatedAt: organization.UpdatedAt,
+	}
+}
+
+func projectRecord(project domain.Project) projectResponse {
+	return projectResponse{
+		ID:             string(project.ID),
+		OrganizationID: string(project.OrganizationID),
+		Slug:           project.Slug,
+		Name:           project.Name,
+		CreatedAt:      project.CreatedAt,
+		UpdatedAt:      project.UpdatedAt,
+	}
+}
+
+func environmentRecord(environment domain.Environment) environmentResponse {
+	return environmentResponse{
+		ID:        string(environment.ID),
+		ProjectID: string(environment.ProjectID),
+		Slug:      environment.Slug,
+		Name:      environment.Name,
+		CreatedAt: environment.CreatedAt,
+		UpdatedAt: environment.UpdatedAt,
+	}
+}
+
 func monitoredAppRecord(app domain.MonitoredApp) monitoredAppResponse {
 	return monitoredAppResponse{
 		ID:        string(app.ID),
@@ -1204,6 +1631,22 @@ func browserScriptAllowlistEntryRecord(entry domain.BrowserScriptAllowlistEntry)
 	}
 }
 
+func hubUserRecord(user domain.HubUser) hubUserResponse {
+	return hubUserResponse{
+		ID:                string(user.ID),
+		Email:             user.Email,
+		DisplayName:       user.DisplayName,
+		AccessLevel:       user.AccessLevel,
+		Status:            user.Status,
+		TwoFactorRequired: user.TwoFactorRequired,
+		TwoFactorEnabled:  user.TwoFactorEnabled,
+		TOTPEnrolledAt:    user.TOTPEnrolledAt,
+		LastLoginAt:       user.LastLoginAt,
+		CreatedAt:         user.CreatedAt,
+		UpdatedAt:         user.UpdatedAt,
+	}
+}
+
 func modelAnalysisReportRecord(report domain.ModelAnalysisReport) modelAnalysisReportResponse {
 	return modelAnalysisReportResponse{
 		ID:                             string(report.ID),
@@ -1288,6 +1731,87 @@ func nonNilResponseStringMap(values map[string]string) map[string]string {
 		return map[string]string{}
 	}
 	return values
+}
+
+func withHubAuth(hub *hubapp.Hub, options HubOptions, minimumAccess string, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		user, ok := requireHubUser(w, r, hub, options, minimumAccess)
+		if !ok {
+			return
+		}
+		ctx := context.WithValue(r.Context(), hubUserContextKey{}, user)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	}
+}
+
+func requireHubUser(w http.ResponseWriter, r *http.Request, hub *hubapp.Hub, options HubOptions, minimumAccess string) (domain.HubUser, bool) {
+	if hub == nil {
+		writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+		return domain.HubUser{}, false
+	}
+	if !hub.HubUsersConfigured() {
+		return domain.HubUser{AccessLevel: "owner", Status: "active"}, true
+	}
+	count, err := hub.CountHubUsers(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not check hub users")
+		return domain.HubUser{}, false
+	}
+	if count == 0 {
+		writeError(w, http.StatusUnauthorized, hubapp.ErrHubAuthBootstrapNeeded.Error())
+		return domain.HubUser{}, false
+	}
+	user, ok, err := authenticatedHubUser(r, hub, options)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not check session")
+		return domain.HubUser{}, false
+	}
+	if !ok {
+		writeError(w, http.StatusUnauthorized, hubapp.ErrHubAuthRequired.Error())
+		return domain.HubUser{}, false
+	}
+	if !hubapp.HubUserHasAccess(user, minimumAccess) {
+		writeError(w, http.StatusForbidden, hubapp.ErrHubAuthForbidden.Error())
+		return domain.HubUser{}, false
+	}
+	return user, true
+}
+
+func authenticatedHubUser(r *http.Request, hub *hubapp.Hub, options HubOptions) (domain.HubUser, bool, error) {
+	cookie, err := r.Cookie(hubSessionCookieName)
+	if err != nil || strings.TrimSpace(cookie.Value) == "" {
+		return domain.HubUser{}, false, nil
+	}
+	return hub.HubUserForSession(r.Context(), cookie.Value, options.Now().UTC())
+}
+
+func hubSessionCookie(token string, expiresAt time.Time, r *http.Request) *http.Cookie {
+	return &http.Cookie{
+		Name:     hubSessionCookieName,
+		Value:    token,
+		Path:     "/",
+		Expires:  expiresAt.UTC(),
+		MaxAge:   int(time.Until(expiresAt).Seconds()),
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   isSecureRequest(r),
+	}
+}
+
+func clearHubSessionCookie(r *http.Request) *http.Cookie {
+	return &http.Cookie{
+		Name:     hubSessionCookieName,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   isSecureRequest(r),
+	}
+}
+
+func isSecureRequest(r *http.Request) bool {
+	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
 }
 
 func verifyIngestSignature(r *http.Request, body []byte, options HubOptions) error {

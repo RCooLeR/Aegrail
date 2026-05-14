@@ -2,6 +2,7 @@ package hub
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -128,8 +129,9 @@ func TestCorrelateEventsSavesWordPressAdminEntityFinding(t *testing.T) {
 					"privileged": true,
 					"signature":  "sig-admin",
 					"attributes": map[string]any{
-						"administrator": true,
-						"email_sha256":  "redacted",
+						"administrator":   true,
+						"account_display": "r***n@gmail.com",
+						"email_masked":    "r***n@gmail.com",
 					},
 				},
 			},
@@ -153,6 +155,9 @@ func TestCorrelateEventsSavesWordPressAdminEntityFinding(t *testing.T) {
 	finding := result.Findings[0]
 	if finding.RuleID != "wordpress-admin-user-added" || finding.Severity != domain.SeverityHigh || finding.Confidence != domain.ConfidenceHigh {
 		t.Fatalf("finding = %#v, want WordPress admin entity finding", finding)
+	}
+	if !strings.Contains(finding.Summary, "account r***n@gmail.com") {
+		t.Fatalf("summary = %q, want masked account display", finding.Summary)
 	}
 }
 
@@ -209,8 +214,10 @@ func TestCorrelateEventsAddsDeploymentContextWithoutLoweringHighRiskFinding(t *t
 					"privileged": true,
 					"signature":  "sig-admin",
 					"attributes": map[string]any{
-						"administrator": true,
-						"email_sha256":  "redacted",
+						"administrator":     true,
+						"account_display":   "r***n@gmail.com",
+						"email_masked":      "r***n@gmail.com",
+						"email_hmac_sha256": "fingerprint",
 					},
 				},
 			},

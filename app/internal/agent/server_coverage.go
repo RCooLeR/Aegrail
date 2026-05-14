@@ -44,7 +44,6 @@ type ServerConfigCoverageSite struct {
 	Kind    string            `json:"kind"`
 	App     string            `json:"app"`
 	Service string            `json:"service"`
-	Root    string            `json:"root,omitempty"`
 	Labels  map[string]string `json:"labels,omitempty"`
 }
 
@@ -122,7 +121,6 @@ func BuildServerConfigCoverageReports(config ServerConfig, reportedAt time.Time)
 				Kind:    site.Kind,
 				App:     site.App,
 				Service: site.Service,
-				Root:    site.Root,
 				Labels:  cloneStringMap(site.Labels),
 			},
 			Coverage: serverConfigCoverageDetail(site),

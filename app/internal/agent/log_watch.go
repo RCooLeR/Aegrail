@@ -31,6 +31,7 @@ const (
 type LogWatchOptions struct {
 	Paths     []string
 	StatePath string
+	NoEvents  bool
 	App       string
 	Service   string
 	Region    string
@@ -116,6 +117,15 @@ func (r *Runtime) ScanLogPaths(ctx context.Context, options LogWatchOptions) (Lo
 					start = 0
 					result.Rotated++
 				}
+			}
+			if options.NoEvents {
+				current[target.Path] = logFileState{
+					Path:      target.Path,
+					Offset:    target.SizeBytes,
+					SizeBytes: target.SizeBytes,
+					ModTime:   target.ModTime,
+				}
+				continue
 			}
 			lines, nextOffset, err := readNewLogLines(target.Path, start)
 			if err != nil {

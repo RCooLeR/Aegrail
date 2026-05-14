@@ -53,6 +53,39 @@ sites:
 	}
 }
 
+func TestAgentStatusAcceptsServerConfig(t *testing.T) {
+	root := t.TempDir()
+	configPath := filepath.Join(root, "agent.yaml")
+	content := fmt.Sprintf(`schema: aegrail.agent.server_config.v1
+hub:
+  url: http://127.0.0.1:8787
+identity:
+  org: acme
+  project: hosted-sites
+  environment: production
+  host: web-01
+  agent_id: agt_web_01
+runtime:
+  queue_dir: %q
+  state_dir: %q
+  interval: 30s
+sites:
+  - slug: example-com
+    domain: example.com
+    kind: wordpress
+    app: example-com
+    service: frontend
+    root: %q
+`, filepath.Join(root, "queue"), filepath.Join(root, "state"), filepath.Join(root, "site"))
+	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+	stdout := runCLICapture(t, "aegrail", "agent", "status", "--config", configPath)
+	if !strings.Contains(stdout, "DISCARDED") || !strings.Contains(stdout, filepath.Join(root, "queue")) {
+		t.Fatalf("stdout = %q, want server-config queue status", stdout)
+	}
+}
+
 func TestAgentRunConfigQueuesBrowserCrawlEvents(t *testing.T) {
 	pageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
@@ -97,6 +130,9 @@ sites:
 	stdout := runCLICapture(t, "aegrail", "agent", "run", "--once", "--config", configPath)
 	if !strings.Contains(stdout, "Browser crawled 1 page(s)") {
 		t.Fatalf("stdout = %q, want browser crawl summary", stdout)
+	}
+	if got := strings.Count(stdout, "example-com browser_pages=1"); got != 1 {
+		t.Fatalf("stdout = %q, want one browser site summary, got %d", stdout, got)
 	}
 
 	entries, err := os.ReadDir(filepath.Join(root, "queue", "pending"))
@@ -163,6 +199,9 @@ sites:
 	if !strings.Contains(stdout, "Database collected 1 database(s)") {
 		t.Fatalf("stdout = %q, want database summary", stdout)
 	}
+	if !strings.Contains(stdout, "example-com databases=1") {
+		t.Fatalf("stdout = %q, want one database in site summary", stdout)
+	}
 
 	entries, err := os.ReadDir(filepath.Join(root, "queue", "pending"))
 	if err != nil {
@@ -188,6 +227,91 @@ sites:
 	coverage := queuedBatchBySource(t, batches, "agent.coverage")
 	if len(coverage.Events) != 1 || coverage.Events[0].Labels["coverage_level"] != "partial" {
 		t.Fatalf("coverage batch = %#v", coverage)
+	}
+}
+
+func TestAgentRunConfigBootstrapDoesNotQueueEvents(t *testing.T) {
+	pageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<!doctype html><html><head><title>Example</title><script src="/app.js"></script></head><body></body></html>`))
+	}))
+	defer pageServer.Close()
+
+	root := t.TempDir()
+	appRoot := filepath.Join(root, "site")
+	if err := os.MkdirAll(filepath.Join(appRoot, "wp-content", "uploads"), 0o700); err != nil {
+		t.Fatalf("MkdirAll returned error: %v", err)
+	}
+	configPath := filepath.Join(root, "agent.yaml")
+	content := fmt.Sprintf(`schema: aegrail.agent.server_config.v1
+hub:
+  url: http://127.0.0.1:8787
+identity:
+  org: acme
+  project: hosted-sites
+  environment: production
+  host: web-01
+  agent_id: agt_web_01
+runtime:
+  queue_dir: %q
+  state_dir: %q
+  interval: 30s
+sites:
+  - slug: example-com
+    domain: example.com
+    kind: wordpress
+    app: example-com
+    service: frontend
+    root: %q
+    files:
+      profiles: [wordpress]
+    browser_crawl:
+      enabled: true
+      rendered: false
+      max_pages: 1
+      timeout: 5s
+      urls:
+        - %q
+`, filepath.Join(root, "queue"), filepath.Join(root, "state"), appRoot, pageServer.URL)
+	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+	pendingDir := filepath.Join(root, "queue", "pending")
+	if err := os.MkdirAll(pendingDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll pending returned error: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(pendingDir, "old-noise.json"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile pending returned error: %v", err)
+	}
+
+	stdout := runCLICapture(t, "aegrail", "agent", "run", "--once", "--bootstrap", "--discard-pending", "--config", configPath)
+	if !strings.Contains(stdout, "Bootstrap mode enabled") {
+		t.Fatalf("stdout = %q, want bootstrap confirmation", stdout)
+	}
+	if !strings.Contains(stdout, "Browser crawled 1 page(s); queued 0 event(s)") {
+		t.Fatalf("stdout = %q, want bootstrap browser crawl summary without queued events", stdout)
+	}
+	if !strings.Contains(stdout, "Discarded 1 existing pending batch(es); pending 0") {
+		t.Fatalf("stdout = %q, want discard summary", stdout)
+	}
+
+	entries, err := os.ReadDir(pendingDir)
+	if err != nil {
+		t.Fatalf("ReadDir returned error: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("pending files = %d, want 0 in bootstrap mode", len(entries))
+	}
+	discardedEntries, err := os.ReadDir(filepath.Join(root, "queue", "discarded"))
+	if err != nil {
+		t.Fatalf("ReadDir discarded returned error: %v", err)
+	}
+	if len(discardedEntries) != 1 {
+		t.Fatalf("discarded files = %d, want 1", len(discardedEntries))
+	}
+	statePath := filepath.Join(root, "state", "sites", "example-com", "file-watch.json")
+	if _, err := os.Stat(statePath); err != nil {
+		t.Fatalf("missing file watch state at %s: %v", statePath, err)
 	}
 }
 

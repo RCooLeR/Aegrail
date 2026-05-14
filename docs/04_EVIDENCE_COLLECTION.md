@@ -148,6 +148,20 @@ Current implementation:
 - WordPress Multisite network options are collected from `wp_sitemeta` when that table exists, including network-active plugins and site-admin metadata as redacted fingerprints.
 - The first good snapshot creates local baseline state under the configured site state directory.
 - Later snapshots emit redacted diff events such as `db.snapshot.check_changed`, `db.entity.added`, and `db.entity.changed`.
+- Run a one-time bootstrap to initialize baselines only:
+
+```bash
+aegrail agent run --config configs/agent.multi-site.yaml.example --once --bootstrap
+```
+
+This captures file/log/database/browse baselines without queuing detection events. Keep this for your initial seeding run, then remove `--bootstrap` for continuous monitoring.
+- If previous local tests already left noisy pending batches, archive them with:
+
+```bash
+aegrail agent run --config configs/agent.multi-site.yaml.example --once --bootstrap --discard-pending
+```
+
+This moves pending batches to the agent queue's `discarded` directory instead of sending or deleting them.
 - Warning-only snapshots do not replace the previous known-good DB state.
 - Hub correlation turns first-wave WordPress and PrestaShop DB diff events into deterministic findings.
 - Full row snapshots, richer WordPress cron scheduling details, broader builder coverage, entity-level PrestaShop tab/hook/access snapshots, more PrestaShop module fixture sets, PostgreSQL collector support, and standalone remote DB collector workflows are still planned.

@@ -550,8 +550,10 @@ func wordpressUserEntityEvent(id string, eventTime time.Time, eventType string, 
 			"privileged": currentAdmin,
 			"signature":  "sig-admin-current",
 			"attributes": map[string]any{
-				"administrator": currentAdmin,
-				"email_sha256":  "redacted",
+				"administrator":     currentAdmin,
+				"account_display":   "f***e@example.com",
+				"email_masked":      "f***e@example.com",
+				"email_hmac_sha256": "fingerprint-current",
 			},
 		},
 	}
@@ -562,8 +564,10 @@ func wordpressUserEntityEvent(id string, eventTime time.Time, eventType string, 
 			"privileged": previousAdmin,
 			"signature":  "sig-admin-previous",
 			"attributes": map[string]any{
-				"administrator": previousAdmin,
-				"email_sha256":  "redacted",
+				"administrator":     previousAdmin,
+				"account_display":   "f***e@example.com",
+				"email_masked":      "f***e@example.com",
+				"email_hmac_sha256": "fingerprint-previous",
 			},
 		}
 	}

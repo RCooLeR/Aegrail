@@ -17,6 +17,16 @@ func TestBuildBrowserCrawlEventsEmitsPageScriptTagManagerAndWarnings(t *testing.
 				Mode:       browserCrawlModeRendered,
 				StatusCode: 200,
 				Title:      "Demo",
+				Icons: []BrowserIconObservation{
+					{
+						Rel:         "icon",
+						URLRedacted: "https://example.test/site-icon.png",
+						Domain:      "example.test",
+						Path:        "/site-icon.png",
+						Sizes:       "32x32",
+						Type:        "image/png",
+					},
+				},
 				Scripts: []BrowserScriptObservation{
 					{
 						SourceType:        "dom",
@@ -42,6 +52,10 @@ func TestBuildBrowserCrawlEventsEmitsPageScriptTagManagerAndWarnings(t *testing.
 	}
 	if events[0].Type != "browser.crawl.completed" || events[0].Severity != "info" {
 		t.Fatalf("page event = %#v", events[0])
+	}
+	icons, ok := events[0].Payload["site_icons"].([]map[string]string)
+	if !ok || len(icons) != 1 || icons[0]["url_redacted"] != "https://example.test/site-icon.png" {
+		t.Fatalf("site icon payload = %#v", events[0].Payload["site_icons"])
 	}
 	if events[1].Type != "browser.script.observed" || events[1].Labels["script_domain"] != "www.googletagmanager.com" {
 		t.Fatalf("script event = %#v", events[1])

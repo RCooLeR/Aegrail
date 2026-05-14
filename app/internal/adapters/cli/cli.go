@@ -82,6 +82,11 @@ func hubServeCommand(meta domain.AppMeta) *urfavecli.Command {
 				EnvVars: []string{"AEGRAIL_HUB_INGEST_SIGNATURE_SKEW"},
 				Value:   5 * time.Minute,
 			},
+			&urfavecli.StringFlag{
+				Name:    "dashboard-dir",
+				Usage:   "built dashboard directory to serve under /dashboard",
+				EnvVars: []string{"AEGRAIL_DASHBOARD_DIR"},
+			},
 		},
 		Action: func(c *urfavecli.Context) error {
 			container, cleanup, err := newDatabaseContainer(c.Context, meta)
@@ -99,6 +104,7 @@ func hubServeCommand(meta domain.AppMeta) *urfavecli.Command {
 				Handler: httpadapter.NewHubRouter(meta, container.Hub, httpadapter.HubOptions{
 					IngestSecret:        c.String("ingest-secret"),
 					IngestSignatureSkew: c.Duration("signature-skew"),
+					DashboardDir:        c.String("dashboard-dir"),
 				}),
 				ReadHeaderTimeout: 5 * time.Second,
 			}

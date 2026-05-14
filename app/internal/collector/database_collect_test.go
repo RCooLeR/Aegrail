@@ -71,6 +71,48 @@ func TestBuildDatabaseSnapshotEventsRedactsDigestValues(t *testing.T) {
 	}
 }
 
+func TestWordPressUserEntityMasksIdentityAndUsesKeyedFingerprint(t *testing.T) {
+	entity := wordpressUserEntity(42, "roman", "roman@gmail.com", `a:1:{s:13:"administrator";b:1;}`, newDatabasePIIProtector("local-test-key"))
+	if entity.Label != "wordpress_user:r***n@gmail.com" || !entity.Privileged {
+		t.Fatalf("entity = %#v, want masked privileged user label", entity)
+	}
+	if entity.Attributes["account_display"] != "r***n@gmail.com" ||
+		entity.Attributes["email_masked"] != "r***n@gmail.com" ||
+		entity.Attributes["login_masked"] != "r***n" {
+		t.Fatalf("attributes = %#v, want masked identity hints", entity.Attributes)
+	}
+	if _, ok := entity.Attributes["email_sha256"]; ok {
+		t.Fatalf("attributes leaked plain email sha256 field: %#v", entity.Attributes)
+	}
+	if _, ok := entity.Attributes["login_sha256"]; ok {
+		t.Fatalf("attributes leaked plain login sha256 field: %#v", entity.Attributes)
+	}
+	emailHMAC, ok := entity.Attributes["email_hmac_sha256"].(string)
+	if !ok || emailHMAC == "" || emailHMAC == databaseSHA256Hex("roman@gmail.com") {
+		t.Fatalf("email_hmac_sha256 = %#v, want keyed fingerprint distinct from plain sha256", entity.Attributes["email_hmac_sha256"])
+	}
+	loginHMAC, ok := entity.Attributes["login_hmac_sha256"].(string)
+	if !ok || loginHMAC == "" || loginHMAC == databaseSHA256Hex("roman") {
+		t.Fatalf("login_hmac_sha256 = %#v, want keyed fingerprint distinct from plain sha256", entity.Attributes["login_hmac_sha256"])
+	}
+}
+
+func TestPrestaShopEmployeeEntityMasksIdentityAndUsesKeyedFingerprint(t *testing.T) {
+	entity := prestashopEmployeeEntity(7, "owner@example.com", true, 1, newDatabasePIIProtector("local-test-key"))
+	if entity.Label != "prestashop_employee:o***r@example.com" || !entity.Privileged {
+		t.Fatalf("entity = %#v, want masked privileged employee label", entity)
+	}
+	if entity.Attributes["account_display"] != "o***r@example.com" || entity.Attributes["email_masked"] != "o***r@example.com" {
+		t.Fatalf("attributes = %#v, want masked employee email", entity.Attributes)
+	}
+	if _, ok := entity.Attributes["email_sha256"]; ok {
+		t.Fatalf("attributes leaked plain email sha256 field: %#v", entity.Attributes)
+	}
+	if fingerprint, ok := entity.Attributes["email_hmac_sha256"].(string); !ok || fingerprint == "" {
+		t.Fatalf("email_hmac_sha256 = %#v, want keyed fingerprint", entity.Attributes["email_hmac_sha256"])
+	}
+}
+
 func TestParseWordPressActivePluginsFromSerializedOption(t *testing.T) {
 	value := `a:2:{i:0;s:19:"akismet/akismet.php";i:1;s:27:"woocommerce/woocommerce.php";}`
 	plugins := parseWordPressActivePlugins(value)

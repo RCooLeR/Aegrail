@@ -328,6 +328,7 @@ func (r *IngestRepository) ListTimelineEvents(ctx context.Context, environmentID
 		since = time.Unix(0, 0).UTC()
 	}
 	const query = `
+		WITH recent_events AS (
 		SELECT e.id::text, e.batch_id::text, e.organization_id::text, e.project_id::text,
 			e.environment_id::text, coalesce(e.app_id::text, ''), coalesce(ma.slug::text, ''),
 			coalesce(e.service_id::text, ''), coalesce(s.slug::text, ''),
@@ -342,8 +343,11 @@ func (r *IngestRepository) ListTimelineEvents(ctx context.Context, environmentID
 		WHERE e.environment_id = $1
 			AND ($2::text = '' OR e.app_id = nullif($2::text, '')::uuid)
 			AND e.event_time >= $3
-		ORDER BY e.event_time ASC, e.created_at ASC
+		ORDER BY e.event_time DESC, e.created_at DESC
 		LIMIT $4
+		)
+		SELECT * FROM recent_events
+		ORDER BY event_time ASC, created_at ASC
 	`
 	rows, err := r.pool.Query(ctx, query, environmentID, string(appID), since.UTC(), limit)
 	if err != nil {

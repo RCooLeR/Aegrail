@@ -27,6 +27,7 @@ type WatchOptions struct {
 	Profiles  []string
 	Exclude   []string
 	StatePath string
+	NoEvents  bool
 	App       string
 	Service   string
 	Region    string
@@ -93,6 +94,13 @@ func (r *Runtime) ScanWatchedPaths(ctx context.Context, options WatchOptions) (W
 	}
 	if hadState {
 		events := diffWatchState(previous.Files, current)
+		if options.NoEvents {
+			return result, saveWatchState(statePath, watchState{
+				Schema:    WatchStateSchema,
+				UpdatedAt: r.now().UTC(),
+				Files:     current,
+			})
+		}
 		for _, event := range events {
 			event.App = options.App
 			event.Service = options.Service
@@ -260,6 +268,9 @@ func scanPath(path string, queueAbs string, rootAbs string, excludeAbs []string,
 		return nil
 	}
 	if !info.IsDir() {
+		if shouldSkipNoisyPath(path) {
+			return nil
+		}
 		state, err := buildFileState(path, info, rootAbs)
 		if err != nil {
 			return err
@@ -281,6 +292,9 @@ func scanPath(path string, queueAbs string, rootAbs string, excludeAbs []string,
 			return nil
 		}
 		if isExcludedPath(current, excludeAbs) {
+			return nil
+		}
+		if shouldSkipNoisyPath(current) {
 			return nil
 		}
 		info, err := entry.Info()
@@ -335,12 +349,54 @@ func isExcludedPath(path string, excludeAbs []string) bool {
 
 func shouldSkipDir(path string, queueAbs string) bool {
 	base := strings.ToLower(filepath.Base(path))
-	if base == ".git" || base == ".aegrail" {
+	if base == ".git" || base == ".aegrail" || isNoisyRuntimeDir(base) {
 		return true
 	}
 	abs, err := filepath.Abs(path)
 	if err == nil && queueAbs != "" && strings.HasPrefix(abs, queueAbs) {
 		return true
+	}
+	return false
+}
+
+func isNoisyRuntimeDir(base string) bool {
+	switch strings.ToLower(strings.TrimSpace(base)) {
+	case ".cache", "cache", "tmp", "temp":
+		return true
+	default:
+		return false
+	}
+}
+
+func shouldSkipNoisyPath(path string) bool {
+	normalized := strings.ToLower(filepath.ToSlash(path))
+	if hasPathSegment(normalized, "cache") ||
+		hasPathSegment(normalized, ".cache") {
+		return true
+	}
+	if !isWritableAssetPath(normalized) {
+		return false
+	}
+	switch filepath.Ext(normalized) {
+	case ".avif", ".bmp", ".gif", ".ico", ".jpeg", ".jpg", ".mp3", ".mp4", ".ogg", ".pdf", ".png", ".wav", ".webm", ".webp":
+		return true
+	default:
+		return false
+	}
+}
+
+func isWritableAssetPath(path string) bool {
+	return hasPathSegment(path, "uploads") ||
+		hasPathSegment(path, "upload") ||
+		hasPathSegment(path, "img")
+}
+
+func hasPathSegment(path string, segment string) bool {
+	segment = strings.ToLower(strings.Trim(segment, "/"))
+	for _, part := range strings.Split(strings.Trim(path, "/"), "/") {
+		if part == segment {
+			return true
+		}
 	}
 	return false
 }
@@ -400,6 +456,9 @@ func diffWatchState(previous map[string]fileState, current map[string]fileState)
 	}
 	for path, previousState := range previous {
 		if _, ok := current[path]; !ok {
+			if shouldSkipNoisyPath(previousState.Path) {
+				continue
+			}
 			events = append(events, fileEvent("file.deleted", previousState, fileState{}))
 		}
 	}
@@ -410,26 +469,35 @@ func diffWatchState(previous map[string]fileState, current map[string]fileState)
 }
 
 func fileChanged(previous fileState, current fileState) bool {
+	if previous.HashSkipped != current.HashSkipped {
+		return true
+	}
+	if !current.HashSkipped && previous.SHA256 != "" && current.SHA256 != "" {
+		return previous.SHA256 != current.SHA256
+	}
 	return previous.SizeBytes != current.SizeBytes ||
 		!previous.ModTime.Equal(current.ModTime) ||
-		previous.SHA256 != current.SHA256 ||
-		previous.HashSkipped != current.HashSkipped
+		previous.SHA256 != current.SHA256
 }
 
 func fileEvent(eventType string, current fileState, previous fileState) EnqueueEventInput {
 	severity := classifyFileSeverity(eventType, current.Path)
+	relativePath := current.RelativePath
+	if relativePath == "" {
+		relativePath = previous.RelativePath
+	}
+	eventPath := current.Path
+	if relativePath != "" {
+		eventPath = relativePath
+	}
 	payload := map[string]any{
-		"path":         current.Path,
+		"path":         eventPath,
 		"size_bytes":   current.SizeBytes,
 		"mod_time":     current.ModTime.Format(time.RFC3339Nano),
 		"hash_skipped": current.HashSkipped,
 	}
 	if current.SHA256 != "" {
 		payload["sha256"] = current.SHA256
-	}
-	relativePath := current.RelativePath
-	if relativePath == "" {
-		relativePath = previous.RelativePath
 	}
 	if relativePath != "" {
 		payload["relative_path"] = relativePath
@@ -444,9 +512,9 @@ func fileEvent(eventType string, current fileState, previous fileState) EnqueueE
 	return EnqueueEventInput{
 		BatchID:  fileEventBatchID(eventType, current, previous),
 		Type:     eventType,
-		Target:   current.Path,
+		Target:   eventPath,
 		Severity: severity,
-		Message:  fileEventMessage(eventType, current.Path),
+		Message:  fileEventMessage(eventType, eventPath),
 		Labels: map[string]string{
 			"watcher": "file",
 		},

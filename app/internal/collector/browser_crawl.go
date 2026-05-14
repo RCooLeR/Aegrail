@@ -41,8 +41,18 @@ type BrowserPageResult struct {
 	StatusCode   int                        `json:"status_code"`
 	Title        string                     `json:"title,omitempty"`
 	CanonicalURL string                     `json:"canonical_url,omitempty"`
+	Icons        []BrowserIconObservation   `json:"icons,omitempty"`
 	Scripts      []BrowserScriptObservation `json:"scripts"`
 	Warnings     []string                   `json:"warnings,omitempty"`
+}
+
+type BrowserIconObservation struct {
+	Rel         string `json:"rel"`
+	URLRedacted string `json:"url_redacted"`
+	Domain      string `json:"domain,omitempty"`
+	Path        string `json:"path,omitempty"`
+	Sizes       string `json:"sizes,omitempty"`
+	Type        string `json:"type,omitempty"`
 }
 
 type BrowserScriptObservation struct {
@@ -169,6 +179,7 @@ func crawlOnePage(ctx context.Context, client *http.Client, pageURL *url.URL, in
 	}
 	page.Title = strings.TrimSpace(firstText(document, "title"))
 	page.CanonicalURL = findCanonicalURL(document, finalURL)
+	page.Icons = collectPageIcons(document, finalURL)
 	page.Scripts = collectScripts(document, finalURL)
 	if len(page.Scripts) == 0 {
 		page.Warnings = append(page.Warnings, "no scripts observed in initial HTML")
@@ -192,6 +203,47 @@ func collectScripts(root *html.Node, baseURL *url.URL) []BrowserScriptObservatio
 	}
 	visit(root)
 	return scripts
+}
+
+func collectPageIcons(root *html.Node, baseURL *url.URL) []BrowserIconObservation {
+	icons := []BrowserIconObservation{}
+	seen := map[string]bool{}
+	var visit func(*html.Node)
+	visit = func(node *html.Node) {
+		if node.Type == html.ElementNode && strings.EqualFold(node.Data, "link") {
+			attrs := htmlAttrs(node)
+			if isIconRel(attrs["rel"]) {
+				if icon, ok := buildIconObservation(attrs, baseURL); ok && !seen[icon.URLRedacted] {
+					seen[icon.URLRedacted] = true
+					icons = append(icons, icon)
+				}
+			}
+		}
+		for child := node.FirstChild; child != nil; child = child.NextSibling {
+			visit(child)
+		}
+	}
+	visit(root)
+	return icons
+}
+
+func buildIconObservation(attrs map[string]string, baseURL *url.URL) (BrowserIconObservation, bool) {
+	href := strings.TrimSpace(attrs["href"])
+	if href == "" {
+		return BrowserIconObservation{}, false
+	}
+	resolved := resolveURL(baseURL, href)
+	if resolved == nil || !isHTTPURL(resolved) {
+		return BrowserIconObservation{}, false
+	}
+	return BrowserIconObservation{
+		Rel:         strings.ToLower(strings.TrimSpace(attrs["rel"])),
+		URLRedacted: sanitizeBrowserIconURL(resolved),
+		Domain:      resolved.Hostname(),
+		Path:        resolved.EscapedPath(),
+		Sizes:       strings.TrimSpace(attrs["sizes"]),
+		Type:        strings.TrimSpace(attrs["type"]),
+	}, true
 }
 
 func buildScriptObservation(node *html.Node, baseURL *url.URL) BrowserScriptObservation {
@@ -307,6 +359,29 @@ func resolveURL(baseURL *url.URL, value string) *url.URL {
 		return nil
 	}
 	return baseURL.ResolveReference(parsed)
+}
+
+func isHTTPURL(parsed *url.URL) bool {
+	return parsed != nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != ""
+}
+
+func sanitizeBrowserIconURL(parsed *url.URL) string {
+	clean := *parsed
+	clean.User = nil
+	clean.RawQuery = ""
+	clean.Fragment = ""
+	return redaction.RedactURL(clean.String())
+}
+
+func isIconRel(value string) bool {
+	parts := strings.Fields(strings.ToLower(value))
+	for _, part := range parts {
+		switch part {
+		case "icon", "shortcut", "apple-touch-icon", "apple-touch-icon-precomposed", "mask-icon":
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeCrawlURL(value string) (*url.URL, error) {

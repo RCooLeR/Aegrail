@@ -113,6 +113,7 @@ type QueueStatus struct {
 	Pending    int
 	Sent       int
 	Failed     int
+	Discarded  int
 }
 
 type SendResult struct {
@@ -120,6 +121,14 @@ type SendResult struct {
 	Sent          int
 	Failed        int
 	PendingAfter  int
+	Errors        []string
+}
+
+type DiscardPendingResult struct {
+	PendingBefore int
+	Discarded     int
+	PendingAfter  int
+	DiscardDir    string
 	Errors        []string
 }
 
@@ -220,6 +229,7 @@ func (r *Runtime) Status(ctx context.Context) (QueueStatus, error) {
 	status.Pending = countQueueFiles(filepath.Join(status.QueueDir, "pending"))
 	status.Sent = countQueueFiles(filepath.Join(status.QueueDir, "sent"))
 	status.Failed = countQueueFiles(filepath.Join(status.QueueDir, "failed"))
+	status.Discarded = countQueueFiles(filepath.Join(status.QueueDir, "discarded"))
 	return status, nil
 }
 
@@ -383,6 +393,43 @@ func (r *Runtime) SendQueued(ctx context.Context, secret string, limit int) (Sen
 	return result, nil
 }
 
+func (r *Runtime) DiscardPending(ctx context.Context, limit int) (DiscardPendingResult, error) {
+	identity, err := r.LoadIdentity(ctx)
+	if err != nil {
+		return DiscardPendingResult{}, err
+	}
+	if err := ensureQueueDirs(identity.QueueDir); err != nil {
+		return DiscardPendingResult{}, err
+	}
+	pendingDir := filepath.Join(identity.QueueDir, "pending")
+	discardedDir := filepath.Join(identity.QueueDir, "discarded")
+	files, err := queueFiles(pendingDir)
+	if err != nil {
+		return DiscardPendingResult{}, err
+	}
+	if limit > 0 && limit < len(files) {
+		files = files[:limit]
+	}
+	result := DiscardPendingResult{
+		PendingBefore: len(files),
+		DiscardDir:    discardedDir,
+	}
+	for _, path := range files {
+		destination := filepath.Join(discardedDir, filepath.Base(path))
+		if err := os.Rename(path, uniquePath(destination)); err != nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", filepath.Base(path), err))
+			continue
+		}
+		result.Discarded++
+	}
+	status, err := r.Status(ctx)
+	if err != nil {
+		return result, err
+	}
+	result.PendingAfter = status.Pending
+	return result, nil
+}
+
 func (r *Runtime) sendBatch(ctx context.Context, hubURL string, secret string, body []byte) error {
 	endpoint := strings.TrimRight(strings.TrimSpace(hubURL), "/") + "/api/v1/ingest/events"
 	timestamp := r.now().UTC().Format(time.RFC3339)
@@ -425,7 +472,7 @@ func validateIdentity(identity Identity) error {
 }
 
 func ensureQueueDirs(queueDir string) error {
-	for _, name := range []string{"pending", "sent", "failed"} {
+	for _, name := range []string{"pending", "sent", "failed", "discarded"} {
 		if err := os.MkdirAll(filepath.Join(queueDir, name), 0o700); err != nil {
 			return err
 		}

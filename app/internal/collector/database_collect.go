@@ -2,6 +2,7 @@ package collector
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -23,6 +24,7 @@ type DatabaseCollectInput struct {
 	Profile     string
 	TablePrefix string
 	Timeout     time.Duration
+	PIIKey      string
 }
 
 type DatabaseCollectResult struct {
@@ -172,7 +174,7 @@ func (r *Runtime) CollectDatabaseSnapshot(ctx context.Context, input DatabaseCol
 		}
 		result.Checks = append(result.Checks, check)
 	}
-	entities, entityWarnings := collectDatabaseEntities(queryCtx, db, result.Profile, input.TablePrefix)
+	entities, entityWarnings := collectDatabaseEntities(queryCtx, db, result.Profile, input.TablePrefix, newDatabasePIIProtector(input.PIIKey))
 	result.Entities = append(result.Entities, entities...)
 	result.Warnings = append(result.Warnings, entityWarnings...)
 
@@ -180,24 +182,24 @@ func (r *Runtime) CollectDatabaseSnapshot(ctx context.Context, input DatabaseCol
 	return result, nil
 }
 
-func collectDatabaseEntities(ctx context.Context, db *sql.DB, profile string, tablePrefix string) ([]DatabaseEntityObservation, []string) {
+func collectDatabaseEntities(ctx context.Context, db *sql.DB, profile string, tablePrefix string, pii databasePIIProtector) ([]DatabaseEntityObservation, []string) {
 	switch normalizeDatabaseProfile(profile) {
 	case "wordpress":
-		return collectWordPressDatabaseEntities(ctx, db, tablePrefix)
+		return collectWordPressDatabaseEntities(ctx, db, tablePrefix, pii)
 	case "prestashop":
-		return collectPrestaShopDatabaseEntities(ctx, db, tablePrefix)
+		return collectPrestaShopDatabaseEntities(ctx, db, tablePrefix, pii)
 	default:
 		return nil, nil
 	}
 }
 
-func collectWordPressDatabaseEntities(ctx context.Context, db *sql.DB, tablePrefix string) ([]DatabaseEntityObservation, []string) {
+func collectWordPressDatabaseEntities(ctx context.Context, db *sql.DB, tablePrefix string, pii databasePIIProtector) ([]DatabaseEntityObservation, []string) {
 	prefix, warning := sanitizeDatabasePrefix(tablePrefix, "wp_")
 	var entities []DatabaseEntityObservation
 	var warnings []string
 	warnings = append(warnings, optionalWarning(warning)...)
 
-	userEntities, userWarnings := collectWordPressUserEntities(ctx, db, prefix)
+	userEntities, userWarnings := collectWordPressUserEntities(ctx, db, prefix, pii)
 	entities = append(entities, userEntities...)
 	warnings = append(warnings, userWarnings...)
 
@@ -217,7 +219,7 @@ func collectWordPressDatabaseEntities(ctx context.Context, db *sql.DB, tablePref
 	return entities, warnings
 }
 
-func collectWordPressUserEntities(ctx context.Context, db *sql.DB, prefix string) ([]DatabaseEntityObservation, []string) {
+func collectWordPressUserEntities(ctx context.Context, db *sql.DB, prefix string, pii databasePIIProtector) ([]DatabaseEntityObservation, []string) {
 	users := quoteDatabaseIdentifier(prefix + "users")
 	usermeta := quoteDatabaseIdentifier(prefix + "usermeta")
 	query := "SELECT u.ID, COALESCE(u.user_login, ''), COALESCE(u.user_email, ''), COALESCE(um.meta_value, '') FROM " +
@@ -237,31 +239,50 @@ func collectWordPressUserEntities(ctx context.Context, db *sql.DB, prefix string
 		if err := rows.Scan(&id, &login, &email, &capabilities); err != nil {
 			return entities, []string{fmt.Sprintf("wordpress user entity scan failed: %v", err)}
 		}
-		admin := strings.Contains(strings.ToLower(capabilities), "administrator")
-		capabilitiesHash := databaseSHA256Hex(capabilities)
-		emailHash := databaseSHA256Hex(strings.ToLower(strings.TrimSpace(email)))
-		loginHash := databaseSHA256Hex(strings.TrimSpace(login))
-		entity := DatabaseEntityObservation{
-			Type:       "wordpress_user",
-			Key:        databaseEntityKey("wordpress_user", strconv.FormatInt(id, 10)),
-			Label:      "wordpress_user:" + databaseSHA256Short(strconv.FormatInt(id, 10)),
-			Privileged: admin,
-			Attributes: map[string]any{
-				"user_id_hash":        databaseSHA256Hex(strconv.FormatInt(id, 10)),
-				"login_sha256":        loginHash,
-				"email_sha256":        emailHash,
-				"capabilities_sha256": capabilitiesHash,
-				"administrator":       admin,
-				"has_capabilities":    strings.TrimSpace(capabilities) != "",
-			},
-		}
-		entity.Signature = databaseEntitySignature(entity)
-		entities = append(entities, entity)
+		entities = append(entities, wordpressUserEntity(id, login, email, capabilities, pii))
 	}
 	if err := rows.Err(); err != nil {
 		return entities, []string{fmt.Sprintf("wordpress user entity rows failed: %v", err)}
 	}
 	return entities, nil
+}
+
+func wordpressUserEntity(id int64, login string, email string, capabilities string, pii databasePIIProtector) DatabaseEntityObservation {
+	idText := strconv.FormatInt(id, 10)
+	login = strings.TrimSpace(login)
+	email = strings.TrimSpace(email)
+	admin := strings.Contains(strings.ToLower(capabilities), "administrator")
+	accountDisplay := databaseAccountDisplay(login, email)
+	attributes := map[string]any{
+		"user_id_hash":        databaseSHA256Hex(idText),
+		"capabilities_sha256": databaseSHA256Hex(capabilities),
+		"administrator":       admin,
+		"has_capabilities":    strings.TrimSpace(capabilities) != "",
+	}
+	if accountDisplay != "" {
+		attributes["account_display"] = accountDisplay
+	}
+	if masked := databaseMaskEmail(email); masked != "" {
+		attributes["email_masked"] = masked
+	}
+	if masked := databaseMaskIdentifier(login); masked != "" {
+		attributes["login_masked"] = masked
+	}
+	if fingerprint := pii.Fingerprint(databaseNormalizeEmail(email)); fingerprint != "" {
+		attributes["email_hmac_sha256"] = fingerprint
+	}
+	if fingerprint := pii.Fingerprint(databaseNormalizeIdentifier(login)); fingerprint != "" {
+		attributes["login_hmac_sha256"] = fingerprint
+	}
+	entity := DatabaseEntityObservation{
+		Type:       "wordpress_user",
+		Key:        databaseEntityKey("wordpress_user", idText),
+		Label:      databaseDisplayLabel("wordpress_user", accountDisplay, idText),
+		Privileged: admin,
+		Attributes: attributes,
+	}
+	entity.Signature = databaseEntitySignature(entity)
+	return entity
 }
 
 func collectWordPressOptionEntities(ctx context.Context, db *sql.DB, prefix string) ([]DatabaseEntityObservation, []string) {
@@ -885,13 +906,13 @@ func wordpressScriptContentDomains(content string) []string {
 	return domains
 }
 
-func collectPrestaShopDatabaseEntities(ctx context.Context, db *sql.DB, tablePrefix string) ([]DatabaseEntityObservation, []string) {
+func collectPrestaShopDatabaseEntities(ctx context.Context, db *sql.DB, tablePrefix string, pii databasePIIProtector) ([]DatabaseEntityObservation, []string) {
 	prefix, warning := sanitizeDatabasePrefix(tablePrefix, "ps_")
 	var entities []DatabaseEntityObservation
 	var warnings []string
 	warnings = append(warnings, optionalWarning(warning)...)
 
-	employeeEntities, employeeWarnings := collectPrestaShopEmployeeEntities(ctx, db, prefix)
+	employeeEntities, employeeWarnings := collectPrestaShopEmployeeEntities(ctx, db, prefix, pii)
 	entities = append(entities, employeeEntities...)
 	warnings = append(warnings, employeeWarnings...)
 
@@ -907,7 +928,7 @@ func collectPrestaShopDatabaseEntities(ctx context.Context, db *sql.DB, tablePre
 	return entities, warnings
 }
 
-func collectPrestaShopEmployeeEntities(ctx context.Context, db *sql.DB, prefix string) ([]DatabaseEntityObservation, []string) {
+func collectPrestaShopEmployeeEntities(ctx context.Context, db *sql.DB, prefix string, pii databasePIIProtector) ([]DatabaseEntityObservation, []string) {
 	table := quoteDatabaseIdentifier(prefix + "employee")
 	rows, err := db.QueryContext(ctx, "SELECT id_employee, COALESCE(email, ''), active, id_profile FROM "+table+" ORDER BY id_employee LIMIT 1000")
 	if err != nil {
@@ -924,28 +945,43 @@ func collectPrestaShopEmployeeEntities(ctx context.Context, db *sql.DB, prefix s
 		if err := rows.Scan(&id, &email, &active, &profileID); err != nil {
 			return entities, []string{fmt.Sprintf("prestashop employee entity scan failed: %v", err)}
 		}
-		superAdmin := profileID == 1
-		isActive := active != 0
-		entity := DatabaseEntityObservation{
-			Type:       "prestashop_employee",
-			Key:        databaseEntityKey("prestashop_employee", strconv.FormatInt(id, 10)),
-			Label:      "prestashop_employee:" + databaseSHA256Short(strconv.FormatInt(id, 10)),
-			Privileged: superAdmin,
-			Attributes: map[string]any{
-				"employee_id_hash": databaseSHA256Hex(strconv.FormatInt(id, 10)),
-				"email_sha256":     databaseSHA256Hex(strings.ToLower(strings.TrimSpace(email))),
-				"profile_id":       profileID,
-				"active":           isActive,
-				"super_admin":      superAdmin,
-			},
-		}
-		entity.Signature = databaseEntitySignature(entity)
-		entities = append(entities, entity)
+		entities = append(entities, prestashopEmployeeEntity(id, email, active != 0, profileID, pii))
 	}
 	if err := rows.Err(); err != nil {
 		return entities, []string{fmt.Sprintf("prestashop employee entity rows failed: %v", err)}
 	}
 	return entities, nil
+}
+
+func prestashopEmployeeEntity(id int64, email string, active bool, profileID int64, pii databasePIIProtector) DatabaseEntityObservation {
+	idText := strconv.FormatInt(id, 10)
+	email = strings.TrimSpace(email)
+	superAdmin := profileID == 1
+	accountDisplay := databaseAccountDisplay("", email)
+	attributes := map[string]any{
+		"employee_id_hash": databaseSHA256Hex(idText),
+		"profile_id":       profileID,
+		"active":           active,
+		"super_admin":      superAdmin,
+	}
+	if accountDisplay != "" {
+		attributes["account_display"] = accountDisplay
+	}
+	if masked := databaseMaskEmail(email); masked != "" {
+		attributes["email_masked"] = masked
+	}
+	if fingerprint := pii.Fingerprint(databaseNormalizeEmail(email)); fingerprint != "" {
+		attributes["email_hmac_sha256"] = fingerprint
+	}
+	entity := DatabaseEntityObservation{
+		Type:       "prestashop_employee",
+		Key:        databaseEntityKey("prestashop_employee", idText),
+		Label:      databaseDisplayLabel("prestashop_employee", accountDisplay, idText),
+		Privileged: superAdmin,
+		Attributes: attributes,
+	}
+	entity.Signature = databaseEntitySignature(entity)
+	return entity
 }
 
 func collectPrestaShopModuleEntities(ctx context.Context, db *sql.DB, prefix string) ([]DatabaseEntityObservation, []string) {
@@ -1464,6 +1500,14 @@ func databaseEntityKey(kind string, value string) string {
 	return strings.TrimSpace(kind) + ":" + databaseSHA256Short(value)
 }
 
+func databaseDisplayLabel(kind string, display string, fallback string) string {
+	display = strings.TrimSpace(display)
+	if display != "" {
+		return strings.TrimSpace(kind) + ":" + display
+	}
+	return strings.TrimSpace(kind) + ":" + databaseSHA256Short(fallback)
+}
+
 func databaseEntitySignature(entity DatabaseEntityObservation) string {
 	var parts []string
 	parts = append(parts, strings.TrimSpace(entity.Type), strings.TrimSpace(entity.Label), fmt.Sprintf("privileged:%t", entity.Privileged))
@@ -1498,4 +1542,71 @@ func databaseSHA256Short(value string) string {
 		return hash
 	}
 	return hash[:24]
+}
+
+type databasePIIProtector struct {
+	key []byte
+}
+
+func newDatabasePIIProtector(key string) databasePIIProtector {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return databasePIIProtector{}
+	}
+	return databasePIIProtector{key: []byte(key)}
+}
+
+func (p databasePIIProtector) Fingerprint(value string) string {
+	value = strings.TrimSpace(value)
+	if len(p.key) == 0 || value == "" {
+		return ""
+	}
+	mac := hmac.New(sha256.New, p.key)
+	_, _ = mac.Write([]byte(value))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func databaseNormalizeEmail(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func databaseNormalizeIdentifier(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func databaseAccountDisplay(login string, email string) string {
+	if masked := databaseMaskEmail(email); masked != "" {
+		return masked
+	}
+	return databaseMaskIdentifier(login)
+}
+
+func databaseMaskEmail(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return ""
+	}
+	parts := strings.Split(value, "@")
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+		return databaseMaskIdentifier(value)
+	}
+	return databaseMaskIdentifier(parts[0]) + "@" + parts[1]
+}
+
+func databaseMaskIdentifier(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	runes := []rune(value)
+	switch len(runes) {
+	case 0:
+		return ""
+	case 1:
+		return "*"
+	case 2:
+		return string(runes[0]) + "*"
+	default:
+		return string(runes[0]) + "***" + string(runes[len(runes)-1])
+	}
 }

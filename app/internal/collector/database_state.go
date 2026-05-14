@@ -200,6 +200,9 @@ func DiffDatabaseSnapshotState(previous DatabaseSnapshotState, found bool, curre
 			continue
 		}
 		if previousEntity.Signature != currentEntity.Signature {
+			if databaseEntityEquivalentForDiff(previousEntity, currentEntity) {
+				continue
+			}
 			diff.EntityChanges = append(diff.EntityChanges, DatabaseEntityChange{
 				Type:     "changed",
 				Previous: previousEntity,
@@ -222,6 +225,62 @@ func DiffDatabaseSnapshotState(previous DatabaseSnapshotState, found bool, curre
 		})
 	}
 	return diff
+}
+
+func databaseEntityEquivalentForDiff(previous DatabaseEntityState, current DatabaseEntityState) bool {
+	if previous.Type != current.Type || previous.Key != current.Key || previous.Privileged != current.Privileged {
+		return false
+	}
+	if !isDatabasePIIAccountEntity(current.Type) {
+		return false
+	}
+	previousAttributes := databaseEntityComparableAttributes(previous.Attributes)
+	currentAttributes := databaseEntityComparableAttributes(current.Attributes)
+	if len(previousAttributes) != len(currentAttributes) {
+		return false
+	}
+	for key, previousValue := range previousAttributes {
+		if fmt.Sprint(previousValue) != fmt.Sprint(currentAttributes[key]) {
+			return false
+		}
+	}
+	return true
+}
+
+func isDatabasePIIAccountEntity(entityType string) bool {
+	switch strings.TrimSpace(entityType) {
+	case "wordpress_user", "prestashop_employee":
+		return true
+	default:
+		return false
+	}
+}
+
+func databaseEntityComparableAttributes(attributes map[string]any) map[string]any {
+	comparable := map[string]any{}
+	for key, value := range attributes {
+		key = strings.TrimSpace(key)
+		if key == "" || isDatabasePIIEvidenceAttribute(key) {
+			continue
+		}
+		comparable[key] = value
+	}
+	return comparable
+}
+
+func isDatabasePIIEvidenceAttribute(key string) bool {
+	switch strings.TrimSpace(key) {
+	case "account_display",
+		"email_masked",
+		"login_masked",
+		"email_sha256",
+		"login_sha256",
+		"email_hmac_sha256",
+		"login_hmac_sha256":
+		return true
+	default:
+		return false
+	}
 }
 
 func databaseCheckState(check DatabaseCheckResult) (DatabaseSnapshotCheckState, bool) {

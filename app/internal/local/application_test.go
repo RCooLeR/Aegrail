@@ -13,22 +13,22 @@ func TestCreateSiteNormalizesAndSaves(t *testing.T) {
 	application := New(domain.AppMeta{Binary: "aegrail"}, Dependencies{Sites: repo})
 
 	site, err := application.CreateSite(context.Background(), CreateSiteInput{
-		Slug:    "PetLink",
-		Name:    "Petlink Demo",
-		BaseURL: "https://petlink.example",
+		Slug:    "DemoSite",
+		Name:    "Demo Site",
+		BaseURL: "https://demo-site.example",
 	})
 	if err != nil {
 		t.Fatalf("CreateSite returned error: %v", err)
 	}
 
-	if site.Slug != "petlink" {
-		t.Fatalf("slug = %q, want petlink", site.Slug)
+	if site.Slug != "demosite" {
+		t.Fatalf("slug = %q, want demosite", site.Slug)
 	}
-	if site.Name != "Petlink Demo" {
-		t.Fatalf("name = %q, want Petlink Demo", site.Name)
+	if site.Name != "Demo Site" {
+		t.Fatalf("name = %q, want Demo Site", site.Name)
 	}
-	if site.BaseURL != "https://petlink.example" {
-		t.Fatalf("baseURL = %q, want https://petlink.example", site.BaseURL)
+	if site.BaseURL != "https://demo-site.example" {
+		t.Fatalf("baseURL = %q, want https://demo-site.example", site.BaseURL)
 	}
 }
 
@@ -47,8 +47,8 @@ func TestCreateSiteRejectsInvalidURL(t *testing.T) {
 	application := New(domain.AppMeta{Binary: "aegrail"}, Dependencies{Sites: &fakeSiteRepository{}})
 
 	_, err := application.CreateSite(context.Background(), CreateSiteInput{
-		Slug:    "petlink",
-		BaseURL: "ftp://petlink.example",
+		Slug:    "demo-site",
+		BaseURL: "ftp://demo-site.example",
 	})
 	if err == nil {
 		t.Fatal("CreateSite returned nil error for invalid URL")

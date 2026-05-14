@@ -22,8 +22,16 @@ type renderedPageSnapshot struct {
 	Title           string              `json:"title"`
 	CanonicalURL    string              `json:"canonical_url"`
 	TagManagerReady bool                `json:"tag_manager_ready"`
+	Icons           []renderedPageIcon  `json:"icons"`
 	Scripts         []renderedDOMScript `json:"scripts"`
 	Resources       []renderedResource  `json:"resources"`
+}
+
+type renderedPageIcon struct {
+	Rel   string `json:"rel"`
+	URL   string `json:"url"`
+	Sizes string `json:"sizes"`
+	Type  string `json:"type"`
 }
 
 type renderedDOMScript struct {
@@ -93,7 +101,7 @@ func crawlRenderedPage(ctx context.Context, pageURL *url.URL, input BrowserCrawl
 	allocatorCtx, cancelAllocator := chromedp.NewExecAllocator(ctx, options...)
 	defer cancelAllocator()
 
-	browserCtx, cancelBrowser := chromedp.NewContext(allocatorCtx)
+	browserCtx, cancelBrowser := chromedp.NewContext(allocatorCtx, chromedp.WithErrorf(func(string, ...any) {}))
 	defer cancelBrowser()
 
 	pageCtx, cancelPage := context.WithTimeout(browserCtx, timeout)
@@ -155,6 +163,7 @@ func crawlRenderedPage(ctx context.Context, pageURL *url.URL, input BrowserCrawl
 	page.StatusCode = networkState.documentStatus()
 	page.Title = strings.TrimSpace(snapshot.Title)
 	page.CanonicalURL = strings.TrimSpace(snapshot.CanonicalURL)
+	page.Icons = buildRenderedIconObservations(snapshot.Icons, pageURL)
 	page.Scripts = buildRenderedScriptObservations(snapshot, networkState.scriptResponses(), pageURL)
 
 	if len(page.Scripts) == 0 {
@@ -164,6 +173,25 @@ func crawlRenderedPage(ctx context.Context, pageURL *url.URL, input BrowserCrawl
 		page.Warnings = append(page.Warnings, "tag manager script observed but runtime readiness was not confirmed")
 	}
 	return page, nil
+}
+
+func buildRenderedIconObservations(icons []renderedPageIcon, baseURL *url.URL) []BrowserIconObservation {
+	observations := []BrowserIconObservation{}
+	seen := map[string]bool{}
+	for _, icon := range icons {
+		attrs := map[string]string{
+			"href":  icon.URL,
+			"rel":   icon.Rel,
+			"sizes": icon.Sizes,
+			"type":  icon.Type,
+		}
+		observation, ok := buildIconObservation(attrs, baseURL)
+		if ok && !seen[observation.URLRedacted] {
+			seen[observation.URLRedacted] = true
+			observations = append(observations, observation)
+		}
+	}
+	return observations
 }
 
 func (s *renderedNetworkState) handleEvent(event any) {
@@ -447,6 +475,19 @@ const renderedPageSnapshotExpression = `(() => {
     return acc;
   }, {});
   const canonical = document.querySelector('link[rel~="canonical"]');
+  const icons = Array.from(document.querySelectorAll('link[rel]'))
+    .filter((link) => {
+      const rel = (link.getAttribute("rel") || "").toLowerCase().split(/\s+/);
+      return rel.some((part) => ["icon", "shortcut", "apple-touch-icon", "apple-touch-icon-precomposed", "mask-icon"].includes(part));
+    })
+    .map((link) => {
+      return {
+        rel: link.getAttribute("rel") || "",
+        url: link.href || "",
+        sizes: link.getAttribute("sizes") || "",
+        type: link.getAttribute("type") || ""
+      };
+    });
   const scripts = Array.from(document.scripts || []).map((script) => {
     return {
       source_type: script.src ? "dom" : "inline",
@@ -477,6 +518,7 @@ const renderedPageSnapshotExpression = `(() => {
     title: document.title || "",
     canonical_url: canonical ? canonical.href : "",
     tag_manager_ready: tagManagerReady || !(/GTM-[A-Z0-9-]+|G-[A-Z0-9-]+|AW-[A-Z0-9-]+/.test(html)),
+    icons,
     scripts,
     resources
   };

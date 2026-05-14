@@ -16,6 +16,8 @@ func TestCrawlBrowserPagesInventoriesInitialScripts(t *testing.T) {
 <head>
   <title>Demo Site</title>
   <link rel="canonical" href="/canonical">
+  <link rel="icon" sizes="32x32" type="image/png" href="/wp-content/uploads/site-icon.png?token=secret&v=1">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <script src="/wp-content/plugins/builder/app.js?token=secret&v=1" async defer></script>
   <script>
     window.dataLayer = window.dataLayer || [];
@@ -46,6 +48,15 @@ func TestCrawlBrowserPagesInventoriesInitialScripts(t *testing.T) {
 	}
 	if page.CanonicalURL != server.URL+"/canonical" {
 		t.Fatalf("canonical = %q", page.CanonicalURL)
+	}
+	if len(page.Icons) != 2 {
+		t.Fatalf("icons = %#v, want 2 declared icons", page.Icons)
+	}
+	if page.Icons[0].Rel != "icon" || page.Icons[0].URLRedacted != server.URL+"/wp-content/uploads/site-icon.png" {
+		t.Fatalf("icon URL = %#v, want origin plus path without query material", page.Icons[0])
+	}
+	if page.Icons[0].Sizes != "32x32" || page.Icons[0].Type != "image/png" {
+		t.Fatalf("icon metadata = %#v, want size/type", page.Icons[0])
 	}
 	if len(page.Scripts) != 3 {
 		t.Fatalf("scripts = %#v, want 3", page.Scripts)

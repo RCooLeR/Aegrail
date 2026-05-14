@@ -24,7 +24,7 @@ func TestEvidenceRepositoryCreateImportIntegration(t *testing.T) {
 	defer pool.Close()
 
 	var siteID domain.ID
-	if err := pool.QueryRow(context.Background(), `select id::text from sites where slug = 'petlink'`).Scan(&siteID); err != nil {
+	if err := pool.QueryRow(context.Background(), `select id::text from sites where slug = 'demo-site'`).Scan(&siteID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -76,7 +76,7 @@ func TestImportLocalEvidenceIntegration(t *testing.T) {
 	})
 
 	result, err := application.ImportLocalEvidence(context.Background(), localapp.ImportLocalEvidenceInput{
-		SiteSlug:   "petlink",
+		SiteSlug:   "demo-site",
 		SourceType: "integration_import",
 		Path:       source,
 	})

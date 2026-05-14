@@ -64,14 +64,14 @@ func agentStatusCommand() *urfavecli.Command {
 		Usage: "show local Agent queue and identity status",
 		Flags: agentConfigFlags(),
 		Action: func(c *urfavecli.Context) error {
-			runtime := newAgentRuntime(c)
+			runtime := newAgentStatusRuntime(c)
 			status, err := runtime.Status(c.Context)
 			if err != nil {
 				return err
 			}
 			writer := tabwriter.NewWriter(c.App.Writer, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(writer, "CONFIG\tQUEUE\tINSTALLED\tPENDING\tSENT\tFAILED")
-			fmt.Fprintf(writer, "%s\t%s\t%t\t%d\t%d\t%d\n", status.ConfigPath, status.QueueDir, status.Installed, status.Pending, status.Sent, status.Failed)
+			fmt.Fprintln(writer, "CONFIG\tQUEUE\tINSTALLED\tPENDING\tSENT\tFAILED\tDISCARDED")
+			fmt.Fprintf(writer, "%s\t%s\t%t\t%d\t%d\t%d\t%d\n", status.ConfigPath, status.QueueDir, status.Installed, status.Pending, status.Sent, status.Failed, status.Discarded)
 			return writer.Flush()
 		},
 	}
@@ -156,6 +156,8 @@ func agentRunCommand() *urfavecli.Command {
 		Flags: []urfavecli.Flag{
 			&urfavecli.StringFlag{Name: "config", Usage: "Agent server config path", Value: ".aegrail/agent.yaml"},
 			&urfavecli.BoolFlag{Name: "once", Usage: "run one scan and exit"},
+			&urfavecli.BoolFlag{Name: "bootstrap", Usage: "capture current state as baseline; do not enqueue detection events"},
+			&urfavecli.BoolFlag{Name: "discard-pending", Usage: "with --bootstrap, move existing pending queue batches to discarded after baseline"},
 			&urfavecli.StringFlag{Name: "secret", Usage: "Hub ingest HMAC secret override", EnvVars: []string{"AEGRAIL_HUB_INGEST_SECRET"}},
 			&urfavecli.IntFlag{Name: "send-limit", Usage: "maximum pending batches to send after each scan"},
 			&urfavecli.DurationFlag{Name: "interval", Usage: "override configured polling interval"},
@@ -184,26 +186,50 @@ func agentRunCommand() *urfavecli.Command {
 
 			runOnce := func(config agent.ServerConfig) error {
 				secret := agent.ResolveServerConfigSecret(config, c.String("secret"))
-				result, err := runtime.RunServerConfigOnce(ctx, config, "", sendLimit)
+				bootstrap := c.Bool("bootstrap")
+				if c.Bool("discard-pending") && !bootstrap {
+					return fmt.Errorf("--discard-pending can only be used with --bootstrap")
+				}
+				result, err := runtime.RunServerConfigOnce(ctx, config, "", sendLimit, bootstrap)
 				if err != nil {
 					return err
 				}
-				databaseResult, err := runConfiguredDatabaseCollectors(ctx, runtime, config)
+				databaseResult, err := runConfiguredDatabaseCollectors(ctx, runtime, config, bootstrap)
 				if err != nil {
 					return err
 				}
 				result.Queued += databaseResult.Queued
-				browserResult, err := runConfiguredBrowserCrawls(ctx, runtime, config)
+				browserResult, err := runConfiguredBrowserCrawls(ctx, runtime, config, bootstrap)
 				if err != nil {
 					return err
 				}
 				result.Queued += browserResult.Queued
-				coverageResult, err := runtime.QueueServerConfigCoverage(ctx, config)
-				if err != nil {
-					return err
+				var coverageResult agent.ServerConfigCoverageRunResult
+				if !bootstrap {
+					coverageResult, err = runtime.QueueServerConfigCoverage(ctx, config)
+					if err != nil {
+						return err
+					}
 				}
 				result.Queued += coverageResult.Queued
-				if secret != "" {
+				if bootstrap {
+					status, err := runtime.Status(ctx)
+					if err != nil {
+						return err
+					}
+					result.Pending = status.Pending
+					if c.Bool("discard-pending") {
+						discard, err := runtime.DiscardPending(ctx, 0)
+						if err != nil {
+							return err
+						}
+						result.Pending = discard.PendingAfter
+						fmt.Fprintf(c.App.Writer, "Discarded %d existing pending batch(es); pending %d\n", discard.Discarded, discard.PendingAfter)
+						for _, item := range discard.Errors {
+							fmt.Fprintf(c.App.ErrWriter, "%s\n", item)
+						}
+					}
+				} else if secret != "" {
 					send, err := runtime.SendQueued(ctx, secret, sendLimit)
 					if err != nil {
 						return err
@@ -211,6 +237,9 @@ func agentRunCommand() *urfavecli.Command {
 					result.Sent = send.Sent
 					result.Failed = send.Failed
 					result.Pending = send.PendingAfter
+					for _, item := range send.Errors {
+						fmt.Fprintf(c.App.ErrWriter, "%s\n", item)
+					}
 				} else {
 					status, err := runtime.Status(ctx)
 					if err != nil {
@@ -246,6 +275,9 @@ func agentRunCommand() *urfavecli.Command {
 				}
 				if coverageResult.Sites > 0 {
 					fmt.Fprintf(c.App.Writer, "Config coverage checked %d site(s); queued %d update(s)\n", coverageResult.Sites, coverageResult.Queued)
+				}
+				if bootstrap {
+					fmt.Fprintln(c.App.Writer, "Bootstrap mode enabled: baselines captured, no events queued.")
 				}
 				return nil
 			}
@@ -294,8 +326,9 @@ type agentDatabaseSiteRunResult struct {
 	Warnings  int
 }
 
-func runConfiguredDatabaseCollectors(ctx context.Context, runtime *agent.Runtime, config agent.ServerConfig) (agentDatabaseRunResult, error) {
+func runConfiguredDatabaseCollectors(ctx context.Context, runtime *agent.Runtime, config agent.ServerConfig, bootstrap bool) (agentDatabaseRunResult, error) {
 	collectorRuntime := collector.NewRuntime(collector.Config{Name: "database"})
+	piiKey := strings.TrimSpace(os.Getenv("AEGRAIL_PII_KEY"))
 	summary := agentDatabaseRunResult{}
 	for _, site := range config.Sites {
 		if len(site.Databases) == 0 {
@@ -329,6 +362,7 @@ func runConfiguredDatabaseCollectors(ctx context.Context, runtime *agent.Runtime
 					Profile:     profile,
 					TablePrefix: database.TablePrefix,
 					Timeout:     timeout,
+					PIIKey:      piiKey,
 				})
 				if err != nil {
 					now := time.Now().UTC()
@@ -347,10 +381,19 @@ func runConfiguredDatabaseCollectors(ctx context.Context, runtime *agent.Runtime
 			if err != nil {
 				snapshot.Warnings = append(snapshot.Warnings, fmt.Sprintf("database snapshot state update failed: %v", err))
 			}
+			if diffResult.Baselined {
+				siteSummary.Baselines++
+			}
+			siteSummary.Changes += len(diffResult.Changes) + len(diffResult.EntityChanges)
+			siteSummary.Warnings += len(snapshot.Warnings)
+			summary.Databases++
+			siteSummary.Databases++
+			if bootstrap {
+				continue
+			}
 			events := collector.BuildDatabaseSnapshotEvents(snapshot, labels)
 			events = append(events, collector.BuildDatabaseSnapshotDiffEvents(snapshot, diffResult, labels)...)
 			if len(events) == 0 {
-				siteSummary.Databases++
 				continue
 			}
 			inputEvents := make([]agent.EnqueueEventInput, 0, len(events))
@@ -376,14 +419,7 @@ func runConfiguredDatabaseCollectors(ctx context.Context, runtime *agent.Runtime
 			}); err != nil {
 				return agentDatabaseRunResult{}, fmt.Errorf("site %s database %s enqueue: %w", site.Slug, name, err)
 			}
-			siteSummary.Databases++
-			if diffResult.Baselined {
-				siteSummary.Baselines++
-			}
-			siteSummary.Changes += len(diffResult.Changes) + len(diffResult.EntityChanges)
 			siteSummary.Queued += len(events)
-			siteSummary.Warnings += len(snapshot.Warnings)
-			summary.Databases++
 			summary.Queued += len(events)
 		}
 		if siteSummary.Databases > 0 || siteSummary.Queued > 0 {
@@ -405,7 +441,7 @@ type agentBrowserSiteRunResult struct {
 	Queued int
 }
 
-func runConfiguredBrowserCrawls(ctx context.Context, runtime *agent.Runtime, config agent.ServerConfig) (agentBrowserRunResult, error) {
+func runConfiguredBrowserCrawls(ctx context.Context, runtime *agent.Runtime, config agent.ServerConfig, bootstrap bool) (agentBrowserRunResult, error) {
 	collectorRuntime := collector.NewRuntime(collector.Config{Name: "browser"})
 	summary := agentBrowserRunResult{}
 	for _, site := range config.Sites {
@@ -429,10 +465,18 @@ func runConfiguredBrowserCrawls(ctx context.Context, runtime *agent.Runtime, con
 			return agentBrowserRunResult{}, fmt.Errorf("site %s browser crawl: %w", site.Slug, err)
 		}
 		labels := agent.SiteEventLabels(site)
+		siteSummary := agentBrowserSiteRunResult{
+			Slug:  site.Slug,
+			Pages: len(crawlResult.Pages),
+		}
+		summary.Pages += len(crawlResult.Pages)
+		if bootstrap {
+			summary.Sites = append(summary.Sites, siteSummary)
+			continue
+		}
 		events := collector.BuildBrowserCrawlEvents(crawlResult, labels)
 		if len(events) == 0 {
-			summary.Sites = append(summary.Sites, agentBrowserSiteRunResult{Slug: site.Slug, Pages: len(crawlResult.Pages)})
-			summary.Pages += len(crawlResult.Pages)
+			summary.Sites = append(summary.Sites, siteSummary)
 			continue
 		}
 		inputEvents := make([]agent.EnqueueEventInput, 0, len(events))
@@ -458,13 +502,9 @@ func runConfiguredBrowserCrawls(ctx context.Context, runtime *agent.Runtime, con
 		}); err != nil {
 			return agentBrowserRunResult{}, fmt.Errorf("site %s browser enqueue: %w", site.Slug, err)
 		}
-		summary.Pages += len(crawlResult.Pages)
+		siteSummary.Queued = len(events)
 		summary.Queued += len(events)
-		summary.Sites = append(summary.Sites, agentBrowserSiteRunResult{
-			Slug:   site.Slug,
-			Pages:  len(crawlResult.Pages),
-			Queued: len(events),
-		})
+		summary.Sites = append(summary.Sites, siteSummary)
 	}
 	return summary, nil
 }
@@ -716,6 +756,18 @@ func newAgentRuntime(c *urfavecli.Context) *agent.Runtime {
 		ConfigPath: c.String("config"),
 		QueueDir:   c.String("queue-dir"),
 	})
+}
+
+func newAgentStatusRuntime(c *urfavecli.Context) *agent.Runtime {
+	if config, err := agent.LoadServerConfig(c.String("config")); err == nil {
+		identity := config.AgentIdentity()
+		return agent.NewRuntime(agent.Config{
+			ConfigPath: c.String("config"),
+			QueueDir:   identity.QueueDir,
+			Identity:   &identity,
+		})
+	}
+	return newAgentRuntime(c)
 }
 
 func agentConfigFlags() []urfavecli.Flag {

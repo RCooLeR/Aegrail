@@ -38,6 +38,7 @@ go run ./cmd/aegrail --help
 go run ./cmd/aegrail db migrate
 go run ./cmd/aegrail inventory bootstrap single-site --kind wordpress --org acme --project customer-site --host web-01 --agent-id agt_web_01 --fingerprint SHA256:test
 go run ./cmd/aegrail hub serve
+go run ./cmd/aegrail hub serve --dashboard-dir ..\dashboard\dist
 go run ./cmd/aegrail hub findings list --org acme --project customer-site --env production --app main-web
 go run ./cmd/aegrail hub rules evaluate --fail-on-mismatch
 go run ./cmd/aegrail agent status

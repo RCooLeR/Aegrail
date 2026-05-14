@@ -3,9 +3,12 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -65,6 +68,51 @@ func TestValidateServerConfigRejectsLiteralDSN(t *testing.T) {
 	}
 }
 
+func TestNormalizeServerConfigExpandsPathEnvironmentVariables(t *testing.T) {
+	t.Setenv("AEGRAIL_TEST_ROOT", filepath.Join(t.TempDir(), "site"))
+	t.Setenv("AEGRAIL_TEST_STATE", filepath.Join(t.TempDir(), "state"))
+	config := NormalizeServerConfig(ServerConfig{
+		Schema: ServerConfigSchema,
+		Hub:    ServerHubConfig{URL: "http://127.0.0.1:8787"},
+		Identity: ServerIdentityConfig{
+			Org:         "acme",
+			Project:     "hosted-sites",
+			Environment: "production",
+			Host:        "web-01",
+			AgentID:     "agt_web_01",
+		},
+		Runtime: ServerRuntimeConfig{
+			QueueDir: "${AEGRAIL_TEST_STATE}/queue",
+			StateDir: "${AEGRAIL_TEST_STATE}/state",
+		},
+		Sites: []ServerSiteConfig{
+			{
+				Slug: "example-com",
+				Kind: "wordpress",
+				Root: "${AEGRAIL_TEST_ROOT}",
+				Files: ServerFileWatchConfig{
+					ExtraPaths: []string{"${AEGRAIL_TEST_ROOT}/wp-content"},
+					Exclude:    []string{"${AEGRAIL_TEST_ROOT}/wp-content/cache"},
+				},
+				Logs: []ServerLogConfig{{Path: "${AEGRAIL_TEST_ROOT}/debug.log", Kind: "php_error"}},
+			},
+		},
+	})
+
+	if strings.Contains(config.Sites[0].Root, "AEGRAIL_TEST_ROOT") {
+		t.Fatalf("root was not expanded: %q", config.Sites[0].Root)
+	}
+	if !filepath.IsAbs(config.Runtime.QueueDir) || !filepath.IsAbs(config.Runtime.StateDir) {
+		t.Fatalf("runtime paths were not expanded: %#v", config.Runtime)
+	}
+	if !strings.HasPrefix(config.Sites[0].Files.ExtraPaths[0], config.Sites[0].Root) {
+		t.Fatalf("extra path = %q, want under root %q", config.Sites[0].Files.ExtraPaths[0], config.Sites[0].Root)
+	}
+	if !strings.HasPrefix(config.Sites[0].Logs[0].Path, config.Sites[0].Root) {
+		t.Fatalf("log path = %q, want under root %q", config.Sites[0].Logs[0].Path, config.Sites[0].Root)
+	}
+}
+
 func TestRunServerConfigOnceUsesPerSiteContextAndState(t *testing.T) {
 	root := t.TempDir()
 	siteOne := filepath.Join(root, "example")
@@ -118,7 +166,7 @@ func TestRunServerConfigOnceUsesPerSiteContextAndState(t *testing.T) {
 		},
 	})
 	runtime := NewRuntime(Config{})
-	result, err := runtime.RunServerConfigOnce(context.Background(), config, "", 0)
+	result, err := runtime.RunServerConfigOnce(context.Background(), config, "", 0, false)
 	if err != nil {
 		t.Fatalf("RunServerConfigOnce returned error: %v", err)
 	}
@@ -130,7 +178,7 @@ func TestRunServerConfigOnceUsesPerSiteContextAndState(t *testing.T) {
 	if err := os.WriteFile(shellPath, []byte("<?php echo 'x';"), 0o600); err != nil {
 		t.Fatalf("WriteFile returned error: %v", err)
 	}
-	result, err = runtime.RunServerConfigOnce(context.Background(), config, "", 0)
+	result, err = runtime.RunServerConfigOnce(context.Background(), config, "", 0, false)
 	if err != nil {
 		t.Fatalf("RunServerConfigOnce returned error after change: %v", err)
 	}
@@ -161,11 +209,86 @@ func TestRunServerConfigOnceUsesPerSiteContextAndState(t *testing.T) {
 	if len(batch.Events) != 1 || batch.Events[0].Labels["site_slug"] != "example2-com" {
 		t.Fatalf("event labels = %#v, want site labels", batch.Events)
 	}
+	result, err = runtime.RunServerConfigOnce(context.Background(), config, "", 0, true)
+	if err != nil {
+		t.Fatalf("RunServerConfigOnce returned error in bootstrap: %v", err)
+	}
+	if result.Queued != 0 {
+		t.Fatalf("bootstrap result = %+v, want zero queued events", result)
+	}
 	if !fileExists(filepath.Join(root, "state", "sites", "example-com", "file-watch.json")) {
 		t.Fatalf("missing state for first site")
 	}
 	if !fileExists(filepath.Join(root, "state", "sites", "example2-com", "file-watch.json")) {
 		t.Fatalf("missing state for second site")
+	}
+}
+
+func TestRunServerConfigOnceBootstrapDoesNotSendPendingQueue(t *testing.T) {
+	var requests int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&requests, 1)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+
+	root := t.TempDir()
+	siteRoot := filepath.Join(root, "site")
+	uploadsDir := filepath.Join(siteRoot, "wp-content", "uploads")
+	if err := os.MkdirAll(uploadsDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll returned error: %v", err)
+	}
+
+	config := NormalizeServerConfig(ServerConfig{
+		Schema: ServerConfigSchema,
+		Hub:    ServerHubConfig{URL: server.URL},
+		Identity: ServerIdentityConfig{
+			Org:         "acme",
+			Project:     "hosted-sites",
+			Environment: "production",
+			Host:        "web-01",
+			AgentID:     "agt_web_01",
+		},
+		Runtime: ServerRuntimeConfig{
+			QueueDir: filepath.Join(root, "queue"),
+			StateDir: filepath.Join(root, "state"),
+			Interval: "30s",
+		},
+		Sites: []ServerSiteConfig{
+			{
+				Slug: "example-com",
+				Kind: "wordpress",
+				Root: siteRoot,
+				Files: ServerFileWatchConfig{
+					Profiles: []string{"wordpress"},
+				},
+			},
+		},
+	})
+	runtime := NewRuntime(Config{})
+	if _, err := runtime.RunServerConfigOnce(context.Background(), config, "", 0, false); err != nil {
+		t.Fatalf("initial RunServerConfigOnce returned error: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(uploadsDir, "avatar.php"), []byte("<?php echo 'x';"), 0o600); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+	result, err := runtime.RunServerConfigOnce(context.Background(), config, "", 0, false)
+	if err != nil {
+		t.Fatalf("change RunServerConfigOnce returned error: %v", err)
+	}
+	if result.Pending != 1 {
+		t.Fatalf("result = %+v, want one pending event before bootstrap", result)
+	}
+
+	result, err = runtime.RunServerConfigOnce(context.Background(), config, "secret", 10, true)
+	if err != nil {
+		t.Fatalf("bootstrap RunServerConfigOnce returned error: %v", err)
+	}
+	if requests != 0 {
+		t.Fatalf("bootstrap sent %d request(s), want 0", requests)
+	}
+	if result.Pending != 1 || result.Queued != 0 {
+		t.Fatalf("bootstrap result = %+v, want pending queue preserved and no new events", result)
 	}
 }
 

@@ -37,6 +37,7 @@ func BuildBrowserCrawlEvents(result BrowserCrawlResult, baseLabels map[string]st
 			"status_code":     page.StatusCode,
 			"title":           page.Title,
 			"canonical_url":   page.CanonicalURL,
+			"site_icons":      browserIconPayload(page.Icons),
 			"script_count":    len(page.Scripts),
 			"warning_count":   len(page.Warnings),
 			"run_started_at":  result.StartedAt.Format(time.RFC3339Nano),
@@ -123,6 +124,33 @@ func BuildBrowserCrawlEvents(result BrowserCrawlResult, baseLabels map[string]st
 		}
 	}
 	return events
+}
+
+func browserIconPayload(icons []BrowserIconObservation) []map[string]string {
+	if len(icons) == 0 {
+		return nil
+	}
+	payload := make([]map[string]string, 0, len(icons))
+	for _, icon := range icons {
+		entry := map[string]string{
+			"rel":          icon.Rel,
+			"url_redacted": icon.URLRedacted,
+		}
+		if icon.Domain != "" {
+			entry["domain"] = icon.Domain
+		}
+		if icon.Path != "" {
+			entry["path"] = icon.Path
+		}
+		if icon.Sizes != "" {
+			entry["sizes"] = icon.Sizes
+		}
+		if icon.Type != "" {
+			entry["type"] = icon.Type
+		}
+		payload = append(payload, entry)
+	}
+	return payload
 }
 
 func browserEventLabels(base map[string]string, extra map[string]string) map[string]string {

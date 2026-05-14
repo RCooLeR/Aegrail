@@ -49,6 +49,18 @@ Run the agent from the config:
 aegrail agent run --config /etc/aegrail/agent.yaml
 ```
 
+For baseline-only first pass:
+
+```powershell
+aegrail agent run --config /etc/aegrail/agent.yaml --once --bootstrap
+```
+
+If earlier test runs already queued noisy batches, archive them during the baseline pass:
+
+```powershell
+aegrail agent run --config /etc/aegrail/agent.yaml --once --bootstrap --discard-pending
+```
+
 For local development:
 
 ```powershell
@@ -56,6 +68,8 @@ cd app
 go run ./cmd/aegrail agent config validate --config configs/agent.multi-site.yaml.example
 go run ./cmd/aegrail agent run --config configs/agent.multi-site.yaml.example
 ```
+
+For initial rollout, run once with `--bootstrap` to seed baselines, use `--discard-pending` when you want to archive old queued test noise, then run without bootstrap for deltas.
 
 The current implementation uses the config for file watching, log tailing, database snapshot checks, browser crawls, queueing, replay, and per-site app/service labels.
 
@@ -242,7 +256,9 @@ Current implementation:
 - Events are emitted under `source=agent.database` and `service=database`.
 - Sensitive DB values are not queued raw. Aegrail records counts, value byte lengths, and SHA-256 digests for selected option/config values.
 - Aegrail also records redacted entity fingerprints for WordPress users/capabilities/options/cron hooks/plugins/themes/script-bearing content and PrestaShop employees/modules/configuration values.
-- User and employee emails/logins are hashed; PrestaShop module names, WordPress plugin basenames, and theme slugs may be retained because they are operational security evidence.
+- User and employee emails/logins are never emitted raw. The agent emits masked display hints such as `r***n@example.com`, and when `AEGRAIL_PII_KEY` is set it emits keyed HMAC-SHA256 fingerprints such as `email_hmac_sha256` for stable matching. Plain email/login SHA-256 is avoided because those values are dictionary-guessable.
+- `AEGRAIL_HUB_INGEST_SECRET` signs ingest requests; it is not a PII fingerprint key. Use a separate long random `AEGRAIL_PII_KEY` on agents that collect database user or employee entities.
+- PrestaShop module names, WordPress plugin basenames, and theme slugs may be retained because they are operational security evidence.
 - PrestaShop configuration values are not emitted raw. Aegrail stores config names, categories, byte lengths, SHA-256 digests, safe boolean interpretations, sensitivity, and risk reasons. The first module-specific coverage includes common payment and mail modules such as PrestaShop Checkout, PayPal, Stripe, PayPlug, Mollie, Adyen, Braintree, Mailchimp, Sendinblue, and Brevo.
 - WordPress `active_plugins` and `active_sitewide_plugins` are parsed into individual active plugin entities. `stylesheet` and `template` become active theme entities.
 - WordPress Multisite network options are collected from `<prefix>sitemeta` when the table exists.
@@ -386,6 +402,7 @@ Current implementation:
 - `aegrail agent run --config ...` queues one coverage event per configured site when that site's coverage signature changes.
 - Coverage events use `source=agent.coverage` and carry the site app/service context.
 - Payloads include enabled collectors, file profiles, log kinds, database engines/profiles, browser crawl settings, and WordPress Multisite metadata.
+- Payloads do not include local root paths; filesystem events prefer app-relative paths when a site root is configured.
 - Coverage levels are `none`, `partial`, `strong`, and `complete`.
 - The Hub exposes latest coverage records through `GET /api/v1/coverage`.
 - The Hub exposes monitored topology through `GET /api/v1/inventory/topology` plus granular apps, services, hosts, and agents endpoints.

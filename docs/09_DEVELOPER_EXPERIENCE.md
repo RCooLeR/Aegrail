@@ -11,6 +11,7 @@ Developer setup should require:
 - PostgreSQL service from `services`
 - Ollama only for AI workflows
 - browser executable only for rendered crawler tests
+- Node.js only for dashboard workflows
 - one environment file for local defaults
 
 ## Repository Shape
@@ -34,7 +35,7 @@ app/
   internal/rules/          deterministic rules and scoring
   migrations/              SQL migrations
   configs/                 env and agent config examples
-dashboard/                 planned TypeScript React dashboard
+dashboard/                 TypeScript React dashboard
 docs/                      product, architecture, operation, and delivery docs
 services/                  local Docker services
 data/                      local runtime data, ignored by Git
@@ -131,6 +132,9 @@ Multi-site command:
 ```powershell
 go run ./cmd/aegrail agent config validate --config configs/agent.multi-site.yaml.example
 go run ./cmd/aegrail agent run --config configs/agent.multi-site.yaml.example --once
+go run ./cmd/aegrail agent run --config configs/agent.multi-site.yaml.example --once --bootstrap
+go run ./cmd/aegrail agent run --config configs/agent.multi-site.yaml.example --once --bootstrap --discard-pending
+go run ./cmd/aegrail agent status --config configs/agent.multi-site.yaml.example
 ```
 
 ## Debugging Tools

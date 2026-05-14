@@ -71,6 +71,78 @@ func TestUpdateDatabaseSnapshotStateSkipsWarningOnlySnapshots(t *testing.T) {
 	}
 }
 
+func TestDatabaseSnapshotStateIgnoresPIIEvidenceFormatMigration(t *testing.T) {
+	previous := DatabaseSnapshotState{
+		Checks: map[string]DatabaseSnapshotCheckState{},
+		Entities: map[string]DatabaseEntityState{
+			"wordpress_user:abc": {
+				Type:       "wordpress_user",
+				Key:        "wordpress_user:abc",
+				Label:      "wordpress_user:abc",
+				Privileged: true,
+				Signature:  "legacy",
+				Attributes: map[string]any{
+					"administrator":       true,
+					"capabilities_sha256": "roles",
+					"email_sha256":        "legacy-email",
+					"has_capabilities":    true,
+					"login_sha256":        "legacy-login",
+					"user_id_hash":        "id",
+				},
+			},
+		},
+	}
+	current := DatabaseSnapshotState{
+		Checks: map[string]DatabaseSnapshotCheckState{},
+		Entities: map[string]DatabaseEntityState{
+			"wordpress_user:abc": {
+				Type:       "wordpress_user",
+				Key:        "wordpress_user:abc",
+				Label:      "wordpress_user:r***n@example.com",
+				Privileged: true,
+				Signature:  "masked",
+				Attributes: map[string]any{
+					"account_display":     "r***n@example.com",
+					"administrator":       true,
+					"capabilities_sha256": "roles",
+					"email_hmac_sha256":   "keyed-email",
+					"email_masked":        "r***n@example.com",
+					"has_capabilities":    true,
+					"login_hmac_sha256":   "keyed-login",
+					"login_masked":        "r***n",
+					"user_id_hash":        "id",
+				},
+			},
+		},
+	}
+
+	diff := DiffDatabaseSnapshotState(previous, true, current)
+	if len(diff.EntityChanges) != 0 {
+		t.Fatalf("entity changes = %+v, want no migration-only diff", diff.EntityChanges)
+	}
+
+	current.Entities["wordpress_user:abc"] = DatabaseEntityState{
+		Type:       "wordpress_user",
+		Key:        "wordpress_user:abc",
+		Label:      "wordpress_user:r***n@example.com",
+		Privileged: true,
+		Signature:  "masked-role-change",
+		Attributes: map[string]any{
+			"account_display":     "r***n@example.com",
+			"administrator":       true,
+			"capabilities_sha256": "new-roles",
+			"email_hmac_sha256":   "keyed-email",
+			"email_masked":        "r***n@example.com",
+			"has_capabilities":    true,
+			"user_id_hash":        "id",
+		},
+	}
+	diff = DiffDatabaseSnapshotState(previous, true, current)
+	if len(diff.EntityChanges) != 1 || diff.EntityChanges[0].Type != "changed" {
+		t.Fatalf("entity changes = %+v, want real capability change", diff.EntityChanges)
+	}
+}
+
 func TestBuildDatabaseSnapshotDiffEvents(t *testing.T) {
 	result := databaseStateTestResult(3, "ccc")
 	diff := DatabaseSnapshotDiffResult{
@@ -128,7 +200,7 @@ func TestBuildDatabaseSnapshotEntityDiffEvents(t *testing.T) {
 					Signature:  "sig",
 					Attributes: map[string]any{
 						"administrator": true,
-						"email_sha256":  "redacted",
+						"email_masked":  "a***n@example.com",
 					},
 				},
 			},
@@ -150,7 +222,7 @@ func TestBuildDatabaseSnapshotEntityDiffEvents(t *testing.T) {
 		t.Fatalf("payload = %#v, want current entity", event.Payload)
 	}
 	attributes, ok := current["attributes"].(map[string]any)
-	if !ok || attributes["email_sha256"] != "redacted" {
+	if !ok || attributes["email_masked"] != "a***n@example.com" {
 		t.Fatalf("current = %#v, want redacted attributes", current)
 	}
 }
