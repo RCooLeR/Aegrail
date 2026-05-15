@@ -199,7 +199,10 @@ func collectWordPressDatabaseEntities(ctx context.Context, db *sql.DB, tablePref
 	var warnings []string
 	warnings = append(warnings, optionalWarning(warning)...)
 
-	userEntities, userWarnings := collectWordPressUserEntities(ctx, db, prefix, pii)
+	networkAdmins, networkAdminWarnings := collectWordPressNetworkAdminLogins(ctx, db, prefix)
+	warnings = append(warnings, networkAdminWarnings...)
+
+	userEntities, userWarnings := collectWordPressUserEntities(ctx, db, prefix, networkAdmins, pii)
 	entities = append(entities, userEntities...)
 	warnings = append(warnings, userWarnings...)
 
@@ -219,12 +222,14 @@ func collectWordPressDatabaseEntities(ctx context.Context, db *sql.DB, tablePref
 	return entities, warnings
 }
 
-func collectWordPressUserEntities(ctx context.Context, db *sql.DB, prefix string, pii databasePIIProtector) ([]DatabaseEntityObservation, []string) {
+func collectWordPressUserEntities(ctx context.Context, db *sql.DB, prefix string, networkAdmins map[string]struct{}, pii databasePIIProtector) ([]DatabaseEntityObservation, []string) {
 	users := quoteDatabaseIdentifier(prefix + "users")
 	usermeta := quoteDatabaseIdentifier(prefix + "usermeta")
-	query := "SELECT u.ID, COALESCE(u.user_login, ''), COALESCE(u.user_email, ''), COALESCE(um.meta_value, '') FROM " +
-		users + " u LEFT JOIN " + usermeta + " um ON um.user_id = u.ID AND um.meta_key = ? ORDER BY u.ID LIMIT 1000"
-	rows, err := db.QueryContext(ctx, query, prefix+"capabilities")
+	query := "SELECT u.ID, COALESCE(u.user_login, ''), COALESCE(u.user_email, ''), " +
+		"COALESCE(GROUP_CONCAT(COALESCE(um.meta_value, '') ORDER BY um.meta_key SEPARATOR '\n'), '') FROM " +
+		users + " u LEFT JOIN " + usermeta + " um ON um.user_id = u.ID AND um.meta_key REGEXP ? " +
+		"GROUP BY u.ID, u.user_login, u.user_email ORDER BY u.ID LIMIT 1000"
+	rows, err := db.QueryContext(ctx, query, wordpressCapabilityMetaKeyRegexp(prefix))
 	if err != nil {
 		return nil, []string{fmt.Sprintf("wordpress user entity query failed: %v", err)}
 	}
@@ -239,7 +244,8 @@ func collectWordPressUserEntities(ctx context.Context, db *sql.DB, prefix string
 		if err := rows.Scan(&id, &login, &email, &capabilities); err != nil {
 			return entities, []string{fmt.Sprintf("wordpress user entity scan failed: %v", err)}
 		}
-		entities = append(entities, wordpressUserEntity(id, login, email, capabilities, pii))
+		_, networkAdmin := networkAdmins[databaseNormalizeIdentifier(login)]
+		entities = append(entities, wordpressUserEntityWithAccess(id, login, email, capabilities, networkAdmin, pii))
 	}
 	if err := rows.Err(); err != nil {
 		return entities, []string{fmt.Sprintf("wordpress user entity rows failed: %v", err)}
@@ -248,6 +254,10 @@ func collectWordPressUserEntities(ctx context.Context, db *sql.DB, prefix string
 }
 
 func wordpressUserEntity(id int64, login string, email string, capabilities string, pii databasePIIProtector) DatabaseEntityObservation {
+	return wordpressUserEntityWithAccess(id, login, email, capabilities, false, pii)
+}
+
+func wordpressUserEntityWithAccess(id int64, login string, email string, capabilities string, networkSuperAdmin bool, pii databasePIIProtector) DatabaseEntityObservation {
 	idText := strconv.FormatInt(id, 10)
 	login = strings.TrimSpace(login)
 	email = strings.TrimSpace(email)
@@ -259,8 +269,17 @@ func wordpressUserEntity(id int64, login string, email string, capabilities stri
 		"administrator":       admin,
 		"has_capabilities":    strings.TrimSpace(capabilities) != "",
 	}
+	if networkSuperAdmin {
+		attributes["network_super_admin"] = true
+	}
 	if accountDisplay != "" {
 		attributes["account_display"] = accountDisplay
+	}
+	if normalized := databaseNormalizeEmail(email); normalized != "" {
+		attributes["email"] = normalized
+	}
+	if normalized := databaseNormalizeIdentifier(login); normalized != "" {
+		attributes["login"] = normalized
 	}
 	if masked := databaseMaskEmail(email); masked != "" {
 		attributes["email_masked"] = masked
@@ -278,7 +297,7 @@ func wordpressUserEntity(id int64, login string, email string, capabilities stri
 		Type:       "wordpress_user",
 		Key:        databaseEntityKey("wordpress_user", idText),
 		Label:      databaseDisplayLabel("wordpress_user", accountDisplay, idText),
-		Privileged: admin,
+		Privileged: admin || networkSuperAdmin,
 		Attributes: attributes,
 	}
 	entity.Signature = databaseEntitySignature(entity)
@@ -341,6 +360,38 @@ func collectWordPressNetworkOptionEntities(ctx context.Context, db *sql.DB, pref
 		return entities, []string{fmt.Sprintf("wordpress network option entity rows failed: %v", err)}
 	}
 	return entities, nil
+}
+
+func collectWordPressNetworkAdminLogins(ctx context.Context, db *sql.DB, prefix string) (map[string]struct{}, []string) {
+	admins := map[string]struct{}{}
+	table := prefix + "sitemeta"
+	exists, err := databaseTableExists(ctx, db, table)
+	if err != nil {
+		return admins, []string{fmt.Sprintf("wordpress network admin table check failed: %v", err)}
+	}
+	if !exists {
+		return admins, nil
+	}
+
+	rows, err := db.QueryContext(ctx, "SELECT COALESCE(meta_value, '') FROM "+quoteDatabaseIdentifier(table)+" WHERE meta_key = ? LIMIT 100", "site_admins")
+	if err != nil {
+		return admins, []string{fmt.Sprintf("wordpress network admin query failed: %v", err)}
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var value string
+		if err := rows.Scan(&value); err != nil {
+			return admins, []string{fmt.Sprintf("wordpress network admin scan failed: %v", err)}
+		}
+		for _, login := range parseWordPressSiteAdmins(value) {
+			admins[databaseNormalizeIdentifier(login)] = struct{}{}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return admins, []string{fmt.Sprintf("wordpress network admin rows failed: %v", err)}
+	}
+	return admins, nil
 }
 
 func wordpressTrackedSiteOptionNames(prefix string) []string {
@@ -521,6 +572,25 @@ func parseWordPressCronHooks(value string) []string {
 	}
 	sort.Strings(hooks)
 	return hooks
+}
+
+func parseWordPressSiteAdmins(value string) []string {
+	values, ok := parsePHPSerializedStrings(value)
+	if !ok {
+		values = splitWordPressOptionList(value)
+	}
+	seen := map[string]bool{}
+	admins := make([]string, 0, len(values))
+	for _, value := range values {
+		login := databaseNormalizeIdentifier(value)
+		if login == "" || seen[login] {
+			continue
+		}
+		seen[login] = true
+		admins = append(admins, login)
+	}
+	sort.Strings(admins)
+	return admins
 }
 
 func normalizeWordPressCronHook(value string) string {
@@ -967,6 +1037,9 @@ func prestashopEmployeeEntity(id int64, email string, active bool, profileID int
 	if accountDisplay != "" {
 		attributes["account_display"] = accountDisplay
 	}
+	if normalized := databaseNormalizeEmail(email); normalized != "" {
+		attributes["email"] = normalized
+	}
 	if masked := databaseMaskEmail(email); masked != "" {
 		attributes["email_masked"] = masked
 	}
@@ -1337,8 +1410,8 @@ func wordpressDatabaseCheckSpecs(tablePrefix string) ([]databaseCheckSpec, []str
 			Kind:   databaseCheckCount,
 			Metric: "admin_users",
 			Table:  prefix + "usermeta",
-			Query:  "SELECT COUNT(*) FROM " + usermeta + " WHERE meta_key = ? AND meta_value LIKE ?",
-			Args:   []any{prefix + "capabilities", "%administrator%"},
+			Query:  "SELECT COUNT(DISTINCT user_id) FROM " + usermeta + " WHERE meta_key REGEXP ? AND meta_value LIKE ?",
+			Args:   []any{wordpressCapabilityMetaKeyRegexp(prefix), "%administrator%"},
 		},
 		{
 			Name:   "wordpress.options.count",
@@ -1353,6 +1426,10 @@ func wordpressDatabaseCheckSpecs(tablePrefix string) ([]databaseCheckSpec, []str
 		wordpressOptionDigestSpec(prefix, "template", "wordpress.theme_template.digest"),
 	}
 	return specs, optionalWarning(warning)
+}
+
+func wordpressCapabilityMetaKeyRegexp(prefix string) string {
+	return "^" + regexp.QuoteMeta(prefix) + "([0-9]+_)?capabilities$"
 }
 
 func wordpressOptionDigestSpec(prefix string, optionName string, name string) databaseCheckSpec {
@@ -1434,7 +1511,7 @@ func normalizeDatabaseEngine(engine string) string {
 
 func normalizeDatabaseProfile(profile string) string {
 	switch strings.ToLower(strings.TrimSpace(profile)) {
-	case "wp":
+	case "wp", "wordpress-multisite", "woocommerce":
 		return "wordpress"
 	case "ps":
 		return "prestashop"
@@ -1575,10 +1652,10 @@ func databaseNormalizeIdentifier(value string) string {
 }
 
 func databaseAccountDisplay(login string, email string) string {
-	if masked := databaseMaskEmail(email); masked != "" {
-		return masked
+	if normalized := databaseNormalizeEmail(email); normalized != "" {
+		return normalized
 	}
-	return databaseMaskIdentifier(login)
+	return databaseNormalizeIdentifier(login)
 }
 
 func databaseMaskEmail(value string) string {

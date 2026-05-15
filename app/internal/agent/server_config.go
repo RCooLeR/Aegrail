@@ -56,6 +56,7 @@ type ServerSiteConfig struct {
 	Root         string                   `yaml:"root"`
 	Labels       map[string]string        `yaml:"labels"`
 	Files        ServerFileWatchConfig    `yaml:"files"`
+	Coverage     ServerCoverageConfig     `yaml:"coverage"`
 	Logs         []ServerLogConfig        `yaml:"logs"`
 	Databases    []ServerDatabaseConfig   `yaml:"databases"`
 	BrowserCrawl ServerBrowserCrawlConfig `yaml:"browser_crawl"`
@@ -63,9 +64,14 @@ type ServerSiteConfig struct {
 }
 
 type ServerFileWatchConfig struct {
+	Enabled    *bool    `yaml:"enabled"`
 	Profiles   []string `yaml:"profiles"`
 	ExtraPaths []string `yaml:"extra_paths"`
 	Exclude    []string `yaml:"exclude"`
+}
+
+type ServerCoverageConfig struct {
+	Enabled *bool `yaml:"enabled"`
 }
 
 type ServerLogConfig struct {
@@ -90,6 +96,7 @@ type ServerBrowserCrawlConfig struct {
 	WaitTagManager bool     `yaml:"wait_tag_manager"`
 	MaxPages       int      `yaml:"max_pages"`
 	Timeout        string   `yaml:"timeout"`
+	Schedule       string   `yaml:"schedule"`
 	URLs           []string `yaml:"urls"`
 }
 
@@ -188,6 +195,14 @@ func NormalizeServerConfig(config ServerConfig) ServerConfig {
 		site.Root = expandConfigPath(site.Root)
 		site.Labels = cloneStringMap(site.Labels)
 		site.Files.Profiles = normalizeStringSlice(site.Files.Profiles, true)
+		if siteFilesEnabled(*site) && len(site.Files.Profiles) == 0 {
+			switch site.Kind {
+			case "wordpress", "wordpress-multisite", "woocommerce":
+				site.Files.Profiles = []string{"wordpress"}
+			case "prestashop":
+				site.Files.Profiles = []string{"prestashop"}
+			}
+		}
 		site.Files.ExtraPaths = normalizePathSlice(site.Files.ExtraPaths)
 		site.Files.Exclude = normalizePathSlice(site.Files.Exclude)
 		for logIndex := range site.Logs {
@@ -206,6 +221,7 @@ func NormalizeServerConfig(config ServerConfig) ServerConfig {
 			db.Schedule = strings.TrimSpace(db.Schedule)
 		}
 		site.BrowserCrawl.Timeout = strings.TrimSpace(site.BrowserCrawl.Timeout)
+		site.BrowserCrawl.Schedule = strings.TrimSpace(site.BrowserCrawl.Schedule)
 		site.BrowserCrawl.URLs = normalizeStringSlice(site.BrowserCrawl.URLs, false)
 		for wpIndex := range site.WordPress.NetworkSites {
 			site.WordPress.NetworkSites[wpIndex].Domain = strings.TrimSpace(site.WordPress.NetworkSites[wpIndex].Domain)
@@ -272,9 +288,9 @@ func ValidateServerConfig(config ServerConfig) error {
 		if site.Service == "" {
 			issues = append(issues, prefix+".service is required")
 		}
-		if site.Root == "" {
+		if siteFilesEnabled(site) && site.Root == "" {
 			issues = append(issues, prefix+".root is required")
-		} else if !isAbsoluteConfigPath(site.Root) {
+		} else if site.Root != "" && !isAbsoluteConfigPath(site.Root) {
 			issues = append(issues, prefix+".root must be an absolute path")
 		}
 		for _, profile := range site.Files.Profiles {
@@ -337,6 +353,11 @@ func ValidateServerConfig(config ServerConfig) error {
 		if site.BrowserCrawl.Timeout != "" {
 			if _, err := time.ParseDuration(site.BrowserCrawl.Timeout); err != nil {
 				issues = append(issues, prefix+".browser_crawl.timeout must be a valid duration")
+			}
+		}
+		if site.BrowserCrawl.Schedule != "" {
+			if _, err := time.ParseDuration(site.BrowserCrawl.Schedule); err != nil {
+				issues = append(issues, prefix+".browser_crawl.schedule must be a valid duration")
 			}
 		}
 		for urlIndex, rawURL := range site.BrowserCrawl.URLs {
@@ -402,7 +423,7 @@ func (r *Runtime) RunServerConfigOnce(ctx context.Context, config ServerConfig, 
 			StateDir: siteStateDir(config, site),
 		}
 		labels := siteEventLabels(site)
-		if len(site.Files.Profiles) > 0 || len(site.Files.ExtraPaths) > 0 {
+		if siteFilesEnabled(site) && (len(site.Files.Profiles) > 0 || len(site.Files.ExtraPaths) > 0) {
 			watchResult, err := r.ScanWatchedPaths(ctx, WatchOptions{
 				Paths:     site.Files.ExtraPaths,
 				Root:      site.Root,
@@ -482,6 +503,14 @@ func siteEventLabels(site ServerSiteConfig) map[string]string {
 		labels["site_kind"] = site.Kind
 	}
 	return labels
+}
+
+func siteFilesEnabled(site ServerSiteConfig) bool {
+	return site.Files.Enabled == nil || *site.Files.Enabled
+}
+
+func siteCoverageEnabled(site ServerSiteConfig) bool {
+	return site.Coverage.Enabled == nil || *site.Coverage.Enabled
 }
 
 func SiteEventLabels(site ServerSiteConfig) map[string]string {

@@ -38,6 +38,14 @@ func TestCollectDatabaseSnapshotUnsupportedEngineReturnsWarning(t *testing.T) {
 	}
 }
 
+func TestNormalizeDatabaseProfileTreatsWordPressNetworkAsWordPress(t *testing.T) {
+	for _, profile := range []string{"wp", "wordpress", "wordpress-multisite", "woocommerce"} {
+		if got := normalizeDatabaseProfile(profile); got != "wordpress" {
+			t.Fatalf("normalizeDatabaseProfile(%q) = %q, want wordpress", profile, got)
+		}
+	}
+}
+
 func TestBuildDatabaseSnapshotEventsRedactsDigestValues(t *testing.T) {
 	result := DatabaseCollectResult{
 		Name:    "main",
@@ -71,15 +79,17 @@ func TestBuildDatabaseSnapshotEventsRedactsDigestValues(t *testing.T) {
 	}
 }
 
-func TestWordPressUserEntityMasksIdentityAndUsesKeyedFingerprint(t *testing.T) {
+func TestWordPressUserEntityIncludesIdentityAndUsesKeyedFingerprint(t *testing.T) {
 	entity := wordpressUserEntity(42, "roman", "roman@gmail.com", `a:1:{s:13:"administrator";b:1;}`, newDatabasePIIProtector("local-test-key"))
-	if entity.Label != "wordpress_user:r***n@gmail.com" || !entity.Privileged {
-		t.Fatalf("entity = %#v, want masked privileged user label", entity)
+	if entity.Label != "wordpress_user:roman@gmail.com" || !entity.Privileged {
+		t.Fatalf("entity = %#v, want privileged user label with full email", entity)
 	}
-	if entity.Attributes["account_display"] != "r***n@gmail.com" ||
+	if entity.Attributes["account_display"] != "roman@gmail.com" ||
+		entity.Attributes["email"] != "roman@gmail.com" ||
+		entity.Attributes["login"] != "roman" ||
 		entity.Attributes["email_masked"] != "r***n@gmail.com" ||
 		entity.Attributes["login_masked"] != "r***n" {
-		t.Fatalf("attributes = %#v, want masked identity hints", entity.Attributes)
+		t.Fatalf("attributes = %#v, want full identity hints plus masked compatibility fields", entity.Attributes)
 	}
 	if _, ok := entity.Attributes["email_sha256"]; ok {
 		t.Fatalf("attributes leaked plain email sha256 field: %#v", entity.Attributes)
@@ -97,13 +107,58 @@ func TestWordPressUserEntityMasksIdentityAndUsesKeyedFingerprint(t *testing.T) {
 	}
 }
 
-func TestPrestaShopEmployeeEntityMasksIdentityAndUsesKeyedFingerprint(t *testing.T) {
-	entity := prestashopEmployeeEntity(7, "owner@example.com", true, 1, newDatabasePIIProtector("local-test-key"))
-	if entity.Label != "prestashop_employee:o***r@example.com" || !entity.Privileged {
-		t.Fatalf("entity = %#v, want masked privileged employee label", entity)
+func TestWordPressNetworkSuperAdminUserIsPrivileged(t *testing.T) {
+	entity := wordpressUserEntityWithAccess(9, "network-owner", "owner@example.com", "", true, newDatabasePIIProtector("local-test-key"))
+	if !entity.Privileged {
+		t.Fatalf("entity = %#v, want network super admin privileged", entity)
 	}
-	if entity.Attributes["account_display"] != "o***r@example.com" || entity.Attributes["email_masked"] != "o***r@example.com" {
-		t.Fatalf("attributes = %#v, want masked employee email", entity.Attributes)
+	if entity.Attributes["administrator"] != false || entity.Attributes["network_super_admin"] != true {
+		t.Fatalf("attributes = %#v, want network super admin without site administrator capability", entity.Attributes)
+	}
+	if entity.Attributes["capabilities_sha256"] != databaseSHA256Hex("") || entity.Attributes["has_capabilities"] != false {
+		t.Fatalf("attributes = %#v, want empty capability state still tracked", entity.Attributes)
+	}
+}
+
+func TestParseWordPressSiteAdminsFromSerializedNetworkOption(t *testing.T) {
+	admins := parseWordPressSiteAdmins(`a:3:{i:0;s:5:"Admin";i:1;s:13:"network-owner";i:2;s:5:"admin";}`)
+	if got, want := strings.Join(admins, ","), "admin,network-owner"; got != want {
+		t.Fatalf("admins = %#v, want %s", admins, want)
+	}
+}
+
+func TestWordPressAdminUsersCheckMatchesNetworkCapabilityKeys(t *testing.T) {
+	specs, warnings := wordpressDatabaseCheckSpecs("wp_")
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %#v, want none", warnings)
+	}
+	var adminSpec databaseCheckSpec
+	for _, spec := range specs {
+		if spec.Name == "wordpress.admin_users.count" {
+			adminSpec = spec
+			break
+		}
+	}
+	if adminSpec.Query == "" {
+		t.Fatal("wordpress.admin_users.count spec not found")
+	}
+	if !strings.Contains(adminSpec.Query, "COUNT(DISTINCT user_id)") || !strings.Contains(adminSpec.Query, "REGEXP") {
+		t.Fatalf("query = %q, want distinct users across multisite capability keys", adminSpec.Query)
+	}
+	if got, want := adminSpec.Args[0], "^wp_([0-9]+_)?capabilities$"; got != want {
+		t.Fatalf("regexp arg = %#v, want %q", got, want)
+	}
+}
+
+func TestPrestaShopEmployeeEntityIncludesIdentityAndUsesKeyedFingerprint(t *testing.T) {
+	entity := prestashopEmployeeEntity(7, "owner@example.com", true, 1, newDatabasePIIProtector("local-test-key"))
+	if entity.Label != "prestashop_employee:owner@example.com" || !entity.Privileged {
+		t.Fatalf("entity = %#v, want privileged employee label with full email", entity)
+	}
+	if entity.Attributes["account_display"] != "owner@example.com" ||
+		entity.Attributes["email"] != "owner@example.com" ||
+		entity.Attributes["email_masked"] != "o***r@example.com" {
+		t.Fatalf("attributes = %#v, want full employee email plus masked compatibility field", entity.Attributes)
 	}
 	if _, ok := entity.Attributes["email_sha256"]; ok {
 		t.Fatalf("attributes leaked plain email sha256 field: %#v", entity.Attributes)

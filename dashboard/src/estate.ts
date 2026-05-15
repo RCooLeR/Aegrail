@@ -3,7 +3,7 @@ import type { ApiScope, CoverageRecord, HubFinding, TimelineEvent } from "./type
 
 export type EstateStatus = "critical" | "warning" | "healthy";
 export type CollectorKey = "files" | "database" | "browser" | "config";
-export type CollectorStatus = "fresh" | "warning" | "stale" | "missing";
+export type CollectorStatus = "fresh" | "warning" | "stale" | "missing" | "disabled";
 
 export type CollectorState = {
   detail: string;
@@ -181,8 +181,8 @@ function buildInstanceModel(snapshot: DashboardInstanceSnapshot): InstanceModel 
   const highFindings = openFindings.filter((finding) => finding.severity === "high").length;
   const mediumFindings = openFindings.filter((finding) => finding.severity === "medium").length;
   const latestCoverage = latestCoverageRecord(data.coverage.data);
-  const coverageWarnings = data.coverage.data.filter((record) => !isGoodCoverage(record.coverage_level)).length;
-  const collectors = buildCollectorStates(data.timeline.data);
+  const coverageWarnings = data.coverage.data.filter((record) => isCoverageProblem(record.coverage_level)).length;
+  const collectors = buildCollectorStates(data.timeline.data, latestCoverage);
   const lastSignalAt = maxTime([
     ...data.timeline.data.map((event) => event.event_time),
     ...data.coverage.data.map((record) => record.reported_at),
@@ -278,20 +278,71 @@ function buildCompanyModel(instances: InstanceModel[]): CompanyModel {
   };
 }
 
-function buildCollectorStates(events: TimelineEvent[]): CollectorState[] {
+function buildCollectorStates(events: TimelineEvent[], latestCoverage?: CoverageRecord): CollectorState[] {
   return [
-    collectorState("files", "Files", events, (event) => event.type.startsWith("file.")),
-    collectorState("database", "Database", events, (event) => event.type.startsWith("db.")),
-    collectorState("browser", "Browser", events, (event) => event.type.startsWith("browser.")),
-    collectorState("config", "Config", events, (event) => event.type === "agent.config.coverage")
+    coverageAwareCollectorState("files", "Files", events, latestCoverage, (event) => event.type.startsWith("file.")),
+    coverageAwareCollectorState("database", "Database", events, latestCoverage, (event) => event.type.startsWith("db.")),
+    coverageAwareCollectorState("browser", "Browser", events, latestCoverage, (event) => event.type.startsWith("browser.")),
+    configCollectorState(latestCoverage)
   ];
+}
+
+function configCollectorState(record?: CoverageRecord): CollectorState {
+  if (!record) {
+    return { detail: "No config coverage record", key: "config", label: "Config", status: "missing" };
+  }
+  if (configCoverageEnabled(record) === false || record.coverage_level === "disabled") {
+    return {
+      detail: "Disabled in agent config",
+      key: "config",
+      label: "Config",
+      lastSeenAt: record.reported_at,
+      status: "disabled"
+    };
+  }
+  if (!isGoodCoverage(record.coverage_level)) {
+    return {
+      detail: `Coverage ${record.coverage_level || "unknown"}`,
+      key: "config",
+      label: "Config",
+      lastSeenAt: record.reported_at,
+      status: "warning"
+    };
+  }
+  return {
+    detail: `Coverage ${record.coverage_level}`,
+    key: "config",
+    label: "Config",
+    lastSeenAt: record.reported_at,
+    status: "fresh"
+  };
+}
+
+function coverageAwareCollectorState(
+  key: Exclude<CollectorKey, "config">,
+  label: string,
+  events: TimelineEvent[],
+  latestCoverage: CoverageRecord | undefined,
+  predicate: (event: TimelineEvent) => boolean
+): CollectorState {
+  if (collectorCoverageEnabled(latestCoverage, key) === false) {
+    return {
+      detail: "Disabled in agent config",
+      key,
+      label,
+      lastSeenAt: latestCoverage?.reported_at,
+      status: "disabled"
+    };
+  }
+  return collectorState(key, label, events, predicate);
 }
 
 function collectorState(
   key: CollectorKey,
   label: string,
   events: TimelineEvent[],
-  predicate: (event: TimelineEvent) => boolean
+  predicate: (event: TimelineEvent) => boolean,
+  options: { stale?: boolean } = {}
 ): CollectorState {
   const event = latestEvent(events.filter(predicate), (item) => item.event_time);
   if (!event) {
@@ -300,7 +351,7 @@ function collectorState(
   if (["critical", "high", "medium"].includes(event.severity)) {
     return { detail: event.message || event.type, key, label, lastSeenAt: event.event_time, status: "warning" };
   }
-  if (!isFresh(event.event_time)) {
+  if (options.stale !== false && !isFresh(event.event_time)) {
     return { detail: "Last signal is stale", key, label, lastSeenAt: event.event_time, status: "stale" };
   }
   return { detail: event.type, key, label, lastSeenAt: event.event_time, status: "fresh" };
@@ -354,10 +405,14 @@ function instanceStatus({
   if (criticalFindings > 0 || highFindings > 0 || staleAgents > 0 || (lastSignalAt && !isFresh(lastSignalAt))) {
     return "critical";
   }
-  if (mediumFindings > 0 || coverageWarnings > 0 || collectors.some((collector) => collector.status !== "fresh")) {
+  if (mediumFindings > 0 || coverageWarnings > 0 || collectors.some(collectorIsProblem)) {
     return "warning";
   }
   return "healthy";
+}
+
+export function collectorIsProblem(collector: CollectorState) {
+  return !["fresh", "disabled"].includes(collector.status);
 }
 
 function instanceStatusReason(
@@ -419,6 +474,35 @@ function latestCoverageRecord(records: CoverageRecord[]) {
 
 function isGoodCoverage(level: string) {
   return ["complete", "full", "strong"].includes(level);
+}
+
+function isCoverageProblem(level: string) {
+  return !isGoodCoverage(level) && level !== "disabled";
+}
+
+function configCoverageEnabled(record?: CoverageRecord) {
+  const coverage = coveragePayload(record);
+  const value = coverage?.enabled;
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function collectorCoverageEnabled(record: CoverageRecord | undefined, key: Exclude<CollectorKey, "config">) {
+  const coverage = coveragePayload(record);
+  const payloadKey = key === "database" ? "databases" : key;
+  const section = coverage?.[payloadKey];
+  if (!section || typeof section !== "object" || Array.isArray(section)) {
+    return undefined;
+  }
+  const value = (section as Record<string, unknown>).enabled;
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function coveragePayload(record?: CoverageRecord) {
+  const value = record?.payload.coverage;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  return value as Record<string, unknown>;
 }
 
 function latestEvent<T>(items: T[], time: (item: T) => string | undefined) {

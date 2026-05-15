@@ -271,6 +271,8 @@ func databaseEntityComparableAttributes(attributes map[string]any) map[string]an
 func isDatabasePIIEvidenceAttribute(key string) bool {
 	switch strings.TrimSpace(key) {
 	case "account_display",
+		"email",
+		"login",
 		"email_masked",
 		"login_masked",
 		"email_sha256",

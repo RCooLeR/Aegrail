@@ -20,6 +20,8 @@ import (
 
 const WatchStateSchema = "aegrail.agent.watch_state.v1"
 const maxWatchedHashBytes = 64 << 20
+const watchLockStaleAfter = 5 * time.Minute
+const watchFullHashEvery = time.Hour
 
 type WatchOptions struct {
 	Paths     []string
@@ -39,12 +41,15 @@ type WatchResult struct {
 	Queued       int
 	Baselined    bool
 	StatePath    string
+	HashedFiles  int
+	ReusedHashes int
 }
 
 type watchState struct {
-	Schema    string               `json:"schema"`
-	UpdatedAt time.Time            `json:"updated_at"`
-	Files     map[string]fileState `json:"files"`
+	Schema         string               `json:"schema"`
+	UpdatedAt      time.Time            `json:"updated_at"`
+	LastFullHashAt time.Time            `json:"last_full_hash_at,omitempty"`
+	Files          map[string]fileState `json:"files"`
 }
 
 type fileState struct {
@@ -82,23 +87,32 @@ func (r *Runtime) ScanWatchedPaths(ctx context.Context, options WatchOptions) (W
 	if err != nil {
 		return WatchResult{}, err
 	}
-	current, err := scanPaths(paths, identity.QueueDir, options.Root, options.Exclude)
+	now := r.now().UTC()
+	forceFullHash, err := shouldForceFullWatchHash(previous, hadState, now)
 	if err != nil {
 		return WatchResult{}, err
 	}
+	scan, err := scanPaths(paths, identity.QueueDir, options.Root, options.Exclude, previous.Files, forceFullHash)
+	if err != nil {
+		return WatchResult{}, err
+	}
+	current := scan.Files
 
 	result := WatchResult{
 		WatchedFiles: len(current),
 		Baselined:    !hadState,
 		StatePath:    statePath,
+		HashedFiles:  scan.HashedFiles,
+		ReusedHashes: scan.ReusedHashes,
 	}
 	if hadState {
 		events := diffWatchState(previous.Files, current)
 		if options.NoEvents {
 			return result, saveWatchState(statePath, watchState{
-				Schema:    WatchStateSchema,
-				UpdatedAt: r.now().UTC(),
-				Files:     current,
+				Schema:         WatchStateSchema,
+				UpdatedAt:      now,
+				LastFullHashAt: watchLastFullHashAt(previous, forceFullHash, now),
+				Files:          current,
 			})
 		}
 		for _, event := range events {
@@ -111,15 +125,62 @@ func (r *Runtime) ScanWatchedPaths(ctx context.Context, options WatchOptions) (W
 			}
 			result.Queued++
 		}
+		if len(events) == 0 {
+			heartbeat := fileScanCompletedEvent(len(current), false)
+			heartbeat.App = options.App
+			heartbeat.Service = options.Service
+			heartbeat.Region = options.Region
+			heartbeat.Labels = mergeStringMaps(heartbeat.Labels, options.Labels)
+			if _, _, err := r.EnqueueEvent(ctx, heartbeat); err != nil {
+				return WatchResult{}, err
+			}
+			result.Queued++
+		}
 	}
 	if err := saveWatchState(statePath, watchState{
-		Schema:    WatchStateSchema,
-		UpdatedAt: r.now().UTC(),
-		Files:     current,
+		Schema:         WatchStateSchema,
+		UpdatedAt:      now,
+		LastFullHashAt: watchLastFullHashAt(previous, forceFullHash, now),
+		Files:          current,
 	}); err != nil {
 		return WatchResult{}, err
 	}
 	return result, nil
+}
+
+func shouldForceFullWatchHash(previous watchState, hadState bool, now time.Time) (bool, error) {
+	if !hadState {
+		return true, nil
+	}
+	interval, err := watchFullHashInterval()
+	if err != nil {
+		return false, err
+	}
+	if interval <= 0 {
+		return false, nil
+	}
+	if previous.LastFullHashAt.IsZero() {
+		return true, nil
+	}
+	return !now.Before(previous.LastFullHashAt.Add(interval)), nil
+}
+
+func watchLastFullHashAt(previous watchState, forceFullHash bool, now time.Time) time.Time {
+	if forceFullHash {
+		return now
+	}
+	return previous.LastFullHashAt
+}
+
+func watchFullHashInterval() (time.Duration, error) {
+	if value := strings.TrimSpace(os.Getenv("AEGRAIL_WATCH_FULL_HASH_INTERVAL")); value != "" {
+		parsed, err := time.ParseDuration(value)
+		if err != nil {
+			return 0, fmt.Errorf("invalid AEGRAIL_WATCH_FULL_HASH_INTERVAL value: %w", err)
+		}
+		return parsed, nil
+	}
+	return watchFullHashEvery, nil
 }
 
 func ResolveWatchPaths(options WatchOptions) ([]string, error) {
@@ -165,6 +226,7 @@ func profileWatchPaths(root string, profile string) []string {
 	case "wordpress", "wp", "woocommerce":
 		return []string{
 			filepath.Join(root, "wp-config.php"),
+			filepath.Join(root, "wp-config-local.php"),
 			filepath.Join(root, "wp-content", "uploads"),
 			filepath.Join(root, "wp-content", "plugins"),
 			filepath.Join(root, "wp-content", "themes"),
@@ -194,6 +256,9 @@ func acquireWatchLock(statePath string) (func(), error) {
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
 		return nil, err
 	}
+	if err := tryRecoverWatchLock(lockPath); err != nil {
+		return nil, err
+	}
 	file, err := os.OpenFile(lockPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if errors.Is(err, os.ErrExist) {
 		return nil, fmt.Errorf("watch state is locked by another agent process: %s", lockPath)
@@ -209,6 +274,41 @@ func acquireWatchLock(statePath string) (func(), error) {
 	return func() {
 		_ = os.Remove(lockPath)
 	}, nil
+}
+
+func watchLockTTL() (time.Duration, error) {
+	if value := strings.TrimSpace(os.Getenv("AEGRAIL_WATCH_LOCK_STALE_AFTER")); value != "" {
+		parsed, err := time.ParseDuration(value)
+		if err != nil {
+			return 0, err
+		}
+		return parsed, nil
+	}
+	return watchLockStaleAfter, nil
+}
+
+func tryRecoverWatchLock(lockPath string) error {
+	info, err := os.Stat(lockPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	staleAfter, err := watchLockTTL()
+	if err != nil {
+		return fmt.Errorf("invalid AEGRAIL_WATCH_LOCK_STALE_AFTER value: %w", err)
+	}
+	if staleAfter <= 0 {
+		return nil
+	}
+	if time.Since(info.ModTime()) <= staleAfter {
+		return nil
+	}
+	if err := os.Remove(lockPath); err != nil {
+		return fmt.Errorf("failed to reclaim stale watch lock %s: %w", lockPath, err)
+	}
+	return nil
 }
 
 func loadWatchState(path string) (watchState, bool, error) {
@@ -240,8 +340,14 @@ func saveWatchState(path string, state watchState) error {
 	return os.WriteFile(path, append(content, '\n'), 0o600)
 }
 
-func scanPaths(paths []string, queueDir string, root string, exclude []string) (map[string]fileState, error) {
-	result := map[string]fileState{}
+type watchScanResult struct {
+	Files        map[string]fileState
+	HashedFiles  int
+	ReusedHashes int
+}
+
+func scanPaths(paths []string, queueDir string, root string, exclude []string, previous map[string]fileState, forceFullHash bool) (watchScanResult, error) {
+	result := watchScanResult{Files: map[string]fileState{}}
 	queueAbs, _ := filepath.Abs(queueDir)
 	rootAbs := ""
 	if strings.TrimSpace(root) != "" {
@@ -249,14 +355,14 @@ func scanPaths(paths []string, queueDir string, root string, exclude []string) (
 	}
 	excludeAbs := resolveExcludePaths(exclude)
 	for _, path := range paths {
-		if err := scanPath(path, queueAbs, rootAbs, excludeAbs, result); err != nil {
-			return nil, err
+		if err := scanPath(path, queueAbs, rootAbs, excludeAbs, previous, forceFullHash, &result); err != nil {
+			return watchScanResult{}, err
 		}
 	}
 	return result, nil
 }
 
-func scanPath(path string, queueAbs string, rootAbs string, excludeAbs []string, result map[string]fileState) error {
+func scanPath(path string, queueAbs string, rootAbs string, excludeAbs []string, previous map[string]fileState, forceFullHash bool, result *watchScanResult) error {
 	info, err := os.Stat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -271,11 +377,11 @@ func scanPath(path string, queueAbs string, rootAbs string, excludeAbs []string,
 		if shouldSkipNoisyPath(path) {
 			return nil
 		}
-		state, err := buildFileState(path, info, rootAbs)
+		state, err := buildFileState(path, info, rootAbs, previous, forceFullHash, result)
 		if err != nil {
 			return err
 		}
-		result[state.Path] = state
+		result.Files[state.Path] = state
 		return nil
 	}
 	return filepath.WalkDir(path, func(current string, entry fs.DirEntry, walkErr error) error {
@@ -304,11 +410,11 @@ func scanPath(path string, queueAbs string, rootAbs string, excludeAbs []string,
 		if !info.Mode().IsRegular() {
 			return nil
 		}
-		state, err := buildFileState(current, info, rootAbs)
+		state, err := buildFileState(current, info, rootAbs, previous, forceFullHash, result)
 		if err != nil {
 			return err
 		}
-		result[state.Path] = state
+		result.Files[state.Path] = state
 		return nil
 	})
 }
@@ -360,8 +466,10 @@ func shouldSkipDir(path string, queueAbs string) bool {
 }
 
 func isNoisyRuntimeDir(base string) bool {
-	switch strings.ToLower(strings.TrimSpace(base)) {
-	case ".cache", "cache", "tmp", "temp":
+	switch {
+	case strings.EqualFold(strings.TrimSpace(base), ".cache"), strings.EqualFold(strings.TrimSpace(base), "cache"):
+		return true
+	case isNoisyCacheDir(base), strings.EqualFold(strings.TrimSpace(base), "tmp"), strings.EqualFold(strings.TrimSpace(base), "temp"):
 		return true
 	default:
 		return false
@@ -370,8 +478,7 @@ func isNoisyRuntimeDir(base string) bool {
 
 func shouldSkipNoisyPath(path string) bool {
 	normalized := strings.ToLower(filepath.ToSlash(path))
-	if hasPathSegment(normalized, "cache") ||
-		hasPathSegment(normalized, ".cache") {
+	if hasNoisyPathSegment(normalized) {
 		return true
 	}
 	if !isWritableAssetPath(normalized) {
@@ -383,6 +490,49 @@ func shouldSkipNoisyPath(path string) bool {
 	default:
 		return false
 	}
+}
+
+func isNoisyCacheDir(base string) bool {
+	base = strings.ToLower(strings.TrimSpace(base))
+	if base == "" {
+		return false
+	}
+	if strings.HasPrefix(base, ".cache") {
+		suffix := strings.TrimPrefix(base, ".cache")
+		if suffix == "" {
+			return true
+		}
+		switch suffix[0] {
+		case '_', '-', '.':
+			return true
+		}
+	}
+	if !strings.HasPrefix(base, "cache") {
+		return false
+	}
+	if base == "cache" {
+		return true
+	}
+	suffix := strings.TrimPrefix(base, "cache")
+	if len(suffix) == 0 {
+		return true
+	}
+	switch suffix[0] {
+	case '_', '-', '.':
+		return true
+	default:
+		return false
+	}
+}
+
+func hasNoisyPathSegment(path string) bool {
+	path = strings.ToLower(filepath.ToSlash(path))
+	for _, part := range strings.Split(strings.Trim(path, "/"), "/") {
+		if isNoisyCacheDir(part) || part == ".cache" {
+			return true
+		}
+	}
+	return false
 }
 
 func isWritableAssetPath(path string) bool {
@@ -401,7 +551,7 @@ func hasPathSegment(path string, segment string) bool {
 	return false
 }
 
-func buildFileState(path string, info fs.FileInfo, rootAbs string) (fileState, error) {
+func buildFileState(path string, info fs.FileInfo, rootAbs string, previous map[string]fileState, forceFullHash bool, scan *watchScanResult) (fileState, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return fileState{}, err
@@ -417,6 +567,12 @@ func buildFileState(path string, info fs.FileInfo, rootAbs string) (fileState, e
 			state.RelativePath = relativePath
 		}
 	}
+	if previousState, ok := previous[state.Path]; !forceFullHash && ok && canReuseFileHash(previousState, state) {
+		state.SHA256 = previousState.SHA256
+		state.HashSkipped = previousState.HashSkipped
+		scan.ReusedHashes++
+		return state, nil
+	}
 	if info.Size() > maxWatchedHashBytes {
 		state.HashSkipped = true
 		return state, nil
@@ -426,7 +582,21 @@ func buildFileState(path string, info fs.FileInfo, rootAbs string) (fileState, e
 		return fileState{}, err
 	}
 	state.SHA256 = hash
+	scan.HashedFiles++
 	return state, nil
+}
+
+func canReuseFileHash(previous fileState, current fileState) bool {
+	if previous.Path == "" || previous.Path != current.Path {
+		return false
+	}
+	if previous.SizeBytes != current.SizeBytes || !previous.ModTime.Equal(current.ModTime) {
+		return false
+	}
+	if previous.HashSkipped {
+		return true
+	}
+	return previous.SHA256 != ""
 }
 
 func hashFile(path string) (string, error) {
@@ -466,6 +636,22 @@ func diffWatchState(previous map[string]fileState, current map[string]fileState)
 		return strings.Compare(a.Target, b.Target)
 	})
 	return events
+}
+
+func fileScanCompletedEvent(watchedFiles int, baselined bool) EnqueueEventInput {
+	return EnqueueEventInput{
+		Type:     "file.scan.completed",
+		Severity: string(domain.SeverityInfo),
+		Message:  fmt.Sprintf("File scan completed with %d watched file(s)", watchedFiles),
+		Labels: map[string]string{
+			"watcher":   "file",
+			"collector": "files",
+		},
+		Payload: map[string]any{
+			"watched_files": watchedFiles,
+			"baselined":     baselined,
+		},
+	}
 }
 
 func fileChanged(previous fileState, current fileState) bool {
@@ -546,17 +732,18 @@ func classifyFileSeverity(eventType string, path string) string {
 	if eventType == "file.deleted" {
 		return string(domain.SeverityLow)
 	}
+	if strings.HasSuffix(path, "/wp-config.php") ||
+		strings.HasSuffix(path, "/wp-config-local.php") ||
+		strings.Contains(path, "/config/settings.inc.php") ||
+		strings.Contains(path, "/app/config/parameters.php") ||
+		strings.HasSuffix(path, "/.env") {
+		return string(domain.SeverityHigh)
+	}
 	if strings.HasSuffix(path, ".php") || strings.HasSuffix(path, ".phtml") || strings.HasSuffix(path, ".phar") {
 		if strings.Contains(path, "/uploads/") || strings.Contains(path, "/upload/") || strings.Contains(path, "/img/") {
 			return string(domain.SeverityHigh)
 		}
 		return string(domain.SeverityMedium)
-	}
-	if strings.HasSuffix(path, "/wp-config.php") ||
-		strings.Contains(path, "/config/settings.inc.php") ||
-		strings.Contains(path, "/app/config/parameters.php") ||
-		strings.HasSuffix(path, "/.env") {
-		return string(domain.SeverityHigh)
 	}
 	if strings.Contains(path, "/wp-content/plugins/") ||
 		strings.Contains(path, "/wp-content/themes/") ||

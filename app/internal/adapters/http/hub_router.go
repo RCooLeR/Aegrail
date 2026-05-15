@@ -65,6 +65,7 @@ func NewHubRouter(meta domain.AppMeta, hub *hubapp.Hub, options HubOptions) http
 	router.Post("/api/v1/auth/logout", logoutHubUserHandler(hub, options))
 	router.Get("/api/v1/rules", withHubAuth(hub, options, "viewer", listRulesHandler(hub)))
 	router.Get("/api/v1/findings", withHubAuth(hub, options, "viewer", listFindingsHandler(hub)))
+	router.Post("/api/v1/findings/baseline", withHubAuth(hub, options, "operator", acceptFindingsBaselineHandler(hub)))
 	router.Patch("/api/v1/findings/{id}/status", withHubAuth(hub, options, "operator", updateFindingStatusHandler(hub)))
 	router.Post("/api/v1/findings/{id}/browser-script-allowlist", withHubAuth(hub, options, "operator", allowBrowserScriptFromFindingHandler(hub)))
 	router.Get("/api/v1/reports/model-analysis", withHubAuth(hub, options, "viewer", listModelAnalysisReportsHandler(hub)))
@@ -374,6 +375,12 @@ type updateFindingStatusRequest struct {
 	Actor  string `json:"actor"`
 }
 
+type acceptFindingsBaselineRequest struct {
+	Reason string `json:"reason"`
+	Note   string `json:"note"`
+	Actor  string `json:"actor"`
+}
+
 type allowBrowserScriptRequest struct {
 	PageURL    string `json:"page_url"`
 	Kind       string `json:"kind"`
@@ -550,6 +557,40 @@ func updateFindingStatusHandler(hub *hubapp.Hub) http.HandlerFunc {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"finding": hubFindingRecord(finding),
+		})
+	}
+}
+
+func acceptFindingsBaselineHandler(hub *hubapp.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		var request acceptFindingsBaselineRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil && !errors.Is(err, io.EOF) {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		result, err := hub.AcceptHubFindingsBaseline(r.Context(), hubapp.AcceptHubFindingsBaselineInput{
+			OrganizationSlug: r.URL.Query().Get("org"),
+			ProjectSlug:      r.URL.Query().Get("project"),
+			EnvironmentSlug:  r.URL.Query().Get("environment"),
+			AppSlug:          r.URL.Query().Get("app"),
+			Reason:           request.Reason,
+			Note:             request.Note,
+			Actor:            request.Actor,
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"updated": result.Updated,
+			"status":  result.Status,
+			"reason":  result.Reason,
+			"note":    result.Note,
+			"actor":   result.Actor,
 		})
 	}
 }

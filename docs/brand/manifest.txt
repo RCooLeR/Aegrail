@@ -61,7 +61,6 @@ logos/svg/aegrail-stacked-navy.svg
 logos/svg/aegrail-stacked-white.svg
 logos/svg/aegrail-wordmark-navy.svg
 logos/svg/aegrail-wordmark-white.svg
-source/aegrail-brand-book.md
 tokens/aegrail-colors.css
 tokens/aegrail-colors.json
 tokens/aegrail-colors.scss

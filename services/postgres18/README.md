@@ -1,8 +1,6 @@
-# PostgreSQL 18
+# PostgreSQL 18 Service
 
-This service provides the local Aegrail development database.
-
-It uses the pinned pgvector PostgreSQL 18 image so the `vector` extension is available without a custom Docker build. Core PostgreSQL extensions used by Aegrail are enabled by `initdb/001_extensions.sql`.
+Local PostgreSQL 18 with pgvector for Aegrail development.
 
 Default local settings:
 
@@ -14,6 +12,6 @@ user: aegrail
 password: aegrail
 ```
 
-The defaults are intentionally simple for local development only.
+The Compose service uses a pgvector PostgreSQL image and enables Aegrail's required extensions from `initdb/001_extensions.sql`.
 
-The Docker volume is mounted at `/var/lib/postgresql` because PostgreSQL 18 images store data in a major-version-specific subdirectory.
+This is local development infrastructure only. Production or pilot deployments should use separate credentials, backups, network controls, and retention rules.

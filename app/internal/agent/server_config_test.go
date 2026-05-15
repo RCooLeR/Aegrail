@@ -14,7 +14,7 @@ import (
 )
 
 func TestLoadServerConfigExample(t *testing.T) {
-	config, err := LoadServerConfig(filepath.Join("..", "..", "configs", "agent.multi-site.yaml.example"))
+	config, err := LoadServerConfig(filepath.Join("..", "..", "configs", "agent.multi-site.example.yaml"))
 	if err != nil {
 		t.Fatalf("LoadServerConfig returned error: %v", err)
 	}
@@ -182,23 +182,33 @@ func TestRunServerConfigOnceUsesPerSiteContextAndState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunServerConfigOnce returned error after change: %v", err)
 	}
-	if result.Queued != 1 || result.Pending != 1 {
-		t.Fatalf("second result = %+v, want one queued pending event", result)
+	if result.Queued != 2 || result.Pending != 2 {
+		t.Fatalf("second result = %+v, want file change plus clean scan heartbeat", result)
 	}
 	files, err := queueFiles(filepath.Join(root, "queue", "pending"))
 	if err != nil {
 		t.Fatalf("queueFiles returned error: %v", err)
 	}
-	if len(files) != 1 {
-		t.Fatalf("pending files = %d, want 1", len(files))
-	}
-	content, err := os.ReadFile(files[0])
-	if err != nil {
-		t.Fatalf("ReadFile returned error: %v", err)
+	if len(files) != 2 {
+		t.Fatalf("pending files = %d, want 2", len(files))
 	}
 	var batch QueuedBatch
-	if err := json.Unmarshal(content, &batch); err != nil {
-		t.Fatalf("Unmarshal returned error: %v", err)
+	for _, file := range files {
+		content, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("ReadFile returned error: %v", err)
+		}
+		var candidate QueuedBatch
+		if err := json.Unmarshal(content, &candidate); err != nil {
+			t.Fatalf("Unmarshal returned error: %v", err)
+		}
+		if len(candidate.Events) == 1 && candidate.Events[0].Type == "file.created" {
+			batch = candidate
+			break
+		}
+	}
+	if len(batch.Events) != 1 {
+		t.Fatalf("missing file.created batch in queued files")
 	}
 	if batch.App != "example2-com" || batch.Service != "frontend" {
 		t.Fatalf("batch context = app %q service %q, want example2-com/frontend", batch.App, batch.Service)
@@ -339,8 +349,63 @@ func TestBuildServerConfigCoverageReportsClassifiesCoverage(t *testing.T) {
 	if report.Coverage.Level != "complete" || report.Signature == "" {
 		t.Fatalf("coverage = %#v, want complete with signature", report.Coverage)
 	}
+	if !report.Coverage.Enabled {
+		t.Fatalf("coverage enabled = false, want true")
+	}
 	if report.Coverage.Databases.Profiles[0] != "wordpress" || !report.Coverage.Databases.AllDSNEnvConfigured {
 		t.Fatalf("database coverage = %#v", report.Coverage.Databases)
+	}
+}
+
+func TestServerConfigAllowsManagedSiteWithoutFilesOrCoverage(t *testing.T) {
+	root := t.TempDir()
+	disabled := false
+	config := NormalizeServerConfig(ServerConfig{
+		Schema: ServerConfigSchema,
+		Hub:    ServerHubConfig{URL: "http://127.0.0.1:8787"},
+		Identity: ServerIdentityConfig{
+			Org:         "acme",
+			Project:     "hosted-sites",
+			Environment: "production",
+			Host:        "pantheon",
+			AgentID:     "agt_pantheon",
+		},
+		Runtime: ServerRuntimeConfig{
+			QueueDir: filepath.Join(root, "queue"),
+			StateDir: filepath.Join(root, "state"),
+		},
+		Sites: []ServerSiteConfig{
+			{
+				Slug:     "managed-site",
+				Kind:     "wordpress",
+				Files:    ServerFileWatchConfig{Enabled: &disabled},
+				Coverage: ServerCoverageConfig{Enabled: &disabled},
+				Databases: []ServerDatabaseConfig{{
+					Name:    "main",
+					Engine:  "mysql",
+					DSNEnv:  "AEGRAIL_TEST_DSN",
+					Profile: "wordpress",
+				}},
+				BrowserCrawl: ServerBrowserCrawlConfig{
+					Enabled: true,
+					URLs:    []string{"https://example.com/"},
+				},
+			},
+		},
+	})
+	if err := ValidateServerConfig(config); err != nil {
+		t.Fatalf("ValidateServerConfig returned error: %v", err)
+	}
+	if len(config.Sites[0].Files.Profiles) != 0 {
+		t.Fatalf("file profiles = %#v, want no auto profile when files are disabled", config.Sites[0].Files.Profiles)
+	}
+	reports := BuildServerConfigCoverageReports(config, mustTime("2026-05-12T15:00:00Z"))
+	if len(reports) != 1 {
+		t.Fatalf("reports = %#v, want one report", reports)
+	}
+	report := reports[0]
+	if report.Coverage.Enabled || report.Coverage.Level != "disabled" || report.Coverage.Files.Enabled {
+		t.Fatalf("coverage = %#v, want disabled config and files", report.Coverage)
 	}
 }
 
@@ -409,6 +474,60 @@ func TestQueueServerConfigCoverageDedupesUnchangedConfig(t *testing.T) {
 	}
 	if batch.Events[0].Type != "agent.config.coverage" || batch.Events[0].Labels["coverage_level"] != "partial" {
 		t.Fatalf("coverage event = %#v", batch.Events[0])
+	}
+}
+
+func TestQueueServerConfigCoverageRequeuesAfterHeartbeat(t *testing.T) {
+	root := t.TempDir()
+	now := mustTime("2026-05-12T15:00:00Z")
+	config := NormalizeServerConfig(ServerConfig{
+		Schema: ServerConfigSchema,
+		Hub:    ServerHubConfig{URL: "http://127.0.0.1:8787"},
+		Identity: ServerIdentityConfig{
+			Org:         "acme",
+			Project:     "hosted-sites",
+			Environment: "production",
+			Host:        "web-01",
+			AgentID:     "agt_web_01",
+		},
+		Runtime: ServerRuntimeConfig{
+			QueueDir: filepath.Join(root, "queue"),
+			StateDir: filepath.Join(root, "state"),
+		},
+		Sites: []ServerSiteConfig{
+			{
+				Slug: "example-com",
+				Kind: "wordpress",
+				Root: filepath.Join(root, "site"),
+				Files: ServerFileWatchConfig{
+					Profiles: []string{"wordpress"},
+				},
+			},
+		},
+	})
+	runtime := NewRuntime(Config{})
+	runtime.now = func() time.Time { return now }
+	result, err := runtime.QueueServerConfigCoverage(context.Background(), config)
+	if err != nil {
+		t.Fatalf("QueueServerConfigCoverage returned error: %v", err)
+	}
+	if result.Queued != 1 {
+		t.Fatalf("first result = %+v, want one queued coverage update", result)
+	}
+	result, err = runtime.QueueServerConfigCoverage(context.Background(), config)
+	if err != nil {
+		t.Fatalf("second QueueServerConfigCoverage returned error: %v", err)
+	}
+	if result.Queued != 0 {
+		t.Fatalf("second result = %+v, want unchanged config deduped inside heartbeat window", result)
+	}
+	now = now.Add(DefaultServerConfigCoverageHeartbeatInterval + time.Second)
+	result, err = runtime.QueueServerConfigCoverage(context.Background(), config)
+	if err != nil {
+		t.Fatalf("third QueueServerConfigCoverage returned error: %v", err)
+	}
+	if result.Queued != 1 {
+		t.Fatalf("third result = %+v, want heartbeat coverage update", result)
 	}
 }
 

@@ -1,26 +1,16 @@
-# Aegrail Brand Kit
+# Aegrail Brand Assets
 
-Aegrail is an evidence-first security audit product for web incidents.
+This directory contains the retained brand assets used by the dashboard and documentation.
 
-**Primary tagline:** Evidence-first security audits for web incidents.  
-**Secondary tagline:** Follow the breach trail.
+Keep:
 
-## Meaning
-- **Aegis** = shield, protection, defense.
-- **Trail** = audit trail, evidence trail, incident trail.
-- Brand meaning: **a protective evidence trail** / **a shield built from traces**.
+- `logos/svg/` for editable logo assets
+- `logos/png/` for exported app, mark, wordmark, stacked, and horizontal logos
+- `favicon/` for browser and app icons
+- `tokens/` for color tokens
+- `brand-book/` and `concept-boards/` as visual references
+- `ui/` for UI samples
 
-## What is included
-- `brand-book/aegrail-brand-book.pdf` - concise brand book / mini guideline.
-- `logos/svg/` - editable SVG logo assets.
-- `logos/png/` - PNG exports in common sizes.
-- `favicon/` - favicons, app icons, and web manifest.
-- `tokens/` - CSS, SCSS, JSON, and Tailwind color tokens.
-- `ui/` - CLI sample SVG.
-- `concept-boards/` - generated visual concept boards used as direction/reference.
+Use `logos/svg/aegrail-horizontal-white.svg` for dark sidebar/header surfaces and the navy variants on light backgrounds.
 
-## Core logo idea
-The mark combines a shield, an angular A, a trail/timeline path, circular evidence nodes, and lower data-bar/diff traces.
-
-## Usage note
-This is a practical starter brand kit. Before public launch, run trademark/domain checks and optionally have a designer convert the wordmark text to outlines for fully font-independent production use.
+The main product documentation lives in [../README.md](../README.md). Do not add new strategy or implementation notes in this directory.

@@ -16,6 +16,8 @@ import (
 const (
 	ServerConfigCoverageSchema      = "aegrail.agent.config_coverage.v1"
 	ServerConfigCoverageStateSchema = "aegrail.agent.config_coverage_state.v1"
+
+	DefaultServerConfigCoverageHeartbeatInterval = 10 * time.Minute
 )
 
 type ServerConfigCoverageRunResult struct {
@@ -48,6 +50,7 @@ type ServerConfigCoverageSite struct {
 }
 
 type ServerConfigCoverageDetail struct {
+	Enabled    bool                          `json:"enabled"`
 	Level      string                        `json:"level"`
 	Files      ServerConfigCoverageFiles     `json:"files"`
 	Logs       ServerConfigCoverageLogs      `json:"logs"`
@@ -93,9 +96,10 @@ type ServerConfigCoverageWordPress struct {
 }
 
 type serverConfigCoverageState struct {
-	Schema    string            `json:"schema"`
-	UpdatedAt time.Time         `json:"updated_at"`
-	Sites     map[string]string `json:"sites"`
+	Schema     string               `json:"schema"`
+	UpdatedAt  time.Time            `json:"updated_at"`
+	Sites      map[string]string    `json:"sites"`
+	ReportedAt map[string]time.Time `json:"reported_at,omitempty"`
 }
 
 func BuildServerConfigCoverageReports(config ServerConfig, reportedAt time.Time) []ServerConfigCoverageReport {
@@ -154,15 +158,20 @@ func (r *Runtime) QueueServerConfigCoverage(ctx context.Context, config ServerCo
 		return ServerConfigCoverageRunResult{}, err
 	}
 	nextState := serverConfigCoverageState{
-		Schema:    ServerConfigCoverageStateSchema,
-		UpdatedAt: now,
-		Sites:     map[string]string{},
+		Schema:     ServerConfigCoverageStateSchema,
+		UpdatedAt:  now,
+		Sites:      map[string]string{},
+		ReportedAt: map[string]time.Time{},
 	}
+	heartbeatInterval := serverConfigCoverageHeartbeatInterval()
 
 	result := ServerConfigCoverageRunResult{Sites: len(reports)}
 	for _, report := range reports {
 		nextState.Sites[report.Site.Slug] = report.Signature
-		if previous.Sites[report.Site.Slug] == report.Signature {
+		nextState.ReportedAt[report.Site.Slug] = previous.ReportedAt[report.Site.Slug]
+		signatureChanged := previous.Sites[report.Site.Slug] != report.Signature
+		heartbeatDue := configCoverageHeartbeatDue(previous.ReportedAt[report.Site.Slug], now, heartbeatInterval)
+		if !signatureChanged && !heartbeatDue {
 			continue
 		}
 		labels := siteEventLabels(ServerSiteConfig{
@@ -194,6 +203,7 @@ func (r *Runtime) QueueServerConfigCoverage(ctx context.Context, config ServerCo
 			return ServerConfigCoverageRunResult{}, err
 		}
 		result.Queued++
+		nextState.ReportedAt[report.Site.Slug] = now
 	}
 	if err := saveServerConfigCoverageState(statePath, nextState); err != nil {
 		return ServerConfigCoverageRunResult{}, err
@@ -202,8 +212,9 @@ func (r *Runtime) QueueServerConfigCoverage(ctx context.Context, config ServerCo
 }
 
 func serverConfigCoverageDetail(site ServerSiteConfig) ServerConfigCoverageDetail {
+	coverageEnabled := siteCoverageEnabled(site)
 	files := ServerConfigCoverageFiles{
-		Enabled:         len(site.Files.Profiles) > 0 || len(site.Files.ExtraPaths) > 0,
+		Enabled:         siteFilesEnabled(site) && (len(site.Files.Profiles) > 0 || len(site.Files.ExtraPaths) > 0),
 		Profiles:        append([]string(nil), site.Files.Profiles...),
 		ExtraPaths:      len(site.Files.ExtraPaths),
 		ExcludePatterns: len(site.Files.Exclude),
@@ -229,8 +240,13 @@ func serverConfigCoverageDetail(site ServerSiteConfig) ServerConfigCoverageDetai
 		URLs:           len(site.BrowserCrawl.URLs),
 	}
 	collectors := enabledCoverageCollectors(files, logs, databases, browser)
+	level := coverageLevel(files.Enabled, logs.Enabled, databases.Enabled, browser.Enabled)
+	if !coverageEnabled {
+		level = "disabled"
+	}
 	return ServerConfigCoverageDetail{
-		Level:      coverageLevel(files.Enabled, logs.Enabled, databases.Enabled, browser.Enabled),
+		Enabled:    coverageEnabled,
+		Level:      level,
 		Files:      files,
 		Logs:       logs,
 		Databases:  databases,
@@ -282,6 +298,8 @@ func coverageLevelSeverity(level string) string {
 		return "medium"
 	case "partial":
 		return "low"
+	case "disabled":
+		return "info"
 	default:
 		return "info"
 	}
@@ -401,7 +419,7 @@ func serverConfigCoveragePayload(report ServerConfigCoverageReport) map[string]a
 func loadServerConfigCoverageState(path string) (serverConfigCoverageState, bool, error) {
 	content, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return serverConfigCoverageState{Sites: map[string]string{}}, false, nil
+		return serverConfigCoverageState{Sites: map[string]string{}, ReportedAt: map[string]time.Time{}}, false, nil
 	}
 	if err != nil {
 		return serverConfigCoverageState{}, false, err
@@ -416,6 +434,9 @@ func loadServerConfigCoverageState(path string) (serverConfigCoverageState, bool
 	if state.Sites == nil {
 		state.Sites = map[string]string{}
 	}
+	if state.ReportedAt == nil {
+		state.ReportedAt = map[string]time.Time{}
+	}
 	return state, true, nil
 }
 
@@ -427,6 +448,9 @@ func saveServerConfigCoverageState(path string, state serverConfigCoverageState)
 	if state.Sites == nil {
 		state.Sites = map[string]string{}
 	}
+	if state.ReportedAt == nil {
+		state.ReportedAt = map[string]time.Time{}
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
@@ -435,4 +459,26 @@ func saveServerConfigCoverageState(path string, state serverConfigCoverageState)
 		return err
 	}
 	return os.WriteFile(path, append(content, '\n'), 0o600)
+}
+
+func serverConfigCoverageHeartbeatInterval() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("AEGRAIL_CONFIG_COVERAGE_HEARTBEAT_INTERVAL"))
+	if raw == "" {
+		return DefaultServerConfigCoverageHeartbeatInterval
+	}
+	interval, err := time.ParseDuration(raw)
+	if err != nil {
+		return DefaultServerConfigCoverageHeartbeatInterval
+	}
+	return interval
+}
+
+func configCoverageHeartbeatDue(lastReportedAt time.Time, now time.Time, interval time.Duration) bool {
+	if interval <= 0 {
+		return false
+	}
+	if lastReportedAt.IsZero() {
+		return true
+	}
+	return !now.Before(lastReportedAt.Add(interval))
 }

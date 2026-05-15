@@ -2,9 +2,11 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -264,7 +266,7 @@ func agentRunCommand() *urfavecli.Command {
 				if databaseResult.Databases > 0 || databaseResult.Queued > 0 {
 					fmt.Fprintf(c.App.Writer, "Database collected %d database(s); queued %d event(s)\n", databaseResult.Databases, databaseResult.Queued)
 					for _, site := range databaseResult.Sites {
-						fmt.Fprintf(c.App.Writer, "  %s databases=%d baselines=%d changes=%d queued=%d warnings=%d\n", site.Slug, site.Databases, site.Baselines, site.Changes, site.Queued, site.Warnings)
+						fmt.Fprintf(c.App.Writer, "  %s databases=%d baselines=%d changes=%d skipped=%d queued=%d warnings=%d\n", site.Slug, site.Databases, site.Baselines, site.Changes, site.Skipped, site.Queued, site.Warnings)
 					}
 				}
 				if browserResult.Pages > 0 || browserResult.Queued > 0 {
@@ -322,6 +324,7 @@ type agentDatabaseSiteRunResult struct {
 	Databases int
 	Baselines int
 	Changes   int
+	Skipped   int
 	Queued    int
 	Warnings  int
 }
@@ -336,12 +339,36 @@ func runConfiguredDatabaseCollectors(ctx context.Context, runtime *agent.Runtime
 		}
 		siteSummary := agentDatabaseSiteRunResult{Slug: site.Slug}
 		for _, database := range site.Databases {
+			profile := databaseProfileForSite(site, database)
+			name := databaseEventName(database, profile)
+			statePath := databaseStatePath(config, site, collector.DatabaseCollectResult{
+				Name:    name,
+				Engine:  databaseEngineForConfig(database),
+				Profile: profile,
+			})
+			siteSummary.Databases++
+			summary.Databases++
+			if !bootstrap {
+				schedule, err := parseOptionalDuration(database.Schedule)
+				if err != nil {
+					return agentDatabaseRunResult{}, fmt.Errorf("site %s database %s schedule: %w", site.Slug, name, err)
+				}
+				if schedule > 0 {
+					skip, err := shouldSkipDatabaseCollection(schedule, statePath)
+					if err != nil {
+						if !errors.Is(err, os.ErrNotExist) {
+							return agentDatabaseRunResult{}, fmt.Errorf("site %s database %s schedule check: %w", site.Slug, name, err)
+						}
+					} else if skip {
+						siteSummary.Skipped++
+						continue
+					}
+				}
+			}
 			timeout, err := parseOptionalDuration(database.Timeout)
 			if err != nil {
 				return agentDatabaseRunResult{}, fmt.Errorf("site %s database %s timeout: %w", site.Slug, database.Name, err)
 			}
-			profile := databaseProfileForSite(site, database)
-			name := databaseEventName(database, profile)
 			dsn := strings.TrimSpace(os.Getenv(database.DSNEnv))
 			var snapshot collector.DatabaseCollectResult
 			if dsn == "" {
@@ -386,8 +413,6 @@ func runConfiguredDatabaseCollectors(ctx context.Context, runtime *agent.Runtime
 			}
 			siteSummary.Changes += len(diffResult.Changes) + len(diffResult.EntityChanges)
 			siteSummary.Warnings += len(snapshot.Warnings)
-			summary.Databases++
-			siteSummary.Databases++
 			if bootstrap {
 				continue
 			}
@@ -429,6 +454,20 @@ func runConfiguredDatabaseCollectors(ctx context.Context, runtime *agent.Runtime
 	return summary, nil
 }
 
+func shouldSkipDatabaseCollection(schedule time.Duration, statePath string) (bool, error) {
+	if schedule <= 0 {
+		return false, nil
+	}
+	info, err := os.Stat(statePath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	return time.Since(info.ModTime()) < schedule, nil
+}
+
 type agentBrowserRunResult struct {
 	Sites  []agentBrowserSiteRunResult
 	Pages  int
@@ -436,9 +475,10 @@ type agentBrowserRunResult struct {
 }
 
 type agentBrowserSiteRunResult struct {
-	Slug   string
-	Pages  int
-	Queued int
+	Slug    string
+	Pages   int
+	Queued  int
+	Skipped bool
 }
 
 func runConfiguredBrowserCrawls(ctx context.Context, runtime *agent.Runtime, config agent.ServerConfig, bootstrap bool) (agentBrowserRunResult, error) {
@@ -448,6 +488,25 @@ func runConfiguredBrowserCrawls(ctx context.Context, runtime *agent.Runtime, con
 		crawl := site.BrowserCrawl
 		if !crawl.Enabled || len(crawl.URLs) == 0 {
 			continue
+		}
+		siteSummary := agentBrowserSiteRunResult{Slug: site.Slug}
+		if !bootstrap {
+			schedule, err := parseOptionalDuration(crawl.Schedule)
+			if err != nil {
+				return agentBrowserRunResult{}, fmt.Errorf("site %s browser schedule: %w", site.Slug, err)
+			}
+			if schedule > 0 {
+				skip, err := shouldSkipDatabaseCollection(schedule, browserStatePath(config, site))
+				if err != nil {
+					if !errors.Is(err, os.ErrNotExist) {
+						return agentBrowserRunResult{}, fmt.Errorf("site %s browser schedule check: %w", site.Slug, err)
+					}
+				} else if skip {
+					siteSummary.Skipped = true
+					summary.Sites = append(summary.Sites, siteSummary)
+					continue
+				}
+			}
 		}
 		timeout, err := parseOptionalDuration(crawl.Timeout)
 		if err != nil {
@@ -465,11 +524,13 @@ func runConfiguredBrowserCrawls(ctx context.Context, runtime *agent.Runtime, con
 			return agentBrowserRunResult{}, fmt.Errorf("site %s browser crawl: %w", site.Slug, err)
 		}
 		labels := agent.SiteEventLabels(site)
-		siteSummary := agentBrowserSiteRunResult{
-			Slug:  site.Slug,
-			Pages: len(crawlResult.Pages),
-		}
+		siteSummary.Pages = len(crawlResult.Pages)
 		summary.Pages += len(crawlResult.Pages)
+		if !bootstrap && crawl.Schedule != "" {
+			if err := touchCollectionState(browserStatePath(config, site), crawlResult.FinishedAt); err != nil {
+				return agentBrowserRunResult{}, fmt.Errorf("site %s browser schedule state: %w", site.Slug, err)
+			}
+		}
 		if bootstrap {
 			summary.Sites = append(summary.Sites, siteSummary)
 			continue
@@ -509,6 +570,20 @@ func runConfiguredBrowserCrawls(ctx context.Context, runtime *agent.Runtime, con
 	return summary, nil
 }
 
+func touchCollectionState(path string, timestamp time.Time) error {
+	if timestamp.IsZero() {
+		timestamp = time.Now().UTC()
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	content := []byte(timestamp.UTC().Format(time.RFC3339Nano) + "\n")
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		return err
+	}
+	return os.Chtimes(path, timestamp, timestamp)
+}
+
 func parseOptionalDuration(value string) (time.Duration, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -535,6 +610,10 @@ func dbQueueBatchID(site agent.ServerSiteConfig, result collector.DatabaseCollec
 
 func databaseStatePath(config agent.ServerConfig, site agent.ServerSiteConfig, result collector.DatabaseCollectResult) string {
 	return agent.SiteStatePath(config, site, "db-"+cliSafeID(result.Name)+".json")
+}
+
+func browserStatePath(config agent.ServerConfig, site agent.ServerSiteConfig) string {
+	return agent.SiteStatePath(config, site, "browser-crawl.state")
 }
 
 func databaseBatchLabels(site agent.ServerSiteConfig, result collector.DatabaseCollectResult) map[string]string {

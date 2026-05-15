@@ -37,11 +37,12 @@ func buildDatabaseSnapshotDiffChain(event domain.TimelineEvent) CorrelationChain
 	return CorrelationChain{
 		ID:         databaseSnapshotDiffChainID(rule.RuleID, event),
 		RuleID:     rule.RuleID,
-		Title:      rule.Title,
+		Title:      databaseSnapshotDiffTitle(rule.Title, event),
 		Severity:   rule.Severity,
 		Confidence: rule.Confidence,
 		Summary:    databaseSnapshotDiffSummary(event),
 		Events:     []CorrelationEvent{chainEvent},
+		Metadata:   databaseSnapshotDiffMetadata(event),
 	}
 }
 
@@ -580,6 +581,13 @@ func databaseSnapshotDiffSummary(event domain.TimelineEvent) string {
 	return fmt.Sprintf("%s %s %s", host, event.EventType, target)
 }
 
+func databaseSnapshotDiffTitle(title string, event domain.TimelineEvent) string {
+	if display := databaseEntityAccountDisplay(event); display != "" && databaseEntityIsAccountLike(event) {
+		return title + ": " + display
+	}
+	return title
+}
+
 func databaseSnapshotChangeSummary(event domain.TimelineEvent) string {
 	previous := payloadMap(event.Payload, "previous")
 	current := payloadMap(event.Payload, "current")
@@ -604,19 +612,76 @@ func databaseSnapshotChangeSummary(event domain.TimelineEvent) string {
 	return ""
 }
 
+func databaseSnapshotDiffMetadata(event domain.TimelineEvent) map[string]any {
+	metadata := map[string]any{
+		"database_profile": firstNonEmpty(
+			payloadStringAny(event.Payload, "profile", ""),
+			event.Labels["db_profile"],
+		),
+		"database": payloadStringAny(event.Payload, "database", ""),
+	}
+	if check := payloadStringAny(event.Payload, "check", ""); check != "" {
+		metadata["database_check"] = check
+	}
+	if entityType := payloadStringAny(event.Payload, "entity_type", ""); entityType != "" {
+		metadata["entity_type"] = entityType
+		metadata["change_type"] = strings.TrimPrefix(event.EventType, "db.entity.")
+	}
+	if entityKey := payloadStringAny(event.Payload, "entity_key", ""); entityKey != "" {
+		metadata["entity_key"] = entityKey
+	}
+
+	currentAttributes := payloadMap(payloadMap(event.Payload, "current"), "attributes")
+	previousAttributes := payloadMap(payloadMap(event.Payload, "previous"), "attributes")
+	if display := databaseEntityAccountDisplay(event); display != "" {
+		metadata["account_display"] = display
+	}
+	for _, item := range []struct {
+		Key        string
+		OutputKey  string
+		Attributes map[string]any
+	}{
+		{Key: "email", OutputKey: "email", Attributes: currentAttributes},
+		{Key: "login", OutputKey: "login", Attributes: currentAttributes},
+		{Key: "email_masked", OutputKey: "email_masked", Attributes: currentAttributes},
+		{Key: "login_masked", OutputKey: "login_masked", Attributes: currentAttributes},
+		{Key: "email", OutputKey: "previous_email", Attributes: previousAttributes},
+		{Key: "login", OutputKey: "previous_login", Attributes: previousAttributes},
+		{Key: "email_masked", OutputKey: "previous_email_masked", Attributes: previousAttributes},
+		{Key: "login_masked", OutputKey: "previous_login_masked", Attributes: previousAttributes},
+	} {
+		if value := payloadStringAny(item.Attributes, item.Key, ""); value != "" {
+			metadata[item.OutputKey] = value
+		}
+	}
+	return metadata
+}
+
 func databaseEntityAccountDisplay(event domain.TimelineEvent) string {
 	current := payloadMap(event.Payload, "current")
 	previous := payloadMap(event.Payload, "previous")
 	currentAttributes := payloadMap(current, "attributes")
 	previousAttributes := payloadMap(previous, "attributes")
 	return firstNonEmpty(
+		payloadStringAny(currentAttributes, "email", ""),
 		payloadStringAny(currentAttributes, "account_display", ""),
+		payloadStringAny(currentAttributes, "login", ""),
 		payloadStringAny(currentAttributes, "email_masked", ""),
 		payloadStringAny(currentAttributes, "login_masked", ""),
+		payloadStringAny(previousAttributes, "email", ""),
 		payloadStringAny(previousAttributes, "account_display", ""),
+		payloadStringAny(previousAttributes, "login", ""),
 		payloadStringAny(previousAttributes, "email_masked", ""),
 		payloadStringAny(previousAttributes, "login_masked", ""),
 	)
+}
+
+func databaseEntityIsAccountLike(event domain.TimelineEvent) bool {
+	entityType := strings.ToLower(firstNonEmpty(
+		payloadStringAny(event.Payload, "entity_type", ""),
+		event.Labels["db_entity_type"],
+	))
+	return strings.Contains(entityType, "user") || strings.Contains(entityType, "employee") || strings.Contains(entityType, "admin")
 }
 
 func payloadMap(payload map[string]any, key string) map[string]any {

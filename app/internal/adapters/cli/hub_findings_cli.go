@@ -99,6 +99,38 @@ func hubFindingsCommand(meta domain.AppMeta) *urfavecli.Command {
 					return nil
 				},
 			},
+			{
+				Name:  "baseline",
+				Usage: "accept current open Hub findings as the safe baseline",
+				Flags: append(environmentPathFlags(),
+					&urfavecli.StringFlag{Name: "app", Usage: "optional monitored app slug"},
+					&urfavecli.StringFlag{Name: "reason", Value: "baseline_accepted", Usage: "short baseline reason"},
+					&urfavecli.StringFlag{Name: "note", Usage: "operator note"},
+					&urfavecli.StringFlag{Name: "actor", Usage: "operator identity"},
+				),
+				Action: func(c *urfavecli.Context) error {
+					container, cleanup, err := newDatabaseContainer(c.Context, meta)
+					if err != nil {
+						return err
+					}
+					defer cleanup()
+
+					result, err := container.Hub.AcceptHubFindingsBaseline(c.Context, hubapp.AcceptHubFindingsBaselineInput{
+						OrganizationSlug: c.String("org"),
+						ProjectSlug:      c.String("project"),
+						EnvironmentSlug:  c.String("env"),
+						AppSlug:          c.String("app"),
+						Reason:           c.String("reason"),
+						Note:             c.String("note"),
+						Actor:            c.String("actor"),
+					})
+					if err != nil {
+						return err
+					}
+					fmt.Fprintf(c.App.Writer, "Accepted %d open finding(s) as baseline (%s).\n", result.Updated, result.Reason)
+					return nil
+				},
+			},
 		},
 	}
 }

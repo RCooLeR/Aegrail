@@ -1,51 +1,41 @@
 # Aegrail
 
-Aegrail is an evidence-first monitoring and incident triage platform for WordPress, PrestaShop, and PHP application estates.
+Aegrail is a local-first monitoring and incident-triage system for WordPress, PrestaShop, and PHP application estates.
 
-It is built around one `aegrail` binary, local agents, a central Hub, CMS-aware collectors, deterministic findings, browser JavaScript monitoring, and reports grounded in stored evidence.
+It runs agents near the sites, sends signed evidence to a Hub, turns deterministic rules into findings, and gives an operator dashboard for answering one practical question: is something wrong, where is it, and what evidence proves it?
 
 ![Aegrail overview](./docs/banner.png)
 
-## Documentation
+## Current Shape
 
-- [Product Vision](docs/01_PRODUCT_VISION.md)
-- [Architecture](docs/02_ARCHITECTURE.md)
-- [Domain Model](docs/03_DOMAIN_MODEL.md)
-- [Evidence Collection](docs/04_EVIDENCE_COLLECTION.md)
-- [Detection And Correlation](docs/05_DETECTION_AND_CORRELATION.md)
-- [AI And LLM Strategy](docs/06_AI_AND_LLM_STRATEGY.md)
-- [Operations And Security](docs/07_OPERATIONS_AND_SECURITY.md)
-- [Delivery Plan](docs/08_DELIVERY_PLAN.md)
-- [Developer Experience](docs/09_DEVELOPER_EXPERIENCE.md)
-
-Supporting specs:
-
-- [Agent Multi-Site Configuration](docs/configuration/agent-multi-site.md)
-- [Browser Crawler And JavaScript Monitoring](docs/collectors/browser-crawler.md)
-- [Dashboard API Pointer](docs/dashboard.md)
-- [Pantheon WordPress Monitoring](docs/platforms/pantheon-wordpress.md)
-- [Architecture Decisions](docs/decisions)
-- [Brand Assets](docs/brand/README.md)
-- [Local Services](services/README.md)
-## Core Principles
-
-- Evidence-first: collect and store deterministic evidence before generating analysis.
-- Modular: Local, Hub, Agent, Collector, Dashboard, rules, reports, and AI are separate modules.
-- Distributed: every event carries org, project, environment, app, service, host, agent, region, and labels where known.
-- CMS-aware: WordPress and PrestaShop are first-wave targets, with Mautic, Yii2, and Laravel planned later.
-- Explainable: findings must cite rules, versions, event context, and evidence refs.
-- Offline tolerant: agents queue locally and replay when the Hub is reachable.
-- Secure by default: secrets are redacted before reports, dashboard views, embeddings, or LLM prompts.
-- Local-first AI: Ollama can summarize evidence, but deterministic rules remain the source of truth.
+- `app/` contains the Go `aegrail` binary: Hub, Agent, collectors, CLI, reports, rules, storage adapters, and migrations.
+- `dashboard/` contains the React dashboard served by Vite in development or by the Hub in production-like local runs.
+- `services/` contains local infrastructure, currently PostgreSQL 18 with pgvector.
+- `data/` is reserved for local runtime output and is not the place for committed fixtures or docs.
+- `docs/README.md` is the single maintained product, architecture, runbook, and tracker document.
 
 ## Quick Start
 
 ```powershell
 docker compose -f services/compose.yaml up -d postgres18
 cd app
-go run ./cmd/aegrail --help
 go run ./cmd/aegrail db migrate
+go run ./cmd/aegrail --help
 go test ./...
 ```
 
-See the [documentation index](docs/README.md) for command references and the local runbook.
+Dashboard development:
+
+```powershell
+cd dashboard
+npm install
+npm run dev
+```
+
+The maintained documentation lives here:
+
+- [Aegrail Documentation](docs/README.md)
+- [App README](app/README.md)
+- [Dashboard README](dashboard/README.md)
+- [Services README](services/README.md)
+- [Brand Assets](docs/brand/README.md)

@@ -326,6 +326,115 @@ func TestCorrelateEventsBuildsSuspiciousFilePathChains(t *testing.T) {
 	}
 }
 
+func TestCorrelateEventsGroupsPluginFileChanges(t *testing.T) {
+	now := time.Date(2026, 5, 12, 13, 15, 0, 0, time.UTC)
+	chains := correlateTimelineEvents([]domain.TimelineEvent{
+		{
+			ID:        "evt-plugin-main",
+			EventTime: now,
+			EventType: "file.created",
+			Target:    "wp-content/plugins/shop/shop.php",
+			Severity:  domain.SeverityInfo,
+			HostSlug:  "web-01",
+			Payload:   map[string]any{"relative_path": "wp-content/plugins/shop/shop.php", "sha256": "plugin-main"},
+		},
+		{
+			ID:        "evt-plugin-readme",
+			EventTime: now.Add(time.Minute),
+			EventType: "file.created",
+			Target:    "wp-content/plugins/shop/readme.txt",
+			Severity:  domain.SeverityInfo,
+			HostSlug:  "web-01",
+			Payload:   map[string]any{"relative_path": "wp-content/plugins/shop/readme.txt", "sha256": "plugin-readme"},
+		},
+		{
+			ID:        "evt-plugin-admin",
+			EventTime: now.Add(2 * time.Minute),
+			EventType: "file.created",
+			Target:    "wp-content/plugins/shop/includes/admin.php",
+			Severity:  domain.SeverityInfo,
+			HostSlug:  "web-01",
+			Payload:   map[string]any{"relative_path": "wp-content/plugins/shop/includes/admin.php", "sha256": "plugin-admin"},
+		},
+	}, 30*time.Minute)
+
+	if len(chains) != 1 {
+		t.Fatalf("chains = %#v, want one grouped plugin finding", chains)
+	}
+	chain := chains[0]
+	if chain.RuleID != "file-plugin-theme-module-changed" || len(chain.Events) != 3 {
+		t.Fatalf("chain = %#v, want one plugin chain with three events", chain)
+	}
+	if !strings.Contains(chain.Title, "shop") || !strings.Contains(chain.Summary, "3 created file(s)") {
+		t.Fatalf("chain title/summary = %q / %q, want grouped plugin context", chain.Title, chain.Summary)
+	}
+	files, ok := chain.Metadata["files"].([]string)
+	if !ok || len(files) != 3 || files[0] != "wp-content/plugins/shop/shop.php" {
+		t.Fatalf("files metadata = %#v, want changed file list", chain.Metadata["files"])
+	}
+}
+
+func TestCorrelateEventsIgnoresRoutineDatabaseChecksAfterFileChange(t *testing.T) {
+	now := time.Date(2026, 5, 12, 13, 20, 0, 0, time.UTC)
+	chains := correlateTimelineEvents([]domain.TimelineEvent{
+		{
+			ID:        "evt-file",
+			EventTime: now,
+			EventType: "file.deleted",
+			Target:    "modules/netreviews/logs/logs.txt",
+			Severity:  domain.SeverityLow,
+			HostSlug:  "web-01",
+			Payload:   map[string]any{"relative_path": "modules/netreviews/logs/logs.txt"},
+		},
+		{
+			ID:        "evt-db-check",
+			EventTime: now.Add(time.Minute),
+			EventType: "db.snapshot.check",
+			Target:    "prestashop:ps_module:modules",
+			Severity:  domain.SeverityInfo,
+			HostSlug:  "web-01",
+			Message:   "Database check prestashop.modules.count observed count 99",
+		},
+	}, 30*time.Minute)
+
+	for _, chain := range chains {
+		if chain.RuleID == "file-change-to-db-security-change" {
+			t.Fatalf("chains = %#v, routine database check should not be a security tail", chains)
+		}
+	}
+}
+
+func TestCorrelateEventsTreatsDatabaseDiffsAsSecurityTails(t *testing.T) {
+	now := time.Date(2026, 5, 12, 13, 25, 0, 0, time.UTC)
+	chains := correlateTimelineEvents([]domain.TimelineEvent{
+		{
+			ID:        "evt-file",
+			EventTime: now,
+			EventType: "file.modified",
+			Target:    "modules/payment/payment.php",
+			Severity:  domain.SeverityLow,
+			HostSlug:  "web-01",
+			Payload:   map[string]any{"relative_path": "modules/payment/payment.php"},
+		},
+		{
+			ID:        "evt-db-change",
+			EventTime: now.Add(time.Minute),
+			EventType: "db.snapshot.check_changed",
+			Target:    "prestashop:ps_module:payment",
+			Severity:  domain.SeverityMedium,
+			HostSlug:  "web-01",
+			Message:   "Database check prestashop.modules.enabled changed",
+		},
+	}, 30*time.Minute)
+
+	for _, chain := range chains {
+		if chain.RuleID == "file-change-to-db-security-change" {
+			return
+		}
+	}
+	t.Fatalf("chains = %#v, want database diff linked as a security tail", chains)
+}
+
 func TestCorrelateEventsBuildsAdminRequestAnomalyChains(t *testing.T) {
 	now := time.Date(2026, 5, 12, 13, 30, 0, 0, time.UTC)
 	events := []domain.TimelineEvent{
@@ -577,4 +686,26 @@ func (r *memoryHubFindingRepository) UpdateHubFindingStatus(ctx context.Context,
 		return finding, nil
 	}
 	return domain.HubFinding{}, fmt.Errorf("finding %q was not found", findingID)
+}
+
+func (r *memoryHubFindingRepository) UpdateOpenHubFindingStatuses(ctx context.Context, environmentID domain.ID, appID domain.ID, update domain.HubFindingStatusUpdate) (int, error) {
+	now := time.Now().UTC()
+	updated := 0
+	for key, finding := range r.byKey {
+		if finding.EnvironmentID != environmentID || finding.Status != "open" {
+			continue
+		}
+		if appID != "" && finding.AppID != appID {
+			continue
+		}
+		finding.Status = update.Status
+		finding.StatusReason = update.Reason
+		finding.StatusNote = update.Note
+		finding.StatusActor = update.Actor
+		finding.StatusUpdatedAt = now
+		finding.UpdatedAt = now
+		r.byKey[key] = finding
+		updated++
+	}
+	return updated, nil
 }

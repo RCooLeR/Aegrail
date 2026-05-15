@@ -130,7 +130,8 @@ func TestCorrelateEventsSavesWordPressAdminEntityFinding(t *testing.T) {
 					"signature":  "sig-admin",
 					"attributes": map[string]any{
 						"administrator":   true,
-						"account_display": "r***n@gmail.com",
+						"account_display": "roman@gmail.com",
+						"email":           "roman@gmail.com",
 						"email_masked":    "r***n@gmail.com",
 					},
 				},
@@ -156,8 +157,16 @@ func TestCorrelateEventsSavesWordPressAdminEntityFinding(t *testing.T) {
 	if finding.RuleID != "wordpress-admin-user-added" || finding.Severity != domain.SeverityHigh || finding.Confidence != domain.ConfidenceHigh {
 		t.Fatalf("finding = %#v, want WordPress admin entity finding", finding)
 	}
-	if !strings.Contains(finding.Summary, "account r***n@gmail.com") {
-		t.Fatalf("summary = %q, want masked account display", finding.Summary)
+	if !strings.Contains(finding.Title, "roman@gmail.com") {
+		t.Fatalf("title = %q, want full account display", finding.Title)
+	}
+	if !strings.Contains(finding.Summary, "account roman@gmail.com") {
+		t.Fatalf("summary = %q, want full account display", finding.Summary)
+	}
+	if finding.Metadata["account_display"] != "roman@gmail.com" ||
+		finding.Metadata["email"] != "roman@gmail.com" ||
+		finding.Metadata["email_masked"] != "r***n@gmail.com" {
+		t.Fatalf("metadata = %#v, want full account details plus masked compatibility field", finding.Metadata)
 	}
 }
 

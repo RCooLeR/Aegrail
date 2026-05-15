@@ -1,66 +1,45 @@
 # Aegrail App
 
-This directory contains the Go module for the `aegrail` binary and runtime apps.
+This is the Go module for the `aegrail` binary.
 
-## Runtime Apps
+It owns:
 
-- Local: local imports, investigation, and reports.
-- Hub: signed ingest, inventory, timelines, findings, reports, and dashboard APIs.
-- Agent: per-server monitoring, local queueing, file watching, log tailing, database checks, browser crawls, and multi-site config.
-- Collector: database, browser, and provider-specific collection.
+- Hub APIs, ingest, inventory, findings, reports, users, and dashboard serving
+- Agent config, file/log/database/browser collection, local state, queueing, and replay
+- deterministic rules, correlation, risk scoring, and fixture evaluation
+- PostgreSQL migrations and storage adapters
+- CLI commands for local development and operations
 
-## Layout
-
-```text
-app/
-  cmd/aegrail/             binary entrypoint
-  internal/adapters/       CLI, HTTP, PostgreSQL, filesystem, browser, future AI adapters
-  internal/agent/          agent identity, queue, file watch, log watch, multi-site runtime
-  internal/bootstrap/      config, logger, database wiring
-  internal/collector/      browser, database, platform collector orchestration
-  internal/domain/         shared domain types
-  internal/hub/            inventory, ingest, baselines, correlation, findings
-  internal/local/          local import and investigation workflows
-  internal/modules/        WordPress, PrestaShop, later Mautic/Yii2/Laravel
-  internal/ports/          storage and integration interfaces
-  internal/redaction/      secret and token redaction
-  internal/reports/        report renderers
-  internal/rules/          deterministic rules and scoring
-  migrations/              SQL migrations
-  configs/                 env and agent config examples
-  testdata/                fixtures
-```
-
-## Useful Commands
+Useful commands:
 
 ```powershell
 go run ./cmd/aegrail --help
 go run ./cmd/aegrail db migrate
-go run ./cmd/aegrail inventory bootstrap single-site --kind wordpress --org acme --project customer-site --host web-01 --agent-id agt_web_01 --fingerprint SHA256:test
 go run ./cmd/aegrail hub serve
 go run ./cmd/aegrail hub serve --dashboard-dir ..\dashboard\dist
-go run ./cmd/aegrail hub findings list --org acme --project customer-site --env production --app main-web
+go run ./cmd/aegrail agent config validate --config configs/agent.multi-site.example.yaml
+go run ./cmd/aegrail agent run --config configs/agent.multi-site.example.yaml --once --bootstrap
 go run ./cmd/aegrail hub rules evaluate --fail-on-mismatch
-go run ./cmd/aegrail agent status
-go run ./cmd/aegrail agent start --once --root /var/www/site --profile wordpress
-go run ./cmd/aegrail agent start --once --log /var/log/nginx/access.log
-go run ./cmd/aegrail collector browser crawl --url https://example.com --rendered --wait-tag-manager --timeout 30s --format json
 go test ./...
 ```
 
-Multi-site runtime:
+Package map:
 
-```powershell
-go run ./cmd/aegrail agent config validate --config configs/agent.multi-site.yaml.example
-go run ./cmd/aegrail agent run --config configs/agent.multi-site.yaml.example --once
+```text
+cmd/aegrail/             binary entrypoint
+internal/adapters/       CLI, HTTP, PostgreSQL, filesystem, browser, model adapters
+internal/agent/          agent runtime, config, queue, file watch, log watch
+internal/bootstrap/      config, logger, database wiring
+internal/collector/      database and browser collectors
+internal/domain/         shared domain types
+internal/hub/            inventory, ingest, correlation, findings, reports, users
+internal/local/          local/manual investigation workflows
+internal/modules/        WordPress and PrestaShop source logic
+internal/ports/          storage and integration interfaces
+internal/redaction/      secret and token redaction
+internal/reports/        JSON, Markdown, CSV, and evidence bundle renderers
+migrations/              SQL migrations
+configs/                 local examples only; never put real secrets here
 ```
 
-## Rules
-
-- Keep business logic out of CLI and HTTP handlers.
-- Keep adapters replaceable through interfaces in `internal/ports`.
-- Keep runtime-app responsibilities in `internal/local`, `internal/hub`, `internal/agent`, and `internal/collector`.
-- Keep source-specific logic under `internal/modules`.
-- Keep deterministic tests independent from Ollama.
-
-See [Developer Experience](../docs/09_DEVELOPER_EXPERIENCE.md) for the broader engineering guide.
+The maintained architecture and tracker live in [../docs/README.md](../docs/README.md).

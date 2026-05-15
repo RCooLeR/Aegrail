@@ -326,6 +326,22 @@ export async function updateFindingStatus(
   });
 }
 
+export async function acceptFindingsBaseline(
+  scope: ApiScope,
+  input: {
+    actor: string;
+    note?: string;
+    reason?: string;
+  }
+) {
+  const params = query(scope);
+  return apiPost<ApiEnvelope<{ actor: string; note: string; reason: string; status: string; updated: number }>>(
+    scope,
+    `/api/v1/findings/baseline?${params}`,
+    input
+  );
+}
+
 export async function allowBrowserScriptFromFinding(scope: ApiScope, finding: HubFinding, actor: string, reason: string) {
   const params = query(scope);
   return apiPost(

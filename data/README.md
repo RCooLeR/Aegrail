@@ -1,11 +1,13 @@
 # Local Data
 
-This directory is reserved for local runtime data:
+This directory is for local runtime output and private investigation artifacts.
+
+Examples:
 
 - imported evidence
-- generated snapshots
-- temporary investigation files
-- local reports
-- local PostgreSQL or object storage exports if needed
+- agent snapshots
+- generated reports
+- exported evidence bundles
+- temporary debugging files
 
-Everything in this directory is ignored by Git except this README. Evidence can contain sensitive customer, credential, payment, or incident data, so do not commit generated files from here.
+Everything here is ignored by Git except this README. Treat this directory as sensitive: it may contain customer evidence, credentials, payment traces, or incident data.

@@ -44,6 +44,36 @@ func TestHubRouterUpdatesFindingStatus(t *testing.T) {
 	}
 }
 
+func TestHubRouterAcceptsFindingBaseline(t *testing.T) {
+	inventory := newHTTPTestInventoryRepository()
+	findings := newHTTPTestFindingRepository()
+	router := NewHubRouter(domain.AppMeta{Name: "Aegrail", Binary: "aegrail", Version: "test"}, hubapp.New(hubapp.Dependencies{Inventory: inventory, Findings: findings}), HubOptions{})
+
+	requestBody := bytes.NewBufferString(`{"actor":"roman"}`)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/findings/baseline?org=acme&project=customer-site&environment=production&app=main-web", requestBody)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Updated int    `json:"updated"`
+		Status  string `json:"status"`
+		Reason  string `json:"reason"`
+		Actor   string `json:"actor"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("Decode returned error: %v", err)
+	}
+	if body.Updated != 1 || body.Status != "acknowledged" || body.Reason != "baseline_accepted" || body.Actor != "roman" {
+		t.Fatalf("body = %#v, want accepted baseline result", body)
+	}
+	if findings.findings["finding-1"].Status != "acknowledged" || findings.findings["finding-1"].StatusReason != "baseline_accepted" {
+		t.Fatalf("finding = %#v, want acknowledged baseline status", findings.findings["finding-1"])
+	}
+}
+
 type httpTestFindingRepository struct {
 	findings map[domain.ID]domain.HubFinding
 }
@@ -118,4 +148,26 @@ func (r *httpTestFindingRepository) UpdateHubFindingStatus(ctx context.Context, 
 	finding.UpdatedAt = now
 	r.findings[findingID] = finding
 	return finding, nil
+}
+
+func (r *httpTestFindingRepository) UpdateOpenHubFindingStatuses(ctx context.Context, environmentID domain.ID, appID domain.ID, update domain.HubFindingStatusUpdate) (int, error) {
+	now := time.Date(2026, 5, 12, 18, 10, 0, 0, time.UTC)
+	updated := 0
+	for id, finding := range r.findings {
+		if finding.EnvironmentID != environmentID || finding.Status != "open" {
+			continue
+		}
+		if appID != "" && finding.AppID != appID {
+			continue
+		}
+		finding.Status = update.Status
+		finding.StatusReason = update.Reason
+		finding.StatusNote = update.Note
+		finding.StatusActor = update.Actor
+		finding.StatusUpdatedAt = now
+		finding.UpdatedAt = now
+		r.findings[id] = finding
+		updated++
+	}
+	return updated, nil
 }

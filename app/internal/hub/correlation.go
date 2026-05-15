@@ -44,6 +44,7 @@ type CorrelationChain struct {
 	Confidence domain.Confidence
 	Summary    string
 	Events     []CorrelationEvent
+	Metadata   map[string]any
 }
 
 type CorrelationEvent struct {
@@ -169,14 +170,7 @@ func correlateTimelineEvents(events []domain.TimelineEvent, window time.Duration
 			}
 		}
 	}
-	for _, event := range events {
-		if _, covered := coveredFileEvents[correlationEventKey(event)]; covered {
-			continue
-		}
-		chain, ok := buildSuspiciousFilePathChain(event)
-		if !ok {
-			continue
-		}
+	for _, chain := range buildSuspiciousFilePathChains(events, coveredFileEvents) {
 		addCorrelationChain(&chains, seen, chain)
 	}
 	for _, chain := range buildAdminRequestAnomalyChains(events, coveredWebEvents) {
@@ -273,6 +267,12 @@ func isDatabaseSecurityEvent(event domain.TimelineEvent) bool {
 	if !strings.HasPrefix(event.EventType, "db.") {
 		return false
 	}
+	if isDatabaseSnapshotDiffEvent(event) {
+		return true
+	}
+	if !isDatabaseChangeEventType(event.EventType) {
+		return false
+	}
 	lower := strings.ToLower(event.EventType + " " + event.Message + " " + event.Target)
 	return strings.Contains(lower, "role") ||
 		strings.Contains(lower, "privilege") ||
@@ -291,6 +291,17 @@ func isDatabaseSecurityEvent(event domain.TimelineEvent) bool {
 		strings.Contains(lower, "webhook") ||
 		strings.Contains(lower, "payment") ||
 		strings.Contains(lower, "email")
+}
+
+func isDatabaseChangeEventType(eventType string) bool {
+	lower := strings.ToLower(eventType)
+	return strings.Contains(lower, "changed") ||
+		strings.Contains(lower, "created") ||
+		strings.Contains(lower, "added") ||
+		strings.Contains(lower, "removed") ||
+		strings.Contains(lower, "deleted") ||
+		strings.Contains(lower, "granted") ||
+		strings.Contains(lower, "revoked")
 }
 
 func isPersistenceEvent(event domain.TimelineEvent) bool {
@@ -473,9 +484,9 @@ func correlationMetadata(chain CorrelationChain) map[string]any {
 			"message":    event.Message,
 		})
 	}
-	return map[string]any{
-		"chain_id": chain.ID,
-		"source":   "hub.correlation",
-		"events":   events,
-	}
+	metadata := cloneAnyMap(chain.Metadata)
+	metadata["chain_id"] = chain.ID
+	metadata["source"] = "hub.correlation"
+	metadata["events"] = events
+	return metadata
 }

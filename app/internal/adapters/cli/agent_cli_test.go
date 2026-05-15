@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/rcooler/aegrail/internal/agent"
 	"github.com/rcooler/aegrail/internal/domain"
@@ -202,6 +203,9 @@ sites:
 	if !strings.Contains(stdout, "example-com databases=1") {
 		t.Fatalf("stdout = %q, want one database in site summary", stdout)
 	}
+	if !strings.Contains(stdout, "Config coverage checked 1 site(s); queued 1 update(s)") {
+		t.Fatalf("stdout = %q, want coverage summary", stdout)
+	}
 
 	entries, err := os.ReadDir(filepath.Join(root, "queue", "pending"))
 	if err != nil {
@@ -225,7 +229,10 @@ sites:
 		t.Fatalf("event type = %s, want coverage warning", batch.Events[1].Type)
 	}
 	coverage := queuedBatchBySource(t, batches, "agent.coverage")
-	if len(coverage.Events) != 1 || coverage.Events[0].Labels["coverage_level"] != "partial" {
+	if len(coverage.Events) != 1 {
+		t.Fatalf("coverage batch = %#v", coverage)
+	}
+	if coverage.Events[0].Labels["coverage_level"] != "strong" {
 		t.Fatalf("coverage batch = %#v", coverage)
 	}
 }
@@ -312,6 +319,242 @@ sites:
 	statePath := filepath.Join(root, "state", "sites", "example-com", "file-watch.json")
 	if _, err := os.Stat(statePath); err != nil {
 		t.Fatalf("missing file watch state at %s: %v", statePath, err)
+	}
+}
+
+func TestRunConfiguredDatabaseCollectorsCanSkipBySchedule(t *testing.T) {
+	root := t.TempDir()
+	queueDir := filepath.Join(root, "queue")
+	stateDir := filepath.Join(root, "state")
+	appRoot := filepath.Join(root, "site")
+	if err := os.MkdirAll(appRoot, 0o700); err != nil {
+		t.Fatalf("MkdirAll returned error: %v", err)
+	}
+	pendingDir := filepath.Join(queueDir, "pending")
+	if err := os.MkdirAll(pendingDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll pending returned error: %v", err)
+	}
+
+	t.Setenv("AEGRAIL_TEST_MISSING_DB_DSN", "")
+	config := agent.ServerConfig{
+		Runtime: agent.ServerRuntimeConfig{
+			QueueDir: queueDir,
+			StateDir: stateDir,
+		},
+		Identity: agent.ServerIdentityConfig{
+			Region: "eu",
+		},
+		Sites: []agent.ServerSiteConfig{
+			{
+				Slug:    "example-com",
+				App:     "example-com",
+				Service: "frontend",
+				Root:    appRoot,
+				Databases: []agent.ServerDatabaseConfig{
+					{
+						Name:     "main",
+						Engine:   "mysql",
+						DSNEnv:   "AEGRAIL_TEST_MISSING_DB_DSN",
+						Profile:  "wordpress",
+						Timeout:  "2s",
+						Schedule: "1m",
+					},
+				},
+			},
+		},
+	}
+	runtime := agent.NewRuntime(agent.Config{
+		ConfigPath: filepath.Join(root, "agent.json"),
+		QueueDir:   queueDir,
+		Identity: &agent.Identity{
+			HubURL:      "http://127.0.0.1:8787",
+			QueueDir:    queueDir,
+			Org:         "acme",
+			Project:     "hosted-sites",
+			Environment: "production",
+			Host:        "web-01",
+			AgentID:     "agt_web_01",
+		},
+	})
+	ctx := context.Background()
+	statePath := agent.SiteStatePath(config, config.Sites[0], "db-main.json")
+	if err := os.MkdirAll(filepath.Dir(statePath), 0o700); err != nil {
+		t.Fatalf("MkdirAll state dir returned error: %v", err)
+	}
+	if err := os.WriteFile(statePath, []byte("{}\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile state returned error: %v", err)
+	}
+
+	skipResult, err := runConfiguredDatabaseCollectors(ctx, runtime, config, false)
+	if err != nil {
+		t.Fatalf("runConfiguredDatabaseCollectors returned error: %v", err)
+	}
+	if skipResult.Sites[0].Databases != 1 {
+		t.Fatalf("skip result databases=%d, want 1", skipResult.Sites[0].Databases)
+	}
+	if skipResult.Sites[0].Skipped != 1 {
+		t.Fatalf("skip result skipped=%d, want 1", skipResult.Sites[0].Skipped)
+	}
+	if skipResult.Sites[0].Queued != 0 {
+		t.Fatalf("skip result queued=%d, want 0", skipResult.Sites[0].Queued)
+	}
+	firstEntries, err := os.ReadDir(pendingDir)
+	if err != nil {
+		t.Fatalf("ReadDir returned error: %v", err)
+	}
+	if len(firstEntries) != 0 {
+		t.Fatalf("pending files=%d, want 0", len(firstEntries))
+	}
+
+	config.Sites[0].Databases[0].Schedule = "0s"
+	runResult, err := runConfiguredDatabaseCollectors(ctx, runtime, config, false)
+	if err != nil {
+		t.Fatalf("runConfiguredDatabaseCollectors returned error: %v", err)
+	}
+	if runResult.Sites[0].Skipped != 0 {
+		t.Fatalf("run result skipped=%d, want 0", runResult.Sites[0].Skipped)
+	}
+	if runResult.Sites[0].Queued == 0 {
+		t.Fatalf("run result queued=%d, want more than 0", runResult.Sites[0].Queued)
+	}
+	secondEntries, err := os.ReadDir(pendingDir)
+	if err != nil {
+		t.Fatalf("ReadDir returned error: %v", err)
+	}
+	if len(secondEntries) <= len(firstEntries) {
+		t.Fatalf("second pending files=%d, want more than first run", len(secondEntries))
+	}
+}
+
+func TestShouldSkipDatabaseCollection(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "state.json")
+	if err := os.WriteFile(path, []byte("{}"), 0o600); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+
+	skip, err := shouldSkipDatabaseCollection(24*time.Hour, path)
+	if err != nil {
+		t.Fatalf("shouldSkipDatabaseCollection returned error: %v", err)
+	}
+	if !skip {
+		t.Fatal("skip = false, want true for recent state within schedule window")
+	}
+
+	skip, err = shouldSkipDatabaseCollection(0, path)
+	if err != nil {
+		t.Fatalf("shouldSkipDatabaseCollection returned error: %v", err)
+	}
+	if skip {
+		t.Fatal("skip = true, want false for zero schedule")
+	}
+}
+
+func TestShouldSkipDatabaseCollectionMissingState(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "missing-state.json")
+	skip, err := shouldSkipDatabaseCollection(24*time.Hour, path)
+	if err != nil {
+		t.Fatalf("shouldSkipDatabaseCollection returned error: %v", err)
+	}
+	if skip {
+		t.Fatal("skip = true, want false when state file is missing")
+	}
+}
+
+func TestRunConfiguredBrowserCrawlsCanSkipBySchedule(t *testing.T) {
+	var requests int32
+	pageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&requests, 1)
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<!doctype html><html><head><title>Example</title><script src="/app.js"></script></head><body></body></html>`))
+	}))
+	defer pageServer.Close()
+
+	root := t.TempDir()
+	queueDir := filepath.Join(root, "queue")
+	stateDir := filepath.Join(root, "state")
+	appRoot := filepath.Join(root, "site")
+	if err := os.MkdirAll(appRoot, 0o700); err != nil {
+		t.Fatalf("MkdirAll returned error: %v", err)
+	}
+	pendingDir := filepath.Join(queueDir, "pending")
+	if err := os.MkdirAll(pendingDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll pending returned error: %v", err)
+	}
+
+	config := agent.ServerConfig{
+		Runtime: agent.ServerRuntimeConfig{
+			QueueDir: queueDir,
+			StateDir: stateDir,
+		},
+		Identity: agent.ServerIdentityConfig{
+			Region: "eu",
+		},
+		Sites: []agent.ServerSiteConfig{
+			{
+				Slug:    "example-com",
+				App:     "example-com",
+				Service: "frontend",
+				Root:    appRoot,
+				BrowserCrawl: agent.ServerBrowserCrawlConfig{
+					Enabled:  true,
+					Rendered: false,
+					MaxPages: 1,
+					Timeout:  "2s",
+					Schedule: "1h",
+					URLs:     []string{pageServer.URL},
+				},
+			},
+		},
+	}
+	runtime := agent.NewRuntime(agent.Config{
+		ConfigPath: filepath.Join(root, "agent.json"),
+		QueueDir:   queueDir,
+		Identity: &agent.Identity{
+			HubURL:      "http://127.0.0.1:8787",
+			QueueDir:    queueDir,
+			Org:         "acme",
+			Project:     "hosted-sites",
+			Environment: "production",
+			Host:        "web-01",
+			AgentID:     "agt_web_01",
+		},
+	})
+	ctx := context.Background()
+	statePath := browserStatePath(config, config.Sites[0])
+	if err := touchCollectionState(statePath, time.Now().UTC()); err != nil {
+		t.Fatalf("touchCollectionState returned error: %v", err)
+	}
+
+	skipResult, err := runConfiguredBrowserCrawls(ctx, runtime, config, false)
+	if err != nil {
+		t.Fatalf("runConfiguredBrowserCrawls returned error: %v", err)
+	}
+	if len(skipResult.Sites) != 1 || !skipResult.Sites[0].Skipped {
+		t.Fatalf("skip result = %#v, want skipped site", skipResult)
+	}
+	if got := atomic.LoadInt32(&requests); got != 0 {
+		t.Fatalf("requests = %d, want 0 for scheduled skip", got)
+	}
+
+	config.Sites[0].BrowserCrawl.Schedule = "0s"
+	runResult, err := runConfiguredBrowserCrawls(ctx, runtime, config, false)
+	if err != nil {
+		t.Fatalf("runConfiguredBrowserCrawls returned error: %v", err)
+	}
+	if runResult.Pages != 1 || runResult.Queued == 0 {
+		t.Fatalf("run result = %#v, want one crawled page with queued events", runResult)
+	}
+	if got := atomic.LoadInt32(&requests); got != 1 {
+		t.Fatalf("requests = %d, want 1 after schedule disabled", got)
+	}
+	entries, err := os.ReadDir(pendingDir)
+	if err != nil {
+		t.Fatalf("ReadDir returned error: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatalf("pending files=%d, want browser batch", len(entries))
 	}
 }
 

@@ -198,6 +198,20 @@ func (r *httpTestBrowserDriftFindingRepository) UpdateHubFindingStatus(ctx conte
 	return finding, nil
 }
 
+func (r *httpTestBrowserDriftFindingRepository) UpdateOpenHubFindingStatuses(ctx context.Context, environmentID domain.ID, appID domain.ID, update domain.HubFindingStatusUpdate) (int, error) {
+	if r.finding.EnvironmentID != environmentID || r.finding.Status != "open" {
+		return 0, nil
+	}
+	if appID != "" && r.finding.AppID != appID {
+		return 0, nil
+	}
+	r.finding.Status = update.Status
+	r.finding.StatusReason = update.Reason
+	r.finding.StatusNote = update.Note
+	r.finding.StatusActor = update.Actor
+	return 1, nil
+}
+
 func newHTTPTestBrowserScriptAllowlistRepository() *httpTestBrowserScriptAllowlistRepository {
 	return &httpTestBrowserScriptAllowlistRepository{entries: map[domain.ID]domain.BrowserScriptAllowlistEntry{}}
 }

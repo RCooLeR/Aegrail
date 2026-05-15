@@ -298,6 +298,35 @@ func (r *HubFindingRepository) UpdateHubFindingStatus(ctx context.Context, findi
 	return item, nil
 }
 
+func (r *HubFindingRepository) UpdateOpenHubFindingStatuses(ctx context.Context, environmentID domain.ID, appID domain.ID, update domain.HubFindingStatusUpdate) (int, error) {
+	const query = `
+		UPDATE hub_findings
+		SET status = $3,
+			status_reason = $4,
+			status_note = $5,
+			status_actor = $6,
+			status_updated_at = now(),
+			updated_at = now()
+		WHERE environment_id = $1
+			AND ($2::text = '' OR app_id = nullif($2::text, '')::uuid)
+			AND status = 'open'
+	`
+	commandTag, err := r.pool.Exec(
+		ctx,
+		query,
+		environmentID,
+		string(appID),
+		update.Status,
+		update.Reason,
+		update.Note,
+		update.Actor,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return int(commandTag.RowsAffected()), nil
+}
+
 func stringIDs(ids []domain.ID) []string {
 	values := make([]string, 0, len(ids))
 	for _, id := range ids {
