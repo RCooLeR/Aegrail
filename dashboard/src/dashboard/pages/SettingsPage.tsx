@@ -1,14 +1,54 @@
-import { DatabaseZap, Filter, Loader2, Save, ShieldCheck, UserPlus } from "lucide-react";
+import {
+  Building2,
+  DatabaseZap,
+  Filter,
+  Loader2,
+  MonitorCog,
+  QrCode,
+  Save,
+  ShieldCheck,
+  ShieldOff,
+  SlidersHorizontal,
+  UserCircle,
+  UserPlus,
+  Users
+} from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
-import { createHubUser, defaultScope, enrollHubUserTOTP, loadHubUsers, updateHubUser } from "../../api";
+import {
+  createHubUser,
+  defaultScope,
+  disableHubUserTOTP,
+  loadHubUsers,
+  startHubUserTOTP,
+  updateHubUser,
+  verifyHubUserTOTP
+} from "../../api";
+import type { InstanceModel } from "../../estate";
 import type { ApiScope, HubUser, HubUserTOTPEnrollment, InventoryOrganization } from "../../types";
-import type { ActionState } from "../types";
+import { autoModelValue, modelPresets } from "../config/modelPresets";
+import type { ActionState, SiteRow } from "../types";
+import { formatDate, formatRelative } from "../utils/time";
 import { upsertUser } from "../utils/users";
-import { EmptyState, InlineAlert, LoadingBlock, Panel, ResponsiveTable, StatusPill, TextInput } from "../components/common";
+import { EmptyState, InlineAlert, InlineSuccess, LoadingBlock, MiniBlock, Panel, ResponsiveTable, StatusPill, TextInput } from "../components/common";
 import { InventorySummary } from "../components/summary";
+
+type SettingsTab = "profile" | "scope" | "triage" | "companies" | "sites" | "nodes" | "users" | "inventory";
+
+const tabs: Array<{ key: SettingsTab; label: string }> = [
+  { key: "profile", label: "Profile" },
+  { key: "scope", label: "Hub scope" },
+  { key: "triage", label: "Triage" },
+  { key: "companies", label: "Companies" },
+  { key: "sites", label: "Sites" },
+  { key: "nodes", label: "Nodes" },
+  { key: "users", label: "Users & 2FA" },
+  { key: "inventory", label: "Inventory" }
+];
 
 export function SettingsPage({
   actionState,
+  allInstances,
+  allSites,
   draftScope,
   inventory,
   loading,
@@ -19,6 +59,8 @@ export function SettingsPage({
   user
 }: {
   actionState: ActionState;
+  allInstances: InstanceModel[];
+  allSites: SiteRow[];
   draftScope: ApiScope;
   inventory: InventoryOrganization[];
   loading: boolean;
@@ -28,32 +70,251 @@ export function SettingsPage({
   scope: ApiScope;
   user?: HubUser;
 }) {
+  const [activeTab, setActiveTab] = useState<SettingsTab>("profile");
+
   return (
-    <div className="settings-grid">
-      <Panel title="Hub scope" icon={Filter}>
-        <form className="form-stack" onSubmit={onScopeSubmit}>
-          <TextInput label="Hub base URL" value={draftScope.baseUrl} placeholder="Relative to current origin" onChange={(baseUrl) => onScopeChange({ ...draftScope, baseUrl })} />
-          <TextInput label="Company slug" value={draftScope.org} onChange={(org) => onScopeChange({ ...draftScope, org })} />
-          <TextInput label="Site slug" value={draftScope.project} onChange={(project) => onScopeChange({ ...draftScope, project })} />
-          <TextInput label="Environment" value={draftScope.environment} onChange={(environment) => onScopeChange({ ...draftScope, environment })} />
-          <TextInput label="App" value={draftScope.app} onChange={(app) => onScopeChange({ ...draftScope, app })} />
-          <div className="button-row">
-            <button className="primary-button" type="submit" disabled={loading}>{loading ? <Loader2 size={15} className="spin" /> : <Save size={15} />} Save</button>
-            <button className="ghost-button" type="button" onClick={() => onScopeChange(defaultScope)}>Reset</button>
+    <div className="page-stack">
+      <nav className="detail-tabs" aria-label="Settings tabs">
+        {tabs.map((tab) => (
+          <button
+            className={activeTab === tab.key ? "active" : ""}
+            key={tab.key}
+            type="button"
+            onClick={() => setActiveTab(tab.key)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </nav>
+
+      {activeTab === "profile" && <ProfileSettings scope={scope} user={user} />}
+      {activeTab === "scope" && (
+        <Panel title="Hub scope" icon={Filter}>
+          <form className="form-stack" onSubmit={onScopeSubmit}>
+            <TextInput label="Hub base URL" value={draftScope.baseUrl} placeholder="Relative to current origin" onChange={(baseUrl) => onScopeChange({ ...draftScope, baseUrl })} />
+            <TextInput label="Company slug" value={draftScope.org} onChange={(org) => onScopeChange({ ...draftScope, org })} />
+            <TextInput label="Site slug" value={draftScope.project} onChange={(project) => onScopeChange({ ...draftScope, project })} />
+            <TextInput label="Environment" value={draftScope.environment} onChange={(environment) => onScopeChange({ ...draftScope, environment })} />
+            <TextInput label="App" value={draftScope.app} onChange={(app) => onScopeChange({ ...draftScope, app })} />
+            <div className="button-row">
+              <button className="primary-button" type="submit" disabled={loading}>{loading ? <Loader2 size={15} className="spin" /> : <Save size={15} />} Save</button>
+              <button className="ghost-button" type="button" onClick={() => onScopeChange(defaultScope)}>Reset</button>
+            </div>
+          </form>
+        </Panel>
+      )}
+      {activeTab === "triage" && (
+        <Panel title="Triage defaults" icon={SlidersHorizontal}>
+          <div className="form-stack">
+            <TextInput label="Actor" value={actionState.actor} onChange={(actor) => onActionChange({ ...actionState, actor })} />
+            <label>
+              LLM model
+              <select value={actionState.model} onChange={(event) => onActionChange({ ...actionState, model: event.target.value })}>
+                <option value={autoModelValue}>Auto ranked installed model</option>
+                {modelPresets.map((preset) => (
+                  <option key={preset.value} value={preset.value}>
+                    {preset.rank}. {preset.label} ({preset.size})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="model-preset-list">
+              {modelPresets.map((preset) => (
+                <div className="model-preset-row" key={preset.value}>
+                  <strong>{preset.rank}. {preset.label}</strong>
+                  <small>{preset.size} / {preset.bestUse}</small>
+                </div>
+              ))}
+            </div>
+            <TextInput label="Reason" value={actionState.reason} onChange={(reason) => onActionChange({ ...actionState, reason })} />
+            <label>Note<textarea rows={4} value={actionState.note} onChange={(event) => onActionChange({ ...actionState, note: event.target.value })} /></label>
           </div>
-        </form>
-      </Panel>
-      <Panel title="Triage defaults" icon={ShieldCheck}>
-        <div className="form-stack">
-          <TextInput label="Actor" value={actionState.actor} onChange={(actor) => onActionChange({ ...actionState, actor })} />
-          <TextInput label="Reason" value={actionState.reason} onChange={(reason) => onActionChange({ ...actionState, reason })} />
-          <label>Note<textarea rows={4} value={actionState.note} onChange={(event) => onActionChange({ ...actionState, note: event.target.value })} /></label>
+        </Panel>
+      )}
+      {activeTab === "companies" && <CompaniesOverview instances={allInstances} inventory={inventory} />}
+      {activeTab === "sites" && <SitesOverview sites={allSites} />}
+      {activeTab === "nodes" && <NodesOverview instances={allInstances} />}
+      {activeTab === "users" && <UserAccessManager currentUser={user} scope={scope} />}
+      {activeTab === "inventory" && (
+        <Panel title="Inventory" icon={DatabaseZap}>
+          <InventorySummary organizations={inventory} />
+          <InventoryTree organizations={inventory} />
+        </Panel>
+      )}
+    </div>
+  );
+}
+
+function ProfileSettings({ scope, user }: { scope: ApiScope; user?: HubUser }) {
+  return (
+    <Panel title="Profile" icon={UserCircle}>
+      {user ? (
+        <div className="settings-summary-grid">
+          <MiniBlock label="User" value={user.display_name || user.email} />
+          <MiniBlock label="Email" value={user.email} />
+          <MiniBlock label="Access" value={user.access_level} />
+          <MiniBlock label="Status" value={user.status} />
+          <MiniBlock label="2FA" value={user.two_factor_enabled ? "enabled" : user.two_factor_pending ? "pending" : user.two_factor_required ? "required" : "optional"} />
+          <MiniBlock label="Last sign-in" value={user.last_login_at ? formatRelative(user.last_login_at) : "never"} />
         </div>
-      </Panel>
-      <Panel title="Inventory" icon={DatabaseZap}>
-        <InventorySummary organizations={inventory} />
-      </Panel>
-      <UserAccessManager currentUser={user} scope={scope} />
+      ) : (
+        <EmptyState title="No signed-in user loaded" />
+      )}
+      <p className="muted-line">Current dashboard scope: {scope.org} / {scope.project} / {scope.environment} / {scope.app || "all apps"}</p>
+    </Panel>
+  );
+}
+
+function CompaniesOverview({ instances, inventory }: { instances: InstanceModel[]; inventory: InventoryOrganization[] }) {
+  const groups = inventory.map((organization) => {
+    const companyInstances = instances.filter((instance) => instance.companySlug === organization.slug);
+    return {
+      activeAgents: companyInstances.reduce((sum, instance) => sum + instance.activeAgentCount, 0),
+      agents: companyInstances.reduce((sum, instance) => sum + instance.agentCount, 0),
+      issues: companyInstances.reduce((sum, instance) => sum + instance.openFindings, 0),
+      nodes: companyInstances.length,
+      organization,
+      sites: organization.projects.length,
+      status: companyInstances.some((instance) => instance.status === "critical")
+        ? "critical"
+        : companyInstances.some((instance) => instance.status === "warning")
+          ? "warning"
+          : "healthy"
+    };
+  });
+
+  return (
+    <Panel title="Companies" icon={Building2}>
+      <ResponsiveTable>
+        <thead>
+          <tr>
+            <th>Company</th>
+            <th>Status</th>
+            <th>Sites</th>
+            <th>Nodes</th>
+            <th>Agents</th>
+            <th>Open issues</th>
+            <th>Updated</th>
+          </tr>
+        </thead>
+        <tbody>
+          {groups.map((row) => (
+            <tr key={row.organization.id}>
+              <td><strong>{row.organization.name}</strong><small>{row.organization.slug}</small></td>
+              <td><StatusPill value={row.status} /></td>
+              <td>{row.sites}</td>
+              <td>{row.nodes}</td>
+              <td>{row.activeAgents}/{row.agents}</td>
+              <td>{row.issues}</td>
+              <td>{formatRelative(row.organization.updated_at)}</td>
+            </tr>
+          ))}
+          {groups.length === 0 && (
+            <tr><td colSpan={7}><EmptyState title="No companies registered" /></td></tr>
+          )}
+        </tbody>
+      </ResponsiveTable>
+    </Panel>
+  );
+}
+
+function SitesOverview({ sites }: { sites: SiteRow[] }) {
+  return (
+    <Panel title="Sites" icon={Building2}>
+      <ResponsiveTable>
+        <thead>
+          <tr>
+            <th>Company / Site</th>
+            <th>Status</th>
+            <th>Open issues</th>
+            <th>Critical</th>
+            <th>Nodes</th>
+            <th>Agents</th>
+            <th>Last signal</th>
+          </tr>
+        </thead>
+        <tbody>
+          {sites.map((site) => (
+            <tr key={site.key}>
+              <td><strong>{site.companyName}</strong><small>{site.projectName}</small></td>
+              <td><StatusPill value={site.status} /></td>
+              <td>{site.openIssues}</td>
+              <td>{site.criticalIssues}</td>
+              <td>{site.instances.length}</td>
+              <td>{site.agentActive}/{site.agentCount}</td>
+              <td>{formatRelative(site.lastSignalAt)}</td>
+            </tr>
+          ))}
+          {sites.length === 0 && (
+            <tr><td colSpan={7}><EmptyState title="No sites registered" /></td></tr>
+          )}
+        </tbody>
+      </ResponsiveTable>
+    </Panel>
+  );
+}
+
+function NodesOverview({ instances }: { instances: InstanceModel[] }) {
+  return (
+    <Panel title="Nodes" icon={MonitorCog}>
+      <ResponsiveTable>
+        <thead>
+          <tr>
+            <th>Company / Site</th>
+            <th>Environment / App</th>
+            <th>Status</th>
+            <th>Agents online</th>
+            <th>Coverage warnings</th>
+            <th>Open issues</th>
+            <th>Last signal</th>
+          </tr>
+        </thead>
+        <tbody>
+          {instances.map((instance) => (
+            <tr key={instance.key}>
+              <td>{instance.companyName}<small>{instance.projectName}</small></td>
+              <td>{instance.environmentName}<small>{instance.appName}</small></td>
+              <td><StatusPill value={instance.status} /></td>
+              <td>{instance.activeAgentCount}/{instance.agentCount}</td>
+              <td>{instance.coverageWarnings}</td>
+              <td>{instance.openFindings}</td>
+              <td>{formatRelative(instance.lastSignalAt)}</td>
+            </tr>
+          ))}
+          {instances.length === 0 && (
+            <tr><td colSpan={7}><EmptyState title="No nodes registered" /></td></tr>
+          )}
+        </tbody>
+      </ResponsiveTable>
+    </Panel>
+  );
+}
+
+function InventoryTree({ organizations }: { organizations: InventoryOrganization[] }) {
+  if (organizations.length === 0) {
+    return <EmptyState title="Inventory will appear once agents report" />;
+  }
+  return (
+    <div className="inventory-tree">
+      {organizations.map((organization) => (
+        <details key={organization.id} open>
+          <summary><strong>{organization.name}</strong> <small>{organization.slug}</small></summary>
+          <ul>
+            {organization.projects.map((project) => (
+              <li key={project.id}>
+                <strong>{project.name}</strong> <small>{project.slug}</small>
+                <ul>
+                  {project.environments.map((environment) => (
+                    <li key={environment.id}>
+                      <small>{environment.name}</small>: {environment.apps.map((app) => app.slug).join(", ") || "no apps"}
+                    </li>
+                  ))}
+                </ul>
+              </li>
+            ))}
+          </ul>
+        </details>
+      ))}
     </div>
   );
 }
@@ -64,6 +325,8 @@ function UserAccessManager({ currentUser, scope }: { currentUser?: HubUser; scop
   const [savingID, setSavingID] = useState("");
   const [error, setError] = useState("");
   const [enrollment, setEnrollment] = useState<{ enrollment: HubUserTOTPEnrollment; user: HubUser } | null>(null);
+  const [verifyCode, setVerifyCode] = useState("");
+  const [verifyMessage, setVerifyMessage] = useState("");
   const [form, setForm] = useState({
     access_level: "operator",
     display_name: "",
@@ -90,15 +353,15 @@ function UserAccessManager({ currentUser, scope }: { currentUser?: HubUser; scop
     if (canManage) {
       void refreshUsers();
     }
-  }, [canManage, scope.baseUrl, scope.org, scope.project, scope.environment]);
+  }, [canManage, scope.baseUrl, scope.org, scope.project, scope.environment, scope.app]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSavingID("new");
     setError("");
     try {
-      const user = await createHubUser(scope, form);
-      setUsers((current) => upsertUser(current, user));
+      const created = await createHubUser(scope, form);
+      setUsers((current) => upsertUser(current, created));
       setForm({ access_level: "operator", display_name: "", email: "", password: "", status: "active", two_factor_required: true });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -126,11 +389,13 @@ function UserAccessManager({ currentUser, scope }: { currentUser?: HubUser; scop
     }
   }
 
-  async function enroll(user: HubUser) {
+  async function startEnroll(user: HubUser) {
     setSavingID(user.id);
     setError("");
+    setVerifyMessage("");
+    setVerifyCode("");
     try {
-      const result = await enrollHubUserTOTP(scope, user);
+      const result = await startHubUserTOTP(scope, user);
       setEnrollment(result);
       setUsers((current) => upsertUser(current, result.user));
     } catch (caught) {
@@ -140,60 +405,165 @@ function UserAccessManager({ currentUser, scope }: { currentUser?: HubUser; scop
     }
   }
 
+  async function finishEnroll() {
+    if (!enrollment) {
+      return;
+    }
+    setSavingID(enrollment.user.id);
+    setError("");
+    try {
+      const verified = await verifyHubUserTOTP(scope, enrollment.user, verifyCode);
+      setUsers((current) => upsertUser(current, verified));
+      setEnrollment(null);
+      setVerifyCode("");
+      setVerifyMessage(`2FA is now active for ${verified.email}.`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setSavingID("");
+    }
+  }
+
+  async function disableEnroll(user: HubUser) {
+    if (!window.confirm(`Disable 2FA for ${user.email}? They will sign in with password only until they re-enroll.`)) {
+      return;
+    }
+    setSavingID(user.id);
+    setError("");
+    try {
+      const disabled = await disableHubUserTOTP(scope, user);
+      setUsers((current) => upsertUser(current, disabled));
+      setVerifyMessage(`2FA disabled for ${disabled.email}.`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setSavingID("");
+    }
+  }
+
   if (!canManage) {
-    return <Panel title="Users" icon={UserPlus}><EmptyState title="Admin access required" /></Panel>;
+    return <Panel title="Users" icon={Users}><EmptyState title="Admin access required" /></Panel>;
   }
 
   return (
-    <Panel title="Users" icon={UserPlus}>
-      <form className="user-form" onSubmit={submit}>
-        <TextInput label="Email" value={form.email} onChange={(email) => setForm((current) => ({ ...current, email }))} />
-        <TextInput label="Name" value={form.display_name} onChange={(display_name) => setForm((current) => ({ ...current, display_name }))} />
-        <label>Password<input minLength={12} required type="password" value={form.password} onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))} /></label>
-        <label>Access<select value={form.access_level} onChange={(event) => setForm((current) => ({ ...current, access_level: event.target.value }))}>
-          <option value="owner">Owner</option>
-          <option value="admin">Admin</option>
-          <option value="operator">Operator</option>
-          <option value="viewer">Viewer</option>
-        </select></label>
-        <label className="check-row"><input checked={form.two_factor_required} type="checkbox" onChange={(event) => setForm((current) => ({ ...current, two_factor_required: event.target.checked }))} />Require 2FA</label>
-        <button className="primary-button" type="submit" disabled={savingID === "new"}>{savingID === "new" ? <Loader2 size={15} className="spin" /> : <UserPlus size={15} />} Add</button>
-      </form>
-      {error && <InlineAlert message={error} />}
-      {loading ? <LoadingBlock /> : (
-        <ResponsiveTable>
-          <thead>
-            <tr><th>User</th><th>Access</th><th>Status</th><th>2FA</th><th /></tr>
-          </thead>
-          <tbody>
-            {users.map((user) => (
-              <tr key={user.id}>
-                <td><strong>{user.display_name || user.email}</strong><small>{user.email}</small></td>
-                <td><select value={user.access_level} onChange={(event) => void saveUser(user, { access_level: event.target.value })}>
-                  <option value="owner">Owner</option>
-                  <option value="admin">Admin</option>
-                  <option value="operator">Operator</option>
-                  <option value="viewer">Viewer</option>
-                </select></td>
-                <td><select value={user.status} onChange={(event) => void saveUser(user, { status: event.target.value })}>
-                  <option value="active">Active</option>
-                  <option value="invited">Invited</option>
-                  <option value="disabled">Disabled</option>
-                </select></td>
-                <td><StatusPill value={user.two_factor_enabled ? "enabled" : user.two_factor_required ? "required" : "optional"} /></td>
-                <td><button className="ghost-button" type="button" disabled={savingID === user.id} onClick={() => void enroll(user)}>QR</button></td>
-              </tr>
-            ))}
-          </tbody>
-        </ResponsiveTable>
-      )}
-      {enrollment && (
-        <div className="totp-box">
-          <strong>{enrollment.user.email}</strong>
-          <img src={enrollment.enrollment.qr_code_data_url} alt="2FA QR code" />
-          <small>{enrollment.enrollment.otpauth_url}</small>
-        </div>
-      )}
-    </Panel>
+    <div className="page-stack">
+      <Panel title="Add user" icon={UserPlus}>
+        <form className="user-form" onSubmit={submit}>
+          <TextInput label="Email" value={form.email} onChange={(email) => setForm((current) => ({ ...current, email }))} />
+          <TextInput label="Name" value={form.display_name} onChange={(display_name) => setForm((current) => ({ ...current, display_name }))} />
+          <label>Password<input minLength={12} required type="password" value={form.password} onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))} /></label>
+          <label>Access<select value={form.access_level} onChange={(event) => setForm((current) => ({ ...current, access_level: event.target.value }))}>
+            <option value="owner">Owner</option>
+            <option value="admin">Admin</option>
+            <option value="operator">Operator</option>
+            <option value="viewer">Viewer</option>
+          </select></label>
+          <label className="check-row"><input checked={form.two_factor_required} type="checkbox" onChange={(event) => setForm((current) => ({ ...current, two_factor_required: event.target.checked }))} />Require 2FA</label>
+          <button className="primary-button" type="submit" disabled={savingID === "new"}>{savingID === "new" ? <Loader2 size={15} className="spin" /> : <UserPlus size={15} />} Add</button>
+        </form>
+      </Panel>
+
+      <Panel title="Users" icon={ShieldCheck}>
+        {error && <InlineAlert message={error} />}
+        {verifyMessage && <InlineSuccess message={verifyMessage} />}
+        {loading ? <LoadingBlock /> : (
+          <ResponsiveTable>
+            <thead>
+              <tr><th>User</th><th>Access</th><th>Status</th><th>2FA</th><th>Last sign-in</th><th /></tr>
+            </thead>
+            <tbody>
+              {users.map((user) => (
+                <tr key={user.id}>
+                  <td><strong>{user.display_name || user.email}</strong><small>{user.email}</small></td>
+                  <td><select value={user.access_level} onChange={(event) => void saveUser(user, { access_level: event.target.value })}>
+                    <option value="owner">Owner</option>
+                    <option value="admin">Admin</option>
+                    <option value="operator">Operator</option>
+                    <option value="viewer">Viewer</option>
+                  </select></td>
+                  <td><select value={user.status} onChange={(event) => void saveUser(user, { status: event.target.value })}>
+                    <option value="active">Active</option>
+                    <option value="invited">Invited</option>
+                    <option value="disabled">Disabled</option>
+                  </select></td>
+                  <td>
+                    {user.two_factor_enabled
+                      ? <StatusPill value="enabled" />
+                      : user.two_factor_pending
+                        ? <StatusPill value="pending" />
+                        : user.two_factor_required
+                          ? <StatusPill value="required" />
+                          : <StatusPill value="optional" />}
+                    {user.pending_totp_started_at && <small>Started {formatRelative(user.pending_totp_started_at)}</small>}
+                    {user.totp_enrolled_at && <small>Enrolled {formatDate(user.totp_enrolled_at)}</small>}
+                  </td>
+                  <td><small>{user.last_login_at ? formatDate(user.last_login_at) : "never"}</small></td>
+                  <td>
+                    <div className="inline-row-actions">
+                      <button
+                        className="ghost-button compact"
+                        type="button"
+                        disabled={savingID === user.id}
+                        onClick={() => void startEnroll(user)}
+                      >
+                        <QrCode size={14} />
+                        {user.two_factor_enabled ? "Re-enroll" : "Enroll"}
+                      </button>
+                      {(user.two_factor_enabled || user.two_factor_pending) && (
+                        <button
+                          className="ghost-button compact"
+                          type="button"
+                          disabled={savingID === user.id}
+                          onClick={() => void disableEnroll(user)}
+                        >
+                          <ShieldOff size={14} />
+                          Disable
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {users.length === 0 && (
+                <tr><td colSpan={6}><EmptyState title="No users yet" /></td></tr>
+              )}
+            </tbody>
+          </ResponsiveTable>
+        )}
+        {enrollment && (
+          <div className="totp-box">
+            <strong>{enrollment.user.email}</strong>
+            <p>Scan the QR code in an authenticator app, then enter the 6-digit code to activate 2FA.</p>
+            <img src={enrollment.enrollment.qr_code_data_url} alt="2FA QR code" />
+            <details>
+              <summary>Cannot scan? Show secret</summary>
+              <code>{enrollment.enrollment.secret}</code>
+              <small>{enrollment.enrollment.otpauth_url}</small>
+            </details>
+            <div className="totp-verify">
+              <TextInput label="Verification code" value={verifyCode} onChange={setVerifyCode} placeholder="123456" />
+              <div className="button-row">
+                <button
+                  className="primary-button"
+                  type="button"
+                  disabled={savingID !== "" || verifyCode.trim().length < 6}
+                  onClick={() => void finishEnroll()}
+                >
+                  {savingID !== "" ? <Loader2 size={15} className="spin" /> : <ShieldCheck size={15} />}
+                  Verify and activate
+                </button>
+                <button
+                  className="ghost-button"
+                  type="button"
+                  onClick={() => { setEnrollment(null); setVerifyCode(""); }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </Panel>
+    </div>
   );
 }

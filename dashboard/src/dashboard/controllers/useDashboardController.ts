@@ -2,11 +2,16 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   acceptFindingsBaseline,
   allowBrowserScriptFromFinding,
+  createBrowserScriptAllowlistEntry,
+  createDeployment,
+  generateModelAnalysisFromFinding,
+  ignoreFilePathFromFinding,
   loadAuthMe,
   loadEstateDashboard,
   loadScope,
   logoutHubUser,
   saveScope,
+  updateBrowserAllowlistEntryStatus,
   updateFindingStatus
 } from "../../api";
 import { buildEstateModel, type CompanyModel, type EstateModel } from "../../estate";
@@ -14,6 +19,9 @@ import type { ApiScope, HubAuthMe, InventoryOrganization, RuleDefinition } from 
 import { autoRefreshIntervalMs, basePath, initialFilters } from "../config/navigation";
 import {
   buildIssueRows,
+  buildAllowlistRows,
+  buildBrowserScriptRows,
+  buildDeploymentRows,
   buildReportRows,
   buildSignalRows,
   buildSiteRows,
@@ -23,7 +31,8 @@ import {
   filterSignalRows,
   summarizeEstate
 } from "../model/viewModels";
-import type { ActionState, FilterState, IssueRow, SiteRow, ViewKey } from "../types";
+import type { ActionState, AllowlistRow, BrowserScriptRow, DeploymentRow, FilterState, IssueRow, SiteRow, ViewKey } from "../types";
+import { fileIgnorePathCandidate } from "../utils/metadata";
 import { issueIDFromLocation, viewFromLocation } from "../utils/routing";
 import { loadActionDefaults, saveActionDefaults } from "../utils/storage";
 
@@ -112,13 +121,17 @@ export function useDashboardController() {
   const allSites = useMemo(() => buildSiteRows(estate.instances), [estate.instances]);
   const visibleInstances = useMemo(() => filterInstances(estate.instances, filters), [estate.instances, filters]);
   const visibleSites = useMemo(() => buildSiteRows(visibleInstances), [visibleInstances]);
-  const issueRows = useMemo(() => filterIssueRows(buildIssueRows(visibleInstances, ruleByID), filters), [filters, ruleByID, visibleInstances]);
+  const visibleIssueRows = useMemo(() => buildIssueRows(visibleInstances, ruleByID), [ruleByID, visibleInstances]);
+  const issueRows = useMemo(() => filterIssueRows(visibleIssueRows, filters), [filters, visibleIssueRows]);
   const signalInstances = useMemo(() => filterInstances(estate.instances, { ...filters, severity: "all", query: "" }), [estate.instances, filters]);
   const signalRows = useMemo(() => {
     const linkedIssueRows = buildIssueRows(signalInstances, ruleByID);
     return filterSignalRows(buildSignalRows(signalInstances, linkedIssueRows), filters).slice(0, 500);
   }, [filters, ruleByID, signalInstances]);
   const reportRows = useMemo(() => buildReportRows(visibleInstances), [visibleInstances]);
+  const browserScriptRows = useMemo(() => buildBrowserScriptRows(visibleInstances), [visibleInstances]);
+  const allowlistRows = useMemo(() => buildAllowlistRows(visibleInstances), [visibleInstances]);
+  const deploymentRows = useMemo(() => buildDeploymentRows(visibleInstances), [visibleInstances]);
   const selectedIssue = issueRows.find((row) => row.finding.id === selectedIssueID) ?? (view === "issue" ? undefined : issueRows[0]);
   const dashboardStats = useMemo(() => summarizeEstate(visibleInstances, issueRows, signalRows), [issueRows, signalRows, visibleInstances]);
   const visibleCompanies = useMemo(() => companiesFromInstances(visibleInstances), [visibleInstances]);
@@ -200,6 +213,125 @@ export function useDashboardController() {
     }
   }
 
+  async function allowBrowserScript(row: BrowserScriptRow) {
+    const script = row.script;
+    const kind = script.domain ? "domain" : script.sha256 ? "sha256" : script.tag_manager_ids?.length ? "tag_manager_id" : "";
+    const value = script.domain ?? script.sha256 ?? script.tag_manager_ids?.[0] ?? "";
+    if (!kind || !value) {
+      throw new Error("Cannot infer an allowlist value for this script.");
+    }
+    setActionError("");
+    setActionMessage("");
+    setActionLoading(true);
+    try {
+      const actor = actionState.actor.trim() || auth?.user?.email || "dashboard";
+      const reason = actionState.reason.trim() || "approved_browser_script";
+      await createBrowserScriptAllowlistEntry(row.instance.scope, {
+        approved_by: actor,
+        kind,
+        page_url: script.page_url || script.final_url || "",
+        reason,
+        value
+      });
+      setActionMessage(`Allow-listed ${value}.`);
+      await refresh();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error));
+      throw error;
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  async function updateAllowlistEntry(row: AllowlistRow, status: string) {
+    setActionError("");
+    setActionMessage("");
+    setActionLoading(true);
+    try {
+      const actor = actionState.actor.trim() || auth?.user?.email || "dashboard";
+      const reason = actionState.reason.trim() || "operator_updated_allowlist";
+      await updateBrowserAllowlistEntryStatus(row.instance.scope, row.entry, status, reason, actor);
+      setActionMessage(`${status === "active" ? "Reinstated" : "Revoked"} ${row.entry.value}.`);
+      await refresh();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error));
+      throw error;
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  async function recordDeployment(input: {
+    actor: string;
+    commitSha: string;
+    finishedAt?: string;
+    instance: DeploymentRow["instance"];
+    startedAt?: string;
+    version: string;
+  }) {
+    setActionError("");
+    setActionMessage("");
+    setActionLoading(true);
+    try {
+      await createDeployment(input.instance.scope, {
+        actor: input.actor || actionState.actor || auth?.user?.email || "dashboard",
+        commit_sha: input.commitSha,
+        finished_at: input.finishedAt,
+        started_at: input.startedAt,
+        version: input.version
+      });
+      setActionMessage(`Recorded deployment ${input.version}.`);
+      await refresh();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error));
+      throw error;
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  async function ignoreFilePath(row: IssueRow) {
+    const candidate = fileIgnorePathCandidate(row.finding.metadata);
+    const path = window.prompt("Ignore future file findings under this directory?", candidate);
+    if (!path || !path.trim()) {
+      return;
+    }
+    setActionError("");
+    setActionMessage("");
+    setActionLoading(true);
+    try {
+      const actor = actionState.actor.trim() || auth?.user?.email || "dashboard";
+      const reason = actionState.reason.trim() || "operator_ignored_file_path";
+      await ignoreFilePathFromFinding(row.instance.scope, row.finding, path.trim(), actor, reason);
+      setActionMessage(`Ignored future file findings under ${path.trim()}.`);
+      await refresh();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  async function generateAnalysis(row: IssueRow) {
+    setActionError("");
+    setActionMessage("");
+    setActionLoading(true);
+    try {
+      const report = await generateModelAnalysisFromFinding(row.instance.scope, row.finding, {
+        max_events: 8,
+        max_metadata_depth: 4,
+        max_string_length: 500,
+        model: actionState.model || undefined
+      });
+      setActionMessage(`Generated ${report.status} model analysis for ${row.finding.title}.`);
+      await refresh();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
   async function acceptCurrentBaseline() {
     const openRows = issueRows.filter((row) => row.finding.status === "open");
     if (openRows.length === 0) {
@@ -267,12 +399,15 @@ export function useDashboardController() {
     actionMessage,
     actionState,
     acceptCurrentBaseline,
+    allowlistRows,
     allSites,
     applyScope,
     auth,
     authError,
     authLoading,
     dashboardStats,
+    deploymentRows,
+    deploymentIssueRows: visibleIssueRows,
     draftScope,
     estate,
     filters,
@@ -284,6 +419,7 @@ export function useDashboardController() {
     loading,
     refresh: () => void refresh(),
     reportRows,
+    browserScriptRows,
     ruleByID,
     scope,
     selectedIssue,
@@ -297,7 +433,12 @@ export function useDashboardController() {
     setSelectedIssueID,
     signalRows,
     signOut: () => void signOut(),
+    allowBrowserScript,
     allowScript,
+    generateAnalysis,
+    ignoreFilePath,
+    recordDeployment,
+    updateAllowlistEntry,
     updateFilters,
     view,
     visibleCompanies,

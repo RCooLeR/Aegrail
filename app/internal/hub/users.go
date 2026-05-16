@@ -35,17 +35,38 @@ type UpdateHubUserInput struct {
 	TwoFactorRequired bool
 }
 
-type GenerateHubUserTOTPInput struct {
+type StartHubUserTOTPInput struct {
 	UserID string
 	Issuer string
 }
 
-type GenerateHubUserTOTPResult struct {
+type StartHubUserTOTPResult struct {
 	User          domain.HubUser
 	Secret        string
 	OTPAuthURL    string
 	QRCodeDataURL string
 }
+
+type VerifyHubUserTOTPInput struct {
+	UserID string
+	Code   string
+}
+
+type VerifyHubUserTOTPResult struct {
+	User domain.HubUser
+}
+
+type DisableHubUserTOTPInput struct {
+	UserID string
+}
+
+type DisableHubUserTOTPResult struct {
+	User domain.HubUser
+}
+
+var ErrHubTOTPNoPending = errors.New("no pending 2FA enrolment for this user")
+
+var ErrHubTOTPInvalidCode = errors.New("verification code is incorrect")
 
 func (h *Hub) CreateHubUser(ctx context.Context, input CreateHubUserInput) (domain.HubUser, error) {
 	if h.users == nil {
@@ -112,29 +133,29 @@ func (h *Hub) UpdateHubUser(ctx context.Context, input UpdateHubUserInput) (doma
 	})
 }
 
-func (h *Hub) GenerateHubUserTOTP(ctx context.Context, input GenerateHubUserTOTPInput) (GenerateHubUserTOTPResult, error) {
+func (h *Hub) StartHubUserTOTP(ctx context.Context, input StartHubUserTOTPInput) (StartHubUserTOTPResult, error) {
 	if h.users == nil {
-		return GenerateHubUserTOTPResult{}, errors.New("hub user repository is not configured")
+		return StartHubUserTOTPResult{}, errors.New("hub user repository is not configured")
 	}
 	userID := domain.ID(strings.TrimSpace(input.UserID))
 	if userID == "" {
-		return GenerateHubUserTOTPResult{}, errors.New("user id is required")
+		return StartHubUserTOTPResult{}, errors.New("user id is required")
 	}
 	secret, err := newTOTPSecret()
 	if err != nil {
-		return GenerateHubUserTOTPResult{}, err
+		return StartHubUserTOTPResult{}, err
 	}
 	ciphertext, err := encryptHubUserSecret(h.userSecretKey, secret)
 	if err != nil {
-		return GenerateHubUserTOTPResult{}, err
+		return StartHubUserTOTPResult{}, err
 	}
 	now := time.Now().UTC()
-	user, err := h.users.UpdateHubUserTOTP(ctx, userID, domain.HubUserTOTPUpdate{
-		SecretCiphertext: ciphertext,
-		EnrolledAt:       now,
+	user, err := h.users.StartHubUserTOTP(ctx, userID, domain.HubUserTOTPStart{
+		PendingSecretCiphertext: ciphertext,
+		StartedAt:               now,
 	})
 	if err != nil {
-		return GenerateHubUserTOTPResult{}, err
+		return StartHubUserTOTPResult{}, err
 	}
 	issuer := strings.TrimSpace(input.Issuer)
 	if issuer == "" {
@@ -143,14 +164,68 @@ func (h *Hub) GenerateHubUserTOTP(ctx context.Context, input GenerateHubUserTOTP
 	otpauthURL := totpAuthURL(issuer, user.Email, secret)
 	qrCodeDataURL, err := totpQRCodeDataURL(otpauthURL)
 	if err != nil {
-		return GenerateHubUserTOTPResult{}, err
+		return StartHubUserTOTPResult{}, err
 	}
-	return GenerateHubUserTOTPResult{
+	return StartHubUserTOTPResult{
 		User:          user,
 		Secret:        secret,
 		OTPAuthURL:    otpauthURL,
 		QRCodeDataURL: qrCodeDataURL,
 	}, nil
+}
+
+func (h *Hub) VerifyHubUserTOTP(ctx context.Context, input VerifyHubUserTOTPInput) (VerifyHubUserTOTPResult, error) {
+	if h.users == nil {
+		return VerifyHubUserTOTPResult{}, errors.New("hub user repository is not configured")
+	}
+	userID := domain.ID(strings.TrimSpace(input.UserID))
+	if userID == "" {
+		return VerifyHubUserTOTPResult{}, errors.New("user id is required")
+	}
+	code := strings.TrimSpace(strings.ReplaceAll(input.Code, " ", ""))
+	if code == "" {
+		return VerifyHubUserTOTPResult{}, ErrHubTOTPInvalidCode
+	}
+	user, ok, err := h.users.FindHubUserByID(ctx, userID)
+	if err != nil {
+		return VerifyHubUserTOTPResult{}, err
+	}
+	if !ok {
+		return VerifyHubUserTOTPResult{}, errors.New("user not found")
+	}
+	if strings.TrimSpace(user.PendingTOTPSecretCiphertext) == "" {
+		return VerifyHubUserTOTPResult{}, ErrHubTOTPNoPending
+	}
+	secret, err := decryptHubUserSecret(h.userSecretKey, user.PendingTOTPSecretCiphertext)
+	if err != nil {
+		return VerifyHubUserTOTPResult{}, err
+	}
+	if !verifyTOTPCode(secret, code, time.Now().UTC()) {
+		return VerifyHubUserTOTPResult{}, ErrHubTOTPInvalidCode
+	}
+	activated, err := h.users.ActivateHubUserTOTP(ctx, userID, domain.HubUserTOTPActivation{
+		ActiveSecretCiphertext: user.PendingTOTPSecretCiphertext,
+		EnrolledAt:             time.Now().UTC(),
+	})
+	if err != nil {
+		return VerifyHubUserTOTPResult{}, err
+	}
+	return VerifyHubUserTOTPResult{User: activated}, nil
+}
+
+func (h *Hub) DisableHubUserTOTP(ctx context.Context, input DisableHubUserTOTPInput) (DisableHubUserTOTPResult, error) {
+	if h.users == nil {
+		return DisableHubUserTOTPResult{}, errors.New("hub user repository is not configured")
+	}
+	userID := domain.ID(strings.TrimSpace(input.UserID))
+	if userID == "" {
+		return DisableHubUserTOTPResult{}, errors.New("user id is required")
+	}
+	user, err := h.users.DisableHubUserTOTP(ctx, userID)
+	if err != nil {
+		return DisableHubUserTOTPResult{}, err
+	}
+	return DisableHubUserTOTPResult{User: user}, nil
 }
 
 func normalizeHubUserEmail(value string) (string, error) {
@@ -223,7 +298,7 @@ func totpQRCodeDataURL(otpauthURL string) (string, error) {
 func encryptHubUserSecret(secretKey string, plaintext string) (string, error) {
 	secretKey = strings.TrimSpace(secretKey)
 	if secretKey == "" {
-		return "", errors.New("AEGRAIL_HUB_USER_SECRET or AEGRAIL_HUB_INGEST_SECRET is required before enrolling 2FA")
+		return "", errors.New("AEGRAIL_HUB_USER_SECRET is required before enrolling 2FA")
 	}
 	key := sha256.Sum256([]byte(secretKey))
 	block, err := aes.NewCipher(key[:])

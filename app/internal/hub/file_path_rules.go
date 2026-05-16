@@ -112,6 +112,46 @@ func buildSuspiciousFilePathChains(events []domain.TimelineEvent, coveredFileEve
 	return chains
 }
 
+func filterIgnoredTimelineEvents(events []domain.TimelineEvent, rules []domain.HubFileIgnoreRule) []domain.TimelineEvent {
+	if len(events) == 0 || len(rules) == 0 {
+		return events
+	}
+	filtered := make([]domain.TimelineEvent, 0, len(events))
+	for _, event := range events {
+		if fileEventIgnored(event, rules) {
+			continue
+		}
+		filtered = append(filtered, event)
+	}
+	return filtered
+}
+
+func fileEventIgnored(event domain.TimelineEvent, rules []domain.HubFileIgnoreRule) bool {
+	if !strings.HasPrefix(event.EventType, "file.") {
+		return false
+	}
+	eventPath := normalizeFileIgnorePath(normalizedFileEventPath(event))
+	if eventPath == "" {
+		return false
+	}
+	for _, rule := range rules {
+		if rule.Status != "" && rule.Status != "active" {
+			continue
+		}
+		if rule.MatchKind != "file_path_prefix" {
+			continue
+		}
+		prefix := normalizeFileIgnorePath(rule.NormalizedValue)
+		if prefix == "" {
+			prefix = normalizeFileIgnorePath(rule.MatchValue)
+		}
+		if eventPath == prefix || strings.HasPrefix(eventPath, prefix+"/") {
+			return true
+		}
+	}
+	return false
+}
+
 func suspiciousFilePathRuleForEvent(event domain.TimelineEvent) (filePathRule, bool) {
 	if !strings.HasPrefix(event.EventType, "file.") || event.EventType == "file.deleted" {
 		return filePathRule{}, false
@@ -129,7 +169,9 @@ func suspiciousFilePathRuleForEvent(event domain.TimelineEvent) (filePathRule, b
 			Confidence: domain.ConfidenceHigh,
 			Reason:     "sensitive configuration path",
 		}, true
-	case filePathIsWritableExecutable(path):
+	case fileEventIsKnownBenignPHPGuard(event, path):
+		return filePathRule{}, false
+	case filePathIsWritableExecutable(path) && !filePathIsPotentialPrestaShopAssetGuard(path):
 		return filePathRule{
 			RuleID:     "file-php-in-writable-path",
 			Title:      "PHP executable in writable path",
@@ -224,6 +266,43 @@ func filePathIsWritableExecutable(path string) bool {
 		strings.HasPrefix(path, "tmp/") ||
 		strings.Contains(path, "/storage/") ||
 		strings.HasPrefix(path, "storage/")
+}
+
+func fileEventIsKnownBenignPHPGuard(event domain.TimelineEvent, path string) bool {
+	if !filePathIsPotentialPrestaShopAssetGuard(path) {
+		return false
+	}
+	return payloadStringAny(event.Payload, "file_kind", "") == "prestashop_asset_guard_index" &&
+		payloadStringAny(event.Payload, "file_role", "") == "directory_guard" &&
+		payloadStringAny(event.Payload, "file_role_confidence", "") == "high"
+}
+
+func filePathIsPotentialPrestaShopAssetGuard(path string) bool {
+	if !strings.HasSuffix(path, "/index.php") && path != "index.php" {
+		return false
+	}
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	for index := 0; index < len(parts); index++ {
+		if parts[index] == "modules" && index+3 < len(parts) &&
+			parts[index+2] == "views" && filePathIsPrestaShopAssetViewDir(parts[index+3]) {
+			return true
+		}
+		if parts[index] == "themes" && index+5 < len(parts) &&
+			parts[index+2] == "modules" && parts[index+4] == "views" &&
+			filePathIsPrestaShopAssetViewDir(parts[index+5]) {
+			return true
+		}
+	}
+	return false
+}
+
+func filePathIsPrestaShopAssetViewDir(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "css", "font", "fonts", "img", "image", "images", "js":
+		return true
+	default:
+		return false
+	}
 }
 
 func filePathHasSuspiciousPattern(path string) bool {

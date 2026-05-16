@@ -12,32 +12,41 @@ import (
 )
 
 type Hub struct {
+	meta             domain.AppMeta
 	inventory        ports.InventoryRepository
 	ingest           ports.IngestRepository
 	findings         ports.HubFindingRepository
+	fileIgnoreRules  ports.HubFileIgnoreRuleRepository
 	browserAllowlist ports.BrowserScriptAllowlistRepository
 	modelReports     ports.ModelAnalysisReportRepository
+	model            ports.ModelGateway
 	users            ports.HubUserRepository
 	userSecretKey    string
 }
 
 type Dependencies struct {
+	Meta             domain.AppMeta
 	Inventory        ports.InventoryRepository
 	Ingest           ports.IngestRepository
 	Findings         ports.HubFindingRepository
+	FileIgnoreRules  ports.HubFileIgnoreRuleRepository
 	BrowserAllowlist ports.BrowserScriptAllowlistRepository
 	ModelReports     ports.ModelAnalysisReportRepository
+	Model            ports.ModelGateway
 	Users            ports.HubUserRepository
 	UserSecretKey    string
 }
 
 func New(deps Dependencies) *Hub {
 	return &Hub{
+		meta:             deps.Meta,
 		inventory:        deps.Inventory,
 		ingest:           deps.Ingest,
 		findings:         deps.Findings,
+		fileIgnoreRules:  deps.FileIgnoreRules,
 		browserAllowlist: deps.BrowserAllowlist,
 		modelReports:     deps.ModelReports,
+		model:            deps.Model,
 		users:            deps.Users,
 		userSecretKey:    strings.TrimSpace(deps.UserSecretKey),
 	}
@@ -351,6 +360,17 @@ func (h *Hub) requireInventory() error {
 		return errors.New("inventory repository is not configured")
 	}
 	return nil
+}
+
+func (h *Hub) appMeta() domain.AppMeta {
+	meta := h.meta
+	if strings.TrimSpace(meta.Name) == "" {
+		meta.Name = "Aegrail"
+	}
+	if strings.TrimSpace(meta.Binary) == "" {
+		meta.Binary = "aegrail"
+	}
+	return meta
 }
 
 func (h *Hub) resolveOrganization(ctx context.Context, organizationSlug string) (domain.Organization, error) {

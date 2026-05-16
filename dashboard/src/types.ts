@@ -206,7 +206,9 @@ export type HubUser = {
   status: string;
   two_factor_required: boolean;
   two_factor_enabled: boolean;
+  two_factor_pending?: boolean;
   totp_enrolled_at?: string;
+  pending_totp_started_at?: string;
   last_login_at?: string;
   created_at: string;
   updated_at: string;
@@ -239,6 +241,8 @@ export type ModelAnalysisReport = {
   analysis?: string;
   error?: string;
   total_duration_millis?: number;
+  prompt_eval_count?: number;
+  eval_count?: number;
   generated_at: string;
   created_at: string;
 };

@@ -1,7 +1,6 @@
 # Local runtime data and imported evidence
 .idea
 data/*
-!data/README.md
 app/data/
 .aegrail/
 app/.aegrail/
@@ -25,3 +24,4 @@ coverage.out
 # Editor and OS noise
 .DS_Store
 Thumbs.db
+/.claude/

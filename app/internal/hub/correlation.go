@@ -88,6 +88,13 @@ func (h *Hub) CorrelateEvents(ctx context.Context, input CorrelateEventsInput) (
 	if err != nil {
 		return CorrelateEventsResult{}, err
 	}
+	if h.fileIgnoreRules != nil {
+		ignoreRules, err := h.fileIgnoreRules.ListActiveHubFileIgnoreRules(ctx, environment.ID, appID)
+		if err != nil {
+			return CorrelateEventsResult{}, err
+		}
+		events = filterIgnoredTimelineEvents(events, ignoreRules)
+	}
 	chains := correlateTimelineEvents(events, window)
 	findings := correlationFindings(org, project, environment, app, chains)
 	findings, err = h.applyDeploymentContextToFindings(ctx, environment.ID, appID, findings)

@@ -11,12 +11,15 @@ import {
   ShieldCheck,
   XCircle
 } from "lucide-react";
+import type { ReactNode } from "react";
 import { useState } from "react";
 import type { RuleDefinition } from "../../types";
+import { modelPresetLabel } from "../config/modelPresets";
 import { collectorLabel, issueStatusLabel, nodeLabel, recommendedAction, signalTypeLabel } from "../model/viewModels";
 import type { IssueRow, ReportRow, SignalRow } from "../types";
-import { firstMetadataString, metadataNumber, metadataString, metadataStringList } from "../utils/metadata";
+import { fileIgnorePathCandidate, firstMetadataString, metadataNumber, metadataString, metadataStringList } from "../utils/metadata";
 import { exportIssueBrief } from "../utils/reports";
+import { AnalysisLine, isModelAnalysisHTML, parseModelAnalysisSections, splitCodeTokens } from "../utils/modelAnalysis";
 import { formatDate, formatRelative } from "../utils/time";
 import { EmptyState, Panel, ResponsiveTable, SeverityPill, StatusPill } from "../components/common";
 
@@ -36,22 +39,28 @@ export function IssueDetailPage({
   issueRows,
   onAllowScript,
   onBack,
+  onGenerateAnalysis,
+  onIgnoreFilePath,
   onIssue,
   onStatus,
   reportRows,
   row,
   rule,
+  selectedModel,
   signalRows
 }: {
   actionLoading: boolean;
   issueRows: IssueRow[];
   onAllowScript: (row: IssueRow) => void;
   onBack: () => void;
+  onGenerateAnalysis: (row: IssueRow) => void;
+  onIgnoreFilePath: (row: IssueRow) => void;
   onIssue: (row: IssueRow) => void;
   onStatus: (row: IssueRow, status: string) => void;
   reportRows: ReportRow[];
   row?: IssueRow;
   rule?: RuleDefinition;
+  selectedModel: string;
   signalRows: SignalRow[];
 }) {
   const [activeTab, setActiveTab] = useState<IssueDetailTab>("overview");
@@ -69,6 +78,7 @@ export function IssueDetailPage({
   }
 
   const { finding, instance, service } = row;
+  const ignorePath = fileIgnorePathCandidate(finding.metadata);
   const linkedEventIDs = new Set(finding.event_ids);
   const linkedSignals = signalRows.filter((signal) => signal.instance.key === instance.key && linkedEventIDs.has(signal.event.id));
   const relatedIssues = issueRows
@@ -98,6 +108,7 @@ export function IssueDetailPage({
           <button className="ghost-button" type="button" disabled={actionLoading} onClick={() => onStatus(row, "acknowledged")}><Eye size={15} /> Triaged</button>
           <button className="ghost-button" type="button" disabled={actionLoading} onClick={() => onStatus(row, "resolved")}><CheckCircle2 size={15} /> Fixed</button>
           <button className="ghost-button" type="button" disabled={actionLoading} onClick={() => onStatus(row, "false_positive")}><XCircle size={15} /> False positive</button>
+          {ignorePath && <button className="ghost-button" type="button" disabled={actionLoading} onClick={() => onIgnoreFilePath(row)}><XCircle size={15} /> Ignore directory</button>}
           {service === "Browser" && <button className="ghost-button" type="button" disabled={actionLoading} onClick={() => onAllowScript(row)}><ShieldCheck size={15} /> Allow script</button>}
         </div>
       </header>
@@ -117,7 +128,7 @@ export function IssueDetailPage({
       {activeTab === "timeline" && <TimelineTab linkedSignals={linkedSignals} />}
       {activeTab === "comments" && <CommentsTab row={row} />}
       {activeTab === "related" && <RelatedIssuesTab onIssue={onIssue} rows={relatedIssues} />}
-      {activeTab === "analysis" && <AnalysisTab reports={matchingReports} />}
+      {activeTab === "analysis" && <AnalysisTab actionLoading={actionLoading} modelValue={selectedModel} onGenerate={() => onGenerateAnalysis(row)} reports={matchingReports} />}
     </section>
   );
 }
@@ -277,23 +288,134 @@ function RelatedIssuesTab({ onIssue, rows }: { onIssue: (row: IssueRow) => void;
   );
 }
 
-function AnalysisTab({ reports }: { reports: ReportRow[] }) {
+function AnalysisTab({ actionLoading, modelValue, onGenerate, reports }: { actionLoading: boolean; modelValue: string; onGenerate: () => void; reports: ReportRow[] }) {
+  const action = (
+    <div className="analysis-action">
+      <span>{modelPresetLabel(modelValue)}</span>
+      <button className="ghost-button compact" type="button" disabled={actionLoading} onClick={onGenerate}>
+        <Brain size={15} /> Generate analysis
+      </button>
+    </div>
+  );
   if (!reports.length) {
-    return <Panel title="LLM analysis" icon={Brain}><EmptyState title="No analysis yet" /></Panel>;
+    return (
+      <Panel title="LLM analysis" icon={Brain} action={action}>
+        <EmptyState title="No analysis yet" />
+      </Panel>
+    );
   }
   return (
-    <Panel title="LLM analysis" icon={Brain}>
+    <Panel title="LLM analysis" icon={Brain} action={action}>
       <div className="stack-list">
         {reports.map(({ report }) => (
           <div className="analysis-card" key={report.id}>
-            <strong>{report.model_name || report.model_provider || "Model report"}</strong>
-            <small>{report.status} / {formatDate(report.generated_at)}</small>
-            <p>{report.analysis || report.error || "No analysis text returned."}</p>
+            <div className="analysis-meta">
+              <strong>{report.model_name || report.model_provider || "Model report"}</strong>
+              <small>{report.status} / {formatDate(report.generated_at)}</small>
+            </div>
+            {report.error && <p className="analysis-error">{report.error}</p>}
+            <dl className="analysis-meta">
+              <dt>Findings</dt>
+              <dd>{report.source_finding_ids.join(", ") || "none"}</dd>
+              <dt>Evidence bundle</dt>
+              <dd>{report.evidence_bundle_sha256 ? `${report.evidence_bundle_sha256.slice(0, 12)}...` : "missing"}</dd>
+              <dt>Perf</dt>
+              <dd>{report.total_duration_millis ? `${report.total_duration_millis} ms` : "n/a"} / {report.prompt_eval_count || 0}+{report.eval_count || 0} tokens</dd>
+            </dl>
+            <AnalysisOutput analysis={report.analysis || ""} />
           </div>
         ))}
       </div>
     </Panel>
   );
+}
+
+function AnalysisOutput({ analysis }: { analysis: string }) {
+  if (isModelAnalysisHTML(analysis)) {
+    return <div className="analysis-output" dangerouslySetInnerHTML={{ __html: analysis }} />;
+  }
+  return (
+    <div className="analysis-output">
+      {parseModelAnalysisSections(analysis).map((section) => (
+        <section className="analysis-section" key={section.title}>
+          <h5>{section.title}</h5>
+          <div className="analysis-body">
+            {renderAnalysisSectionLines(section.title, section.lines)}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function renderAnalysisLine(value: string) {
+  return splitCodeTokens(value).map((part, index) => {
+    if (/^`[^`]+`$/.test(part)) {
+      return <code key={`token-${index}`}>{part.slice(1, -1)}</code>;
+    }
+    return part;
+  });
+}
+
+function renderAnalysisSectionLines(sectionTitle: string, lines: AnalysisLine[]) {
+  const nodes: ReactNode[] = [];
+  let listBuffer: ReactNode[] = [];
+  let kvBuffer: Array<{ key: string; value: string }> = [];
+
+  const flushList = (keyPrefix: string) => {
+    if (!listBuffer.length) {
+      return;
+    }
+    nodes.push(
+      <ul className="analysis-list" key={`${keyPrefix}-list`}>
+        {listBuffer}
+      </ul>
+    );
+    listBuffer = [];
+  };
+
+  const flushKV = (keyPrefix: string) => {
+    if (!kvBuffer.length) {
+      return;
+    }
+    nodes.push(
+      <dl className="analysis-kv" key={`${keyPrefix}-kv`}>
+        {kvBuffer.map((entry, entryIndex) => [
+          <dt key={`${keyPrefix}-dt-${entryIndex}`}>{entry.key}</dt>,
+          <dd key={`${keyPrefix}-dd-${entryIndex}`}>{renderAnalysisLine(entry.value)}</dd>
+        ])}
+      </dl>
+    );
+    kvBuffer = [];
+  };
+
+  lines.forEach((line, index) => {
+    if (line.kind === "list") {
+      flushKV(`section-${sectionTitle}-${index}`);
+      listBuffer.push(<li key={`${sectionTitle}-li-${index}`}>{renderAnalysisLine(line.content)}</li>);
+      return;
+    }
+    if (line.kind === "kv") {
+      flushList(`section-${sectionTitle}-${index}`);
+      kvBuffer.push({ key: line.key, value: line.value });
+      return;
+    }
+
+    if (!line.content.trim()) {
+      return;
+    }
+
+    flushList(`section-${sectionTitle}-${index}`);
+    flushKV(`section-${sectionTitle}-${index}`);
+    nodes.push(<p key={`${sectionTitle}-text-${index}`}>{renderAnalysisLine(line.content)}</p>);
+  });
+  flushList(`section-${sectionTitle}-tail`);
+  flushKV(`section-${sectionTitle}-tail`);
+
+  if (!nodes.length) {
+    nodes.push(<p key={`${sectionTitle}-empty`}>No details available.</p>);
+  }
+  return <>{nodes}</>;
 }
 
 function DetailTile({ label, value }: { label: string; value: string }) {

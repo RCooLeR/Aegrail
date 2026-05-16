@@ -90,6 +90,45 @@ func TestAgentQueueSendMovesBatchToSent(t *testing.T) {
 	}
 }
 
+func TestAgentQueueSkipsDuplicatePendingBatch(t *testing.T) {
+	root := t.TempDir()
+	runtime := NewRuntime(Config{
+		ConfigPath: filepath.Join(root, "agent.json"),
+		QueueDir:   filepath.Join(root, "queue"),
+	})
+	_, err := runtime.Install(context.Background(), Identity{
+		HubURL:      "http://127.0.0.1:8787",
+		QueueDir:    filepath.Join(root, "queue"),
+		Org:         "acme",
+		Project:     "customer-site",
+		Environment: "production",
+		Host:        "web-01",
+		AgentID:     "agt_web_01",
+	})
+	if err != nil {
+		t.Fatalf("Install returned error: %v", err)
+	}
+	input := EnqueueEventInput{
+		BatchID:  "batch-1",
+		Type:     "file.created",
+		Target:   "/var/www/app/uploads/avatar.php",
+		Severity: "high",
+	}
+	if _, _, err := runtime.EnqueueEvent(context.Background(), input); err != nil {
+		t.Fatalf("first EnqueueEvent returned error: %v", err)
+	}
+	if _, _, err := runtime.EnqueueEvent(context.Background(), input); err != nil {
+		t.Fatalf("duplicate EnqueueEvent returned error: %v", err)
+	}
+	status, err := runtime.Status(context.Background())
+	if err != nil {
+		t.Fatalf("Status returned error: %v", err)
+	}
+	if status.Pending != 1 {
+		t.Fatalf("pending = %d, want 1", status.Pending)
+	}
+}
+
 func TestAgentDiscardPendingMovesBatchToDiscarded(t *testing.T) {
 	root := t.TempDir()
 	runtime := NewRuntime(Config{
@@ -528,6 +567,66 @@ func TestClassifyFileSeverityTreatsLocalWpConfigAsHigh(t *testing.T) {
 	if severity != string(domain.SeverityHigh) {
 		t.Fatalf("severity = %q, want high", severity)
 	}
+}
+
+func TestFileEventRecognizesPrestaShopAssetRedirectGuard(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "themes", "at_petstore", "modules", "blockreviews", "views", "img", "btn", "index.php")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll returned error: %v", err)
+	}
+	content := `<?php
+header("Expires: Mon, 26 Jul 1997 05:00:00 GMT");
+header("Cache-Control: no-store, no-cache, must-revalidate");
+header("Location: ../");
+exit;
+`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+	state := testFileState(t, root, path)
+	event := fileEvent("file.created", state, fileState{})
+	if event.Severity != string(domain.SeverityInfo) {
+		t.Fatalf("severity = %q, want info for recognized guard", event.Severity)
+	}
+	if event.Payload["file_kind"] != "prestashop_asset_guard_index" ||
+		event.Payload["file_role"] != "directory_guard" ||
+		event.Payload["file_role_confidence"] != "high" {
+		t.Fatalf("payload = %#v, want recognized directory guard metadata", event.Payload)
+	}
+}
+
+func TestFileEventKeepsSuspiciousPHPInPrestaShopAssetPathHigh(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "themes", "at_petstore", "modules", "blockreviews", "views", "img", "btn", "index.php")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll returned error: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(`<?php eval($_POST["x"] ?? "");`), 0o600); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+	state := testFileState(t, root, path)
+	event := fileEvent("file.created", state, fileState{})
+	if event.Severity != string(domain.SeverityHigh) {
+		t.Fatalf("severity = %q, want high for unrecognized PHP in image path", event.Severity)
+	}
+	if _, ok := event.Payload["file_kind"]; ok {
+		t.Fatalf("payload = %#v, did not expect benign file_kind", event.Payload)
+	}
+}
+
+func testFileState(t *testing.T, root string, path string) fileState {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat returned error: %v", err)
+	}
+	scan := watchScanResult{}
+	state, err := buildFileState(path, info, root, map[string]fileState{}, true, &scan)
+	if err != nil {
+		t.Fatalf("buildFileState returned error: %v", err)
+	}
+	return state
 }
 
 func TestScanWatchedPathsReturnsErrorWhenStateIsLocked(t *testing.T) {

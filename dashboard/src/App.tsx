@@ -2,7 +2,9 @@ import { AuthGate } from "./dashboard/components/AuthGate";
 import { DashboardShell } from "./dashboard/components/DashboardShell";
 import { initialFilters } from "./dashboard/config/navigation";
 import { useDashboardController } from "./dashboard/controllers/useDashboardController";
+import { BrowserScriptsPage } from "./dashboard/pages/BrowserScriptsPage";
 import { CompaniesPage } from "./dashboard/pages/CompaniesPage";
+import { DeploymentsPage } from "./dashboard/pages/DeploymentsPage";
 import { IssueDetailPage } from "./dashboard/pages/IssueDetailPage";
 import { IssuesPage } from "./dashboard/pages/IssuesPage";
 import { NodesPage } from "./dashboard/pages/NodesPage";
@@ -85,21 +87,45 @@ export default function App() {
           issueRows={dashboard.issueRows}
           onAllowScript={dashboard.allowScript}
           onBack={() => dashboard.go("issues")}
+          onGenerateAnalysis={dashboard.generateAnalysis}
+          onIgnoreFilePath={dashboard.ignoreFilePath}
           onIssue={dashboard.selectIssue}
           onStatus={dashboard.setIssueStatus}
           reportRows={dashboard.reportRows}
           row={dashboard.selectedIssue}
           rule={dashboard.selectedIssue ? dashboard.ruleByID.get(dashboard.selectedIssue.finding.rule_id) : undefined}
+          selectedModel={dashboard.actionState.model}
           signalRows={dashboard.signalRows}
         />
       )}
       {dashboard.view === "signals" && <SignalsPage rows={dashboard.signalRows} />}
+      {dashboard.view === "browser" && (
+        <BrowserScriptsPage
+          actionLoading={dashboard.actionLoading}
+          allowlistRows={dashboard.allowlistRows}
+          onAllowScript={dashboard.allowBrowserScript}
+          onUpdateEntry={dashboard.updateAllowlistEntry}
+          scriptRows={dashboard.browserScriptRows}
+        />
+      )}
+      {dashboard.view === "deployments" && (
+        <DeploymentsPage
+          actor={dashboard.actionState.actor || dashboard.auth.user?.email || "dashboard"}
+          deploymentRows={dashboard.deploymentRows}
+          issueRows={dashboard.deploymentIssueRows}
+          loading={dashboard.loading || dashboard.actionLoading}
+          onCreate={dashboard.recordDeployment}
+          visibleInstances={dashboard.visibleInstances}
+        />
+      )}
       {dashboard.view === "reports" && (
         <ReportsPage issueRows={dashboard.issueRows} reports={dashboard.reportRows} visibleInstances={dashboard.visibleInstances} />
       )}
       {dashboard.view === "settings" && (
         <SettingsPage
           actionState={dashboard.actionState}
+          allInstances={dashboard.estate.instances}
+          allSites={dashboard.allSites}
           draftScope={dashboard.draftScope}
           inventory={dashboard.inventory}
           loading={dashboard.loading}

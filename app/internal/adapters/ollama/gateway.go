@@ -18,21 +18,23 @@ import (
 var ErrOffline = ports.ErrModelGatewayOffline
 
 type Config struct {
-	BaseURL            string
-	InvestigationModel string
-	EmbeddingModel     string
-	Offline            bool
-	Timeout            time.Duration
-	HTTPClient         *http.Client
+	BaseURL             string
+	InvestigationModel  string
+	InvestigationModels []string
+	EmbeddingModel      string
+	Offline             bool
+	Timeout             time.Duration
+	HTTPClient          *http.Client
 }
 
 type Gateway struct {
-	baseURL            string
-	investigationModel string
-	embeddingModel     string
-	offline            bool
-	timeout            time.Duration
-	client             *http.Client
+	baseURL             string
+	investigationModel  string
+	investigationModels []string
+	embeddingModel      string
+	offline             bool
+	timeout             time.Duration
+	client              *http.Client
 }
 
 func NewGateway(config Config) (*Gateway, error) {
@@ -52,12 +54,13 @@ func NewGateway(config Config) (*Gateway, error) {
 		timeout = 2 * time.Minute
 	}
 	return &Gateway{
-		baseURL:            baseURL,
-		investigationModel: strings.TrimSpace(config.InvestigationModel),
-		embeddingModel:     strings.TrimSpace(config.EmbeddingModel),
-		offline:            config.Offline,
-		timeout:            timeout,
-		client:             client,
+		baseURL:             baseURL,
+		investigationModel:  strings.TrimSpace(config.InvestigationModel),
+		investigationModels: normalizeModelCandidates(config.InvestigationModel, config.InvestigationModels),
+		embeddingModel:      strings.TrimSpace(config.EmbeddingModel),
+		offline:             config.Offline,
+		timeout:             timeout,
+		client:              client,
 	}, nil
 }
 
@@ -71,6 +74,7 @@ func (g *Gateway) Health(ctx context.Context) (ports.ModelGatewayHealth, error) 
 		EmbeddingModel:     g.embeddingModel,
 	}
 	if g.offline {
+		health.InvestigationModel = firstNonEmpty(g.investigationModel, firstString(g.investigationModels))
 		return health, nil
 	}
 
@@ -86,6 +90,7 @@ func (g *Gateway) Health(ctx context.Context) (ports.ModelGatewayHealth, error) 
 			Digest:     model.Digest,
 		})
 	}
+	health.InvestigationModel = g.selectInvestigationModel(health.Models)
 	health.Available = true
 	return health, nil
 }
@@ -94,17 +99,43 @@ func (g *Gateway) Generate(ctx context.Context, request ports.ModelGenerateReque
 	if g.offline {
 		return ports.ModelGenerateResponse{}, ErrOffline
 	}
-	model := strings.TrimSpace(request.Model)
-	if model == "" {
-		model = g.investigationModel
+	candidates, explicitModel, err := g.generateCandidates(ctx, request.Model)
+	if err != nil {
+		return ports.ModelGenerateResponse{}, err
 	}
-	if model == "" {
+	if len(candidates) == 0 {
 		return ports.ModelGenerateResponse{}, errors.New("investigation model is not configured")
 	}
 	if strings.TrimSpace(request.Prompt) == "" {
 		return ports.ModelGenerateResponse{}, errors.New("prompt is required")
 	}
 
+	var attempts []string
+	for _, model := range candidates {
+		response, err := g.generateWithModel(ctx, model, request)
+		if err != nil {
+			if explicitModel {
+				return ports.ModelGenerateResponse{}, err
+			}
+			attempts = append(attempts, fmt.Sprintf("%s: %v", model, err))
+			continue
+		}
+		if strings.TrimSpace(response.Text) == "" {
+			err := fmt.Errorf("ollama returned empty response from %s", model)
+			if explicitModel {
+				return ports.ModelGenerateResponse{}, err
+			}
+			attempts = append(attempts, err.Error())
+			continue
+		}
+		return response, nil
+	}
+
+	return ports.ModelGenerateResponse{}, fmt.Errorf("all investigation models failed: %s", strings.Join(attempts, "; "))
+}
+
+func (g *Gateway) generateWithModel(ctx context.Context, model string, request ports.ModelGenerateRequest) (ports.ModelGenerateResponse, error) {
+	var response generateResponse
 	body := generateRequest{
 		Model:   model,
 		System:  request.System,
@@ -112,7 +143,6 @@ func (g *Gateway) Generate(ctx context.Context, request ports.ModelGenerateReque
 		Stream:  false,
 		Options: request.Options,
 	}
-	var response generateResponse
 	if err := g.doJSON(ctx, http.MethodPost, "/api/generate", body, &response); err != nil {
 		return ports.ModelGenerateResponse{}, err
 	}
@@ -124,6 +154,63 @@ func (g *Gateway) Generate(ctx context.Context, request ports.ModelGenerateReque
 		PromptEvalCount: response.PromptEvalCount,
 		EvalCount:       response.EvalCount,
 	}, nil
+}
+
+func (g *Gateway) generateCandidates(ctx context.Context, requestedModel string) ([]string, bool, error) {
+	if model := strings.TrimSpace(requestedModel); model != "" {
+		return []string{model}, true, nil
+	}
+	if strings.TrimSpace(g.investigationModel) != "" {
+		return []string{g.investigationModel}, true, nil
+	}
+
+	health, err := g.Health(ctx)
+	if err != nil {
+		if len(g.investigationModels) == 0 {
+			return nil, false, err
+		}
+		return append([]string(nil), g.investigationModels...), false, nil
+	}
+	if len(health.Models) == 0 {
+		return append([]string(nil), g.investigationModels...), false, nil
+	}
+
+	installedNames := map[string]struct{}{}
+	for _, model := range health.Models {
+		name := strings.ToLower(strings.TrimSpace(model.Name))
+		if name != "" {
+			installedNames[name] = struct{}{}
+		}
+	}
+	candidates := make([]string, 0, len(g.investigationModels))
+	for _, candidate := range g.investigationModels {
+		if _, ok := installedNames[strings.ToLower(candidate)]; ok {
+			candidates = append(candidates, candidate)
+		}
+	}
+	if len(candidates) == 0 {
+		return append([]string(nil), g.investigationModels...), false, nil
+	}
+	return candidates, false, nil
+}
+
+func (g *Gateway) selectInvestigationModel(installed []ports.ModelInfo) string {
+	if strings.TrimSpace(g.investigationModel) != "" {
+		return g.investigationModel
+	}
+	installedNames := map[string]struct{}{}
+	for _, model := range installed {
+		name := strings.ToLower(strings.TrimSpace(model.Name))
+		if name != "" {
+			installedNames[name] = struct{}{}
+		}
+	}
+	for _, candidate := range g.investigationModels {
+		if _, ok := installedNames[strings.ToLower(candidate)]; ok {
+			return candidate
+		}
+	}
+	return firstString(g.investigationModels)
 }
 
 func (g *Gateway) Embed(ctx context.Context, request ports.ModelEmbedRequest) (ports.ModelEmbedResponse, error) {
@@ -292,6 +379,31 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func firstString(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return values[0]
+}
+
+func normalizeModelCandidates(primary string, candidates []string) []string {
+	values := make([]string, 0, len(candidates)+1)
+	seen := map[string]struct{}{}
+	for _, value := range append([]string{primary}, candidates...) {
+		model := strings.TrimSpace(value)
+		if model == "" {
+			continue
+		}
+		key := strings.ToLower(model)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		values = append(values, model)
+	}
+	return values
 }
 
 func nonEmptyTexts(values []string) []string {

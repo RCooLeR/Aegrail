@@ -109,7 +109,7 @@ func TestWriteModelAnalysisReportSupportsJSONFormat(t *testing.T) {
 		t.Fatalf("writeModelAnalysisReport(json) returned error: %v", err)
 	}
 	if !strings.Contains(output.String(), `"schema": "aegrail.model_analysis_report.v1"`) ||
-		!strings.Contains(output.String(), `"version": "2026-05-13.1"`) ||
+		!strings.Contains(output.String(), `"version": "`+reports.ModelAnalysisPromptTemplateVersion+`"`) ||
 		!strings.Contains(output.String(), `"sha256": "bundle123"`) {
 		t.Fatalf("json output = %q, want model analysis report JSON", output.String())
 	}

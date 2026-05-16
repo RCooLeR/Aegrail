@@ -141,6 +141,19 @@ async function apiPost<T>(scope: ApiScope, path: string, body: unknown): Promise
   return (await response.json()) as T;
 }
 
+async function apiDelete<T>(scope: ApiScope, path: string): Promise<T> {
+  const response = await fetch(joinUrl(scope, path), {
+    credentials: "include",
+    method: "DELETE",
+    headers: { Accept: "application/json" }
+  });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `${response.status} ${response.statusText}`);
+  }
+  return (await response.json()) as T;
+}
+
 export class MFARequiredError extends Error {
   constructor() {
     super("mfa required");
@@ -354,6 +367,44 @@ export async function allowBrowserScriptFromFinding(scope: ApiScope, finding: Hu
   );
 }
 
+export async function ignoreFilePathFromFinding(
+  scope: ApiScope,
+  finding: HubFinding,
+  path: string,
+  actor: string,
+  reason: string
+) {
+  const params = query(scope);
+  return apiPost(
+    scope,
+    `/api/v1/findings/${encodeURIComponent(finding.id)}/file-ignore?${params}`,
+    {
+      actor,
+      path,
+      reason
+    }
+  );
+}
+
+export async function generateModelAnalysisFromFinding(
+  scope: ApiScope,
+  finding: HubFinding,
+  input: {
+    max_collection_entries?: number;
+    max_events?: number;
+    max_metadata_depth?: number;
+    max_string_length?: number;
+    model?: string;
+  } = {}
+) {
+  const params = query(scope);
+  return apiPost<ApiEnvelope<{ report: ModelAnalysisReport }>>(
+    scope,
+    `/api/v1/findings/${encodeURIComponent(finding.id)}/model-analysis?${params}`,
+    input
+  ).then((body) => body.report);
+}
+
 export async function createBrowserScriptAllowlistEntry(
   scope: ApiScope,
   input: {
@@ -407,12 +458,59 @@ export async function updateHubUser(
   ).then((body) => body.user);
 }
 
-export async function enrollHubUserTOTP(scope: ApiScope, user: HubUser) {
+export async function startHubUserTOTP(scope: ApiScope, user: HubUser) {
   return apiPost<ApiEnvelope<{ enrollment: HubUserTOTPEnrollment; user: HubUser }>>(
     scope,
-    `/api/v1/access/users/${encodeURIComponent(user.id)}/totp`,
+    `/api/v1/access/users/${encodeURIComponent(user.id)}/totp/start`,
     { issuer: "Aegrail" }
   ).then((body) => body);
+}
+
+export async function verifyHubUserTOTP(scope: ApiScope, user: HubUser, code: string) {
+  return apiPost<ApiEnvelope<{ user: HubUser }>>(
+    scope,
+    `/api/v1/access/users/${encodeURIComponent(user.id)}/totp/verify`,
+    { code }
+  ).then((body) => body.user);
+}
+
+export async function disableHubUserTOTP(scope: ApiScope, user: HubUser) {
+  return apiDelete<ApiEnvelope<{ user: HubUser }>>(
+    scope,
+    `/api/v1/access/users/${encodeURIComponent(user.id)}/totp`
+  ).then((body) => body.user);
+}
+
+export async function createDeployment(
+  scope: ApiScope,
+  input: {
+    version: string;
+    commit_sha?: string;
+    actor?: string;
+    started_at?: string;
+    finished_at?: string;
+  }
+) {
+  const params = query(scope);
+  return apiPost<ApiEnvelope<{ deployment: Deployment }>>(
+    scope,
+    `/api/v1/deployments?${params}`,
+    input
+  ).then((body) => body.deployment);
+}
+
+export async function updateBrowserAllowlistEntryStatus(
+  scope: ApiScope,
+  entry: BrowserAllowlistEntry,
+  status: string,
+  reason: string,
+  approved_by: string
+) {
+  return apiPatch<ApiEnvelope<{ entry: BrowserAllowlistEntry }>>(
+    scope,
+    `/api/v1/browser/script-allowlist/${encodeURIComponent(entry.id)}/status`,
+    { status, reason, approved_by }
+  ).then((body) => body.entry);
 }
 
 function friendlyError(error: unknown) {

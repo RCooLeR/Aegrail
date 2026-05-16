@@ -61,10 +61,17 @@ type ServerConfigCoverageDetail struct {
 }
 
 type ServerConfigCoverageFiles struct {
-	Enabled         bool     `json:"enabled"`
-	Profiles        []string `json:"profiles,omitempty"`
-	ExtraPaths      int      `json:"extra_paths"`
-	ExcludePatterns int      `json:"exclude_patterns"`
+	Enabled         bool                             `json:"enabled"`
+	Profiles        []string                         `json:"profiles,omitempty"`
+	ExtraPaths      int                              `json:"extra_paths"`
+	ExcludePatterns int                              `json:"exclude_patterns"`
+	IgnoredPaths    []ServerConfigCoverageFileIgnore `json:"ignored_paths,omitempty"`
+}
+
+type ServerConfigCoverageFileIgnore struct {
+	Path  string `json:"path"`
+	Scope string `json:"scope"`
+	Risk  string `json:"risk,omitempty"`
 }
 
 type ServerConfigCoverageLogs struct {
@@ -218,6 +225,7 @@ func serverConfigCoverageDetail(site ServerSiteConfig) ServerConfigCoverageDetai
 		Profiles:        append([]string(nil), site.Files.Profiles...),
 		ExtraPaths:      len(site.Files.ExtraPaths),
 		ExcludePatterns: len(site.Files.Exclude),
+		IgnoredPaths:    serverCoverageFileIgnores(site.Root, site.Files.Exclude),
 	}
 	logs := ServerConfigCoverageLogs{
 		Enabled: len(site.Logs) > 0,
@@ -254,6 +262,81 @@ func serverConfigCoverageDetail(site ServerSiteConfig) ServerConfigCoverageDetai
 		WordPress:  ServerConfigCoverageWordPress{Multisite: site.WordPress.Multisite, NetworkSites: len(site.WordPress.NetworkSites)},
 		Collectors: collectors,
 	}
+}
+
+func serverCoverageFileIgnores(root string, excludes []string) []ServerConfigCoverageFileIgnore {
+	ignores := make([]ServerConfigCoverageFileIgnore, 0, len(excludes))
+	for _, exclude := range excludes {
+		ignore := serverCoverageFileIgnore(root, exclude)
+		if ignore.Path != "" {
+			ignores = append(ignores, ignore)
+		}
+	}
+	return ignores
+}
+
+func serverCoverageFileIgnore(root string, exclude string) ServerConfigCoverageFileIgnore {
+	root = strings.TrimSpace(root)
+	exclude = strings.TrimSpace(exclude)
+	if exclude == "" {
+		return ServerConfigCoverageFileIgnore{}
+	}
+	rootClean := filepath.Clean(root)
+	excludeClean := filepath.Clean(exclude)
+	if rootClean != "" {
+		if rel, ok := safeRelativeConfigPath(rootClean, excludeClean); ok {
+			rel = filepath.ToSlash(rel)
+			if rel == "." || rel == "" {
+				return ServerConfigCoverageFileIgnore{Path: "<site root>", Scope: "site_root", Risk: "high"}
+			}
+			return ServerConfigCoverageFileIgnore{Path: rel, Scope: "site_relative", Risk: fileIgnoreRisk(rel)}
+		}
+	}
+	base := filepath.Base(excludeClean)
+	if base == "." || base == string(filepath.Separator) || base == "" {
+		base = "path"
+	}
+	return ServerConfigCoverageFileIgnore{Path: "[outside site root]/" + base, Scope: "outside_site_root", Risk: "high"}
+}
+
+func safeRelativeConfigPath(root string, value string) (string, bool) {
+	rootSlash := strings.TrimRight(filepath.ToSlash(filepath.Clean(root)), "/")
+	valueSlash := strings.TrimRight(filepath.ToSlash(filepath.Clean(value)), "/")
+	if rootSlash != "" && valueSlash == rootSlash {
+		return ".", true
+	}
+	if rootSlash != "" && strings.HasPrefix(valueSlash, rootSlash+"/") {
+		return strings.TrimPrefix(valueSlash, rootSlash+"/"), true
+	}
+	rel, err := filepath.Rel(root, value)
+	if err != nil {
+		return "", false
+	}
+	if rel == "." || rel == "" {
+		return ".", true
+	}
+	relSlash := filepath.ToSlash(rel)
+	if relSlash == ".." || strings.HasPrefix(relSlash, "../") {
+		return "", false
+	}
+	return rel, true
+}
+
+func fileIgnoreRisk(rel string) string {
+	normalized := strings.Trim(strings.ToLower(strings.ReplaceAll(rel, "\\", "/")), "/")
+	switch normalized {
+	case "", ".", "modules", "plugins", "themes", "wp-content", "wp-content/plugins", "wp-content/themes", "app", "classes", "controllers", "override":
+		return "high"
+	}
+	if strings.HasSuffix(normalized, "/logs") ||
+		strings.Contains(normalized, "/logs/") ||
+		strings.HasSuffix(normalized, "/cache") ||
+		strings.Contains(normalized, "/cache/") ||
+		strings.HasSuffix(normalized, "/tmp") ||
+		strings.Contains(normalized, "/tmp/") {
+		return "low"
+	}
+	return "medium"
 }
 
 func enabledCoverageCollectors(files ServerConfigCoverageFiles, logs ServerConfigCoverageLogs, databases ServerConfigCoverageDatabases, browser ServerConfigCoverageBrowser) []string {

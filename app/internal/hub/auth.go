@@ -296,7 +296,7 @@ func generateTOTPCode(secret []byte, counter uint64) string {
 func decryptHubUserSecret(secretKey string, ciphertextValue string) (string, error) {
 	secretKey = strings.TrimSpace(secretKey)
 	if secretKey == "" {
-		return "", errors.New("AEGRAIL_HUB_USER_SECRET or AEGRAIL_HUB_INGEST_SECRET is required before verifying 2FA")
+		return "", errors.New("AEGRAIL_HUB_USER_SECRET is required before verifying 2FA")
 	}
 	parts := strings.Split(strings.TrimSpace(ciphertextValue), ":")
 	if len(parts) != 3 || parts[0] != "v1" {

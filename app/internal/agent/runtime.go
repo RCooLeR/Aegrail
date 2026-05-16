@@ -334,6 +334,9 @@ func (r *Runtime) EnqueueEvents(ctx context.Context, input EnqueueEventsInput) (
 	path := filepath.Join(identity.QueueDir, "pending", safeFilename(batchID)+".json")
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return batch, path, nil
+		}
 		return QueuedBatch{}, "", err
 	}
 	defer file.Close()

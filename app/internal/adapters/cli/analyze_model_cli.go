@@ -17,7 +17,7 @@ import (
 	urfavecli "github.com/urfave/cli/v2"
 )
 
-func analyzeModelCommand(meta domain.AppMeta) *urfavecli.Command {
+func analyzeModelInspectSubcommand(meta domain.AppMeta) *urfavecli.Command {
 	return &urfavecli.Command{
 		Name:  "model",
 		Usage: "inspect and smoke-test the configured model gateway",
@@ -25,6 +25,15 @@ func analyzeModelCommand(meta domain.AppMeta) *urfavecli.Command {
 			modelStatusCommand(meta),
 			modelPromptCommand(meta),
 			modelEmbedCommand(meta),
+		},
+	}
+}
+
+func analyzeModelReportSubcommand(meta domain.AppMeta) *urfavecli.Command {
+	return &urfavecli.Command{
+		Name:  "model",
+		Usage: "generate model-assisted reports from persisted Hub findings",
+		Subcommands: []*urfavecli.Command{
 			modelReportCommand(meta),
 		},
 	}

@@ -6,7 +6,8 @@
 #
 # Related environment variables used by agents:
 # - AEGRAIL_HUB_INGEST_SECRET signs queued batches sent to Hub.
-# - AEGRAIL_PII_KEY encrypts/hashes database PII hints before sending evidence.
+# - AEGRAIL_PII_KEY adds one-way HMAC fingerprints for database account
+#   identifiers. It is not transport encryption and it is not reversible.
 # - AEGRAIL_CONFIG_COVERAGE_HEARTBEAT_INTERVAL optionally overrides the default
 #   config coverage heartbeat interval, for example 10m or 1h.
 
@@ -15,9 +16,10 @@ schema: aegrail.agent.server_config.v1
 
 hub:
   # Absolute Hub URL. Use HTTPS outside localhost/private development networks.
+  # Aegrail signs ingest requests, but payload confidentiality depends on TLS.
   url: http://127.0.0.1:8787
 
-  # Environment variable that contains the Hub ingest secret.
+  # Environment variable that contains the Hub ingest signing secret.
   # Keep the secret out of YAML and source control.
   ingest_secret_env: AEGRAIL_HUB_INGEST_SECRET
 
@@ -51,9 +53,11 @@ identity:
 
 runtime:
   # Local directory for pending/sent/failed/discarded queue batches.
+  # Queue files are JSON runtime data. Treat this directory as sensitive.
   queue_dir: /var/lib/aegrail/queue
 
   # Local directory for collector state and baselines.
+  # State files are JSON runtime data. Treat this directory as sensitive.
   state_dir: /var/lib/aegrail/state
 
   # Continuous agent polling interval. CLI --interval overrides this.

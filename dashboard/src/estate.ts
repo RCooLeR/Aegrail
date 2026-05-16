@@ -32,6 +32,7 @@ export type InstanceModel = {
   iconUrls: string[];
   key: string;
   lastSignalAt?: string;
+  latestCoverage?: CoverageRecord;
   mediumFindings: number;
   openFindings: number;
   projectName: string;
@@ -231,6 +232,7 @@ function buildInstanceModel(snapshot: DashboardInstanceSnapshot): InstanceModel 
     iconUrls: instanceIconCandidates(snapshot),
     key: instanceScopeKey(snapshot.scope),
     lastSignalAt,
+    latestCoverage,
     mediumFindings,
     openFindings: openFindings.length,
     projectName: snapshot.project.name || snapshot.project.slug,

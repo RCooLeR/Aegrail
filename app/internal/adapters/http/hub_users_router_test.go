@@ -3,10 +3,15 @@ package httpadapter
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha1"
+	"encoding/base32"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -78,16 +83,17 @@ func TestHubRouterManagesUsersAndTOTPEnrollment(t *testing.T) {
 		t.Fatalf("patch status = %d body = %s", patchResponse.Code, patchResponse.Body.String())
 	}
 
-	totpRequest := httptest.NewRequest(http.MethodPost, "/api/v1/access/users/"+createBody.User.ID+"/totp", bytes.NewBufferString(`{"issuer":"Aegrail Local"}`))
-	totpRequest.AddCookie(cookies[0])
-	totpResponse := httptest.NewRecorder()
-	router.ServeHTTP(totpResponse, totpRequest)
-	if totpResponse.Code != http.StatusCreated {
-		t.Fatalf("totp status = %d body = %s", totpResponse.Code, totpResponse.Body.String())
+	startRequest := httptest.NewRequest(http.MethodPost, "/api/v1/access/users/"+createBody.User.ID+"/totp/start", bytes.NewBufferString(`{"issuer":"Aegrail Local"}`))
+	startRequest.AddCookie(cookies[0])
+	startResponse := httptest.NewRecorder()
+	router.ServeHTTP(startResponse, startRequest)
+	if startResponse.Code != http.StatusCreated {
+		t.Fatalf("totp start status = %d body = %s", startResponse.Code, startResponse.Body.String())
 	}
-	var totpBody struct {
+	var startBody struct {
 		User struct {
 			TwoFactorEnabled bool `json:"two_factor_enabled"`
+			TwoFactorPending bool `json:"two_factor_pending"`
 		} `json:"user"`
 		Enrollment struct {
 			OTPAuthURL    string `json:"otpauth_url"`
@@ -95,11 +101,65 @@ func TestHubRouterManagesUsersAndTOTPEnrollment(t *testing.T) {
 			Secret        string `json:"secret"`
 		} `json:"enrollment"`
 	}
-	if err := json.NewDecoder(totpResponse.Body).Decode(&totpBody); err != nil {
-		t.Fatalf("Decode TOTP returned error: %v", err)
+	if err := json.NewDecoder(startResponse.Body).Decode(&startBody); err != nil {
+		t.Fatalf("Decode start returned error: %v", err)
 	}
-	if !totpBody.User.TwoFactorEnabled || totpBody.Enrollment.Secret == "" || !stringsContains(totpBody.Enrollment.OTPAuthURL, "otpauth://totp/") || !stringsContains(totpBody.Enrollment.QRCodeDataURL, "data:image/png;base64,") {
-		t.Fatalf("totp body = %#v, want enabled user and otpauth enrollment", totpBody)
+	if startBody.User.TwoFactorEnabled {
+		t.Fatalf("2FA enabled before verify; flow regressed")
+	}
+	if !startBody.User.TwoFactorPending {
+		t.Fatalf("2FA pending flag was not set after start")
+	}
+	if startBody.Enrollment.Secret == "" || !strings.Contains(startBody.Enrollment.OTPAuthURL, "otpauth://totp/") || !strings.Contains(startBody.Enrollment.QRCodeDataURL, "data:image/png;base64,") {
+		t.Fatalf("enrollment payload = %#v, want secret, otpauth url, and QR data URL", startBody.Enrollment)
+	}
+
+	wrongVerifyRequest := httptest.NewRequest(http.MethodPost, "/api/v1/access/users/"+createBody.User.ID+"/totp/verify", bytes.NewBufferString(`{"code":"000000"}`))
+	wrongVerifyRequest.AddCookie(cookies[0])
+	wrongVerifyResponse := httptest.NewRecorder()
+	router.ServeHTTP(wrongVerifyResponse, wrongVerifyRequest)
+	if wrongVerifyResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong code status = %d body = %s", wrongVerifyResponse.Code, wrongVerifyResponse.Body.String())
+	}
+
+	code := computeTestTOTP(t, startBody.Enrollment.Secret, time.Now().UTC())
+	verifyRequest := httptest.NewRequest(http.MethodPost, "/api/v1/access/users/"+createBody.User.ID+"/totp/verify", bytes.NewBufferString(fmt.Sprintf(`{"code":%q}`, code)))
+	verifyRequest.AddCookie(cookies[0])
+	verifyResponse := httptest.NewRecorder()
+	router.ServeHTTP(verifyResponse, verifyRequest)
+	if verifyResponse.Code != http.StatusOK {
+		t.Fatalf("verify status = %d body = %s", verifyResponse.Code, verifyResponse.Body.String())
+	}
+	var verifyBody struct {
+		User struct {
+			TwoFactorEnabled bool `json:"two_factor_enabled"`
+			TwoFactorPending bool `json:"two_factor_pending"`
+		} `json:"user"`
+	}
+	if err := json.NewDecoder(verifyResponse.Body).Decode(&verifyBody); err != nil {
+		t.Fatalf("Decode verify returned error: %v", err)
+	}
+	if !verifyBody.User.TwoFactorEnabled || verifyBody.User.TwoFactorPending {
+		t.Fatalf("verify body = %#v, want enabled and not pending", verifyBody)
+	}
+
+	disableRequest := httptest.NewRequest(http.MethodDelete, "/api/v1/access/users/"+createBody.User.ID+"/totp", nil)
+	disableRequest.AddCookie(cookies[0])
+	disableResponse := httptest.NewRecorder()
+	router.ServeHTTP(disableResponse, disableRequest)
+	if disableResponse.Code != http.StatusOK {
+		t.Fatalf("disable status = %d body = %s", disableResponse.Code, disableResponse.Body.String())
+	}
+	var disableBody struct {
+		User struct {
+			TwoFactorEnabled bool `json:"two_factor_enabled"`
+		} `json:"user"`
+	}
+	if err := json.NewDecoder(disableResponse.Body).Decode(&disableBody); err != nil {
+		t.Fatalf("Decode disable returned error: %v", err)
+	}
+	if disableBody.User.TwoFactorEnabled {
+		t.Fatalf("disable did not turn 2FA off")
 	}
 
 	listRequest := httptest.NewRequest(http.MethodGet, "/api/v1/access/users", nil)
@@ -122,6 +182,26 @@ func TestHubRouterManagesUsersAndTOTPEnrollment(t *testing.T) {
 	if listBody.Count != 1 || listBody.Users[0].ID != createBody.User.ID || listBody.Users[0].Secret != "" {
 		t.Fatalf("list body = %#v, want one user and no secret material", listBody)
 	}
+}
+
+func computeTestTOTP(t *testing.T, secret string, at time.Time) string {
+	t.Helper()
+	raw, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(strings.ToUpper(strings.TrimSpace(secret)))
+	if err != nil {
+		t.Fatalf("decode secret: %v", err)
+	}
+	counter := uint64(at.UTC().Unix() / 30)
+	var counterBytes [8]byte
+	binary.BigEndian.PutUint64(counterBytes[:], counter)
+	mac := hmac.New(sha1.New, raw)
+	mac.Write(counterBytes[:])
+	sum := mac.Sum(nil)
+	offset := sum[len(sum)-1] & 0x0f
+	value := (uint32(sum[offset])&0x7f)<<24 |
+		(uint32(sum[offset+1])&0xff)<<16 |
+		(uint32(sum[offset+2])&0xff)<<8 |
+		(uint32(sum[offset+3]) & 0xff)
+	return fmt.Sprintf("%06d", value%1000000)
 }
 
 type httpTestHubUserRepository struct {
@@ -152,6 +232,8 @@ func (r *httpTestHubUserRepository) SaveHubUser(ctx context.Context, user domain
 			user.TwoFactorEnabled = existing.TwoFactorEnabled
 			user.TOTPSecretCiphertext = existing.TOTPSecretCiphertext
 			user.TOTPEnrolledAt = existing.TOTPEnrolledAt
+			user.PendingTOTPSecretCiphertext = existing.PendingTOTPSecretCiphertext
+			user.PendingTOTPStartedAt = existing.PendingTOTPStartedAt
 			r.users[id] = user
 			return user, nil
 		}
@@ -204,16 +286,47 @@ func (r *httpTestHubUserRepository) UpdateHubUser(ctx context.Context, userID do
 	return user, nil
 }
 
-func (r *httpTestHubUserRepository) UpdateHubUserTOTP(ctx context.Context, userID domain.ID, update domain.HubUserTOTPUpdate) (domain.HubUser, error) {
+func (r *httpTestHubUserRepository) StartHubUserTOTP(ctx context.Context, userID domain.ID, start domain.HubUserTOTPStart) (domain.HubUser, error) {
 	user, ok := r.users[userID]
 	if !ok {
 		return domain.HubUser{}, fmt.Errorf("user %q was not found", userID)
 	}
-	user.TOTPSecretCiphertext = update.SecretCiphertext
+	user.PendingTOTPSecretCiphertext = start.PendingSecretCiphertext
+	startedAt := start.StartedAt
+	user.PendingTOTPStartedAt = &startedAt
+	user.UpdatedAt = startedAt
+	r.users[userID] = user
+	return user, nil
+}
+
+func (r *httpTestHubUserRepository) ActivateHubUserTOTP(ctx context.Context, userID domain.ID, activation domain.HubUserTOTPActivation) (domain.HubUser, error) {
+	user, ok := r.users[userID]
+	if !ok {
+		return domain.HubUser{}, fmt.Errorf("user %q was not found", userID)
+	}
+	user.TOTPSecretCiphertext = activation.ActiveSecretCiphertext
 	user.TwoFactorEnabled = true
 	user.TwoFactorRequired = true
-	user.TOTPEnrolledAt = &update.EnrolledAt
-	user.UpdatedAt = update.EnrolledAt
+	enrolledAt := activation.EnrolledAt
+	user.TOTPEnrolledAt = &enrolledAt
+	user.PendingTOTPSecretCiphertext = ""
+	user.PendingTOTPStartedAt = nil
+	user.UpdatedAt = enrolledAt
+	r.users[userID] = user
+	return user, nil
+}
+
+func (r *httpTestHubUserRepository) DisableHubUserTOTP(ctx context.Context, userID domain.ID) (domain.HubUser, error) {
+	user, ok := r.users[userID]
+	if !ok {
+		return domain.HubUser{}, fmt.Errorf("user %q was not found", userID)
+	}
+	user.TOTPSecretCiphertext = ""
+	user.TwoFactorEnabled = false
+	user.TOTPEnrolledAt = nil
+	user.PendingTOTPSecretCiphertext = ""
+	user.PendingTOTPStartedAt = nil
+	user.UpdatedAt = time.Date(2026, 5, 14, 12, 9, 0, 0, time.UTC)
 	r.users[userID] = user
 	return user, nil
 }
@@ -257,8 +370,4 @@ func (r *httpTestHubUserRepository) RevokeHubUserSession(ctx context.Context, to
 		r.sessions[tokenHash] = session
 	}
 	return nil
-}
-
-func stringsContains(value string, needle string) bool {
-	return len(needle) == 0 || (len(value) >= len(needle) && bytes.Contains([]byte(value), []byte(needle)))
 }

@@ -1,7 +1,7 @@
 import { buildEstateModel, collectorIsProblem, type CompanyModel, type EstateModel, type InstanceModel } from "../../estate";
 import type { HubFinding, RuleDefinition, TimelineEvent } from "../../types";
 import { severityRank } from "../config/navigation";
-import type { DashboardStats, FilterState, IssueRow, ReportRow, SignalRow, SiteRow, ViewKey } from "../types";
+import type { AllowlistRow, BrowserScriptRow, DashboardStats, DeploymentRow, FilterState, IssueRow, ReportRow, SignalRow, SiteRow, ViewKey } from "../types";
 import { newest, titleCase } from "../utils/time";
 
 export function buildSiteRows(instances: InstanceModel[]): SiteRow[] {
@@ -110,6 +110,56 @@ export function buildReportRows(instances: InstanceModel[]): ReportRow[] {
   ).sort((left, right) => new Date(right.report.generated_at).getTime() - new Date(left.report.generated_at).getTime());
 }
 
+export function buildBrowserScriptRows(instances: InstanceModel[]): BrowserScriptRow[] {
+  return instances.flatMap((instance) => {
+    const allowedDomains = new Set<string>();
+    const allowedHashes = new Set<string>();
+    const allowedTagManagers = new Set<string>();
+    for (const entry of instance.data.allowlist.data) {
+      if (entry.status !== "active") continue;
+      const value = entry.value.trim().toLowerCase();
+      switch (entry.kind) {
+        case "domain": allowedDomains.add(value); break;
+        case "sha256": allowedHashes.add(value); break;
+        case "tag_manager_id": allowedTagManagers.add(value); break;
+      }
+    }
+    return instance.data.browserScripts.data.map((script) => ({
+      instance,
+      script,
+      allowlisted:
+        (script.domain ? allowedDomains.has(script.domain.toLowerCase()) : false) ||
+        (script.sha256 ? allowedHashes.has(script.sha256.toLowerCase()) : false) ||
+        (script.tag_manager_ids ?? []).some((id) => allowedTagManagers.has(id.toLowerCase()))
+    }));
+  }).sort((left, right) => new Date(right.script.event_time).getTime() - new Date(left.script.event_time).getTime());
+}
+
+export function buildAllowlistRows(instances: InstanceModel[]): AllowlistRow[] {
+  return instances.flatMap((instance) =>
+    instance.data.allowlist.data.map((entry) => ({ instance, entry }))
+  ).sort((left, right) => new Date(right.entry.updated_at).getTime() - new Date(left.entry.updated_at).getTime());
+}
+
+export function buildDeploymentRows(instances: InstanceModel[]): DeploymentRow[] {
+  return instances.flatMap((instance) =>
+    instance.data.deployments.data.map((deployment) => ({ instance, deployment }))
+  ).sort((left, right) => new Date(right.deployment.started_at).getTime() - new Date(left.deployment.started_at).getTime());
+}
+
+export function browserScriptLabel(script: BrowserScriptRow["script"]) {
+  if (script.tag_manager && script.tag_manager_ids?.length) {
+    return `Tag manager: ${script.tag_manager_ids.join(", ")}`;
+  }
+  if (script.domain) {
+    return script.domain;
+  }
+  if (script.sha256) {
+    return `inline ${script.sha256.slice(0, 12)}...`;
+  }
+  return script.target || "browser script";
+}
+
 export function summarizeEstate(instances: InstanceModel[], issueRows: IssueRow[], signalRows: SignalRow[]): DashboardStats {
   const openRows = issueRows.filter((row) => row.finding.status === "open");
   return {
@@ -212,8 +262,10 @@ export function viewSubtitle(view: ViewKey, filters: FilterState, estate: Estate
     case "issues": return "Working queue";
     case "issue": return "Issue investigation";
     case "signals": return "Raw events for investigation";
+    case "browser": return "Browser-rendered scripts and allowlist";
+    case "deployments": return "Deployment windows and rollout context";
     case "reports": return "Human-readable summaries";
-    case "settings": return "Access, scope, and defaults";
+    case "settings": return "Access, scope, defaults, and inventory";
   }
 }
 

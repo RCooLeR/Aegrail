@@ -20,6 +20,7 @@ import (
 
 const WatchStateSchema = "aegrail.agent.watch_state.v1"
 const maxWatchedHashBytes = 64 << 20
+const maxKnownPHPGuardBytes = 64 << 10
 const watchLockStaleAfter = 5 * time.Minute
 const watchFullHashEvery = time.Hour
 
@@ -688,6 +689,12 @@ func fileEvent(eventType string, current fileState, previous fileState) EnqueueE
 	if relativePath != "" {
 		payload["relative_path"] = relativePath
 	}
+	if kind, ok := detectKnownBenignPHPGuard(eventType, current.Path, current.SizeBytes); ok {
+		severity = string(domain.SeverityInfo)
+		payload["file_kind"] = kind
+		payload["file_role"] = "directory_guard"
+		payload["file_role_confidence"] = "high"
+	}
 	if previous.Path != "" {
 		payload["previous_size_bytes"] = previous.SizeBytes
 		payload["previous_mod_time"] = previous.ModTime.Format(time.RFC3339Nano)
@@ -752,6 +759,97 @@ func classifyFileSeverity(eventType string, path string) string {
 		return string(domain.SeverityMedium)
 	}
 	return string(domain.SeverityInfo)
+}
+
+func detectKnownBenignPHPGuard(eventType string, path string, sizeBytes int64) (string, bool) {
+	if eventType == "file.deleted" || sizeBytes <= 0 || sizeBytes > maxKnownPHPGuardBytes {
+		return "", false
+	}
+	if !isPrestaShopAssetGuardPath(path) {
+		return "", false
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return "", false
+	}
+	if !looksLikePHPRedirectGuard(string(content)) {
+		return "", false
+	}
+	return "prestashop_asset_guard_index", true
+}
+
+func isPrestaShopAssetGuardPath(path string) bool {
+	path = strings.ToLower(filepath.ToSlash(path))
+	if !strings.HasSuffix(path, "/index.php") && path != "index.php" {
+		return false
+	}
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	for index := 0; index < len(parts); index++ {
+		if parts[index] == "modules" && index+3 < len(parts) &&
+			parts[index+2] == "views" && isPrestaShopAssetViewDir(parts[index+3]) {
+			return true
+		}
+		if parts[index] == "themes" && index+5 < len(parts) &&
+			parts[index+2] == "modules" && parts[index+4] == "views" &&
+			isPrestaShopAssetViewDir(parts[index+5]) {
+			return true
+		}
+	}
+	return false
+}
+
+func isPrestaShopAssetViewDir(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "css", "font", "fonts", "img", "image", "images", "js":
+		return true
+	default:
+		return false
+	}
+}
+
+func looksLikePHPRedirectGuard(content string) bool {
+	lower := strings.ToLower(strings.TrimSpace(content))
+	if !strings.Contains(lower, "<?php") {
+		return false
+	}
+	compact := strings.NewReplacer(" ", "", "\t", "", "\n", "", "\r", "").Replace(lower)
+	hasRedirect := strings.Contains(compact, `header("location:../")`) ||
+		strings.Contains(compact, `header('location:../')`) ||
+		strings.Contains(compact, `header("location:./")`) ||
+		strings.Contains(compact, `header('location:./')`)
+	hasExit := strings.Contains(compact, "exit;") ||
+		strings.Contains(compact, "exit();") ||
+		strings.Contains(compact, "die;") ||
+		strings.Contains(compact, "die();")
+	if !hasRedirect || !hasExit {
+		return false
+	}
+	for _, marker := range []string{
+		"$_cookie",
+		"$_files",
+		"$_get",
+		"$_post",
+		"$_request",
+		"assert(",
+		"base64_decode(",
+		"curl_exec(",
+		"eval(",
+		"exec(",
+		"file_put_contents(",
+		"fopen(",
+		"include(",
+		"move_uploaded_file(",
+		"passthru(",
+		"preg_replace(",
+		"require(",
+		"shell_exec(",
+		"system(",
+	} {
+		if strings.Contains(compact, marker) {
+			return false
+		}
+	}
+	return true
 }
 
 func fileEventMessage(eventType string, path string) string {

@@ -130,6 +130,22 @@ type HubFindingStatusUpdate struct {
 	Actor  string
 }
 
+type HubFileIgnoreRule struct {
+	ID              ID
+	OrganizationID  ID
+	ProjectID       ID
+	EnvironmentID   ID
+	AppID           ID
+	MatchKind       string
+	MatchValue      string
+	NormalizedValue string
+	Reason          string
+	CreatedBy       string
+	Status          string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
 type ModelAnalysisReport struct {
 	ID                             ID
 	OrganizationID                 ID
@@ -182,20 +198,22 @@ type BrowserScriptAllowlistStatusUpdate struct {
 }
 
 type HubUser struct {
-	ID                   ID
-	Email                string
-	DisplayName          string
-	AccessLevel          string
-	Status               string
-	PasswordHash         string
-	PasswordSetAt        *time.Time
-	TwoFactorRequired    bool
-	TwoFactorEnabled     bool
-	TOTPSecretCiphertext string
-	TOTPEnrolledAt       *time.Time
-	LastLoginAt          *time.Time
-	CreatedAt            time.Time
-	UpdatedAt            time.Time
+	ID                          ID
+	Email                       string
+	DisplayName                 string
+	AccessLevel                 string
+	Status                      string
+	PasswordHash                string
+	PasswordSetAt               *time.Time
+	TwoFactorRequired           bool
+	TwoFactorEnabled            bool
+	TOTPSecretCiphertext        string
+	TOTPEnrolledAt              *time.Time
+	PendingTOTPSecretCiphertext string
+	PendingTOTPStartedAt        *time.Time
+	LastLoginAt                 *time.Time
+	CreatedAt                   time.Time
+	UpdatedAt                   time.Time
 }
 
 type HubUserUpdate struct {
@@ -205,9 +223,14 @@ type HubUserUpdate struct {
 	TwoFactorRequired bool
 }
 
-type HubUserTOTPUpdate struct {
-	SecretCiphertext string
-	EnrolledAt       time.Time
+type HubUserTOTPStart struct {
+	PendingSecretCiphertext string
+	StartedAt               time.Time
+}
+
+type HubUserTOTPActivation struct {
+	ActiveSecretCiphertext string
+	EnrolledAt             time.Time
 }
 
 type HubUserSession struct {

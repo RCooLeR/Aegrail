@@ -4,6 +4,8 @@ import {
   Boxes,
   Building2,
   FileText,
+  GitBranch,
+  Globe,
   LayoutDashboard,
   MonitorCog,
   Settings,
@@ -21,6 +23,8 @@ export const navItems: Array<{ key: ViewKey; label: string; icon: LucideIcon }> 
   { key: "nodes", label: "Nodes", icon: MonitorCog },
   { key: "issues", label: "Issues", icon: AlertTriangle },
   { key: "signals", label: "Signals", icon: Activity },
+  { key: "browser", label: "Browser scripts", icon: Globe },
+  { key: "deployments", label: "Deployments", icon: GitBranch },
   { key: "reports", label: "Reports", icon: FileText },
   { key: "settings", label: "Settings", icon: Settings }
 ];

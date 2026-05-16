@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -66,13 +67,19 @@ func NewHubRouter(meta domain.AppMeta, hub *hubapp.Hub, options HubOptions) http
 	router.Get("/api/v1/rules", withHubAuth(hub, options, "viewer", listRulesHandler(hub)))
 	router.Get("/api/v1/findings", withHubAuth(hub, options, "viewer", listFindingsHandler(hub)))
 	router.Post("/api/v1/findings/baseline", withHubAuth(hub, options, "operator", acceptFindingsBaselineHandler(hub)))
+	router.Get("/api/v1/findings/{id}", withHubAuth(hub, options, "viewer", getFindingHandler(hub)))
 	router.Patch("/api/v1/findings/{id}/status", withHubAuth(hub, options, "operator", updateFindingStatusHandler(hub)))
+	router.Post("/api/v1/findings/{id}/file-ignore", withHubAuth(hub, options, "operator", ignoreFilePathFromFindingHandler(hub)))
 	router.Post("/api/v1/findings/{id}/browser-script-allowlist", withHubAuth(hub, options, "operator", allowBrowserScriptFromFindingHandler(hub)))
+	router.Post("/api/v1/findings/{id}/model-analysis", withHubAuth(hub, options, "operator", generateModelAnalysisFromFindingHandler(hub)))
+	router.Get("/api/v1/findings/{id}/model-analysis", withHubAuth(hub, options, "viewer", listModelAnalysisReportsForFindingHandler(hub)))
+	router.Get("/api/v1/model-analysis", withHubAuth(hub, options, "viewer", listModelAnalysisReportsHandler(hub)))
 	router.Get("/api/v1/reports/model-analysis", withHubAuth(hub, options, "viewer", listModelAnalysisReportsHandler(hub)))
 	router.Get("/api/v1/reports/model-analysis/{id}", withHubAuth(hub, options, "viewer", getModelAnalysisReportHandler(hub)))
 	router.Get("/api/v1/timeline", withHubAuth(hub, options, "viewer", listTimelineHandler(hub)))
 	router.Get("/api/v1/coverage", withHubAuth(hub, options, "viewer", listCoverageHandler(hub)))
 	router.Get("/api/v1/deployments", withHubAuth(hub, options, "viewer", listDeploymentsHandler(hub)))
+	router.Post("/api/v1/deployments", withHubAuth(hub, options, "operator", createDeploymentHandler(hub)))
 	router.Get("/api/v1/browser/scripts", withHubAuth(hub, options, "viewer", listBrowserScriptsHandler(hub)))
 	router.Get("/api/v1/browser/script-allowlist", withHubAuth(hub, options, "viewer", listBrowserScriptAllowlistHandler(hub)))
 	router.Post("/api/v1/browser/script-allowlist", withHubAuth(hub, options, "operator", allowBrowserScriptHandler(hub)))
@@ -80,7 +87,9 @@ func NewHubRouter(meta domain.AppMeta, hub *hubapp.Hub, options HubOptions) http
 	router.Get("/api/v1/access/users", withHubAuth(hub, options, "admin", listHubUsersHandler(hub)))
 	router.Post("/api/v1/access/users", createHubUserHandler(hub, options))
 	router.Patch("/api/v1/access/users/{id}", withHubAuth(hub, options, "admin", updateHubUserHandler(hub)))
-	router.Post("/api/v1/access/users/{id}/totp", withHubAuth(hub, options, "admin", generateHubUserTOTPHandler(hub)))
+	router.Post("/api/v1/access/users/{id}/totp/start", withHubAuth(hub, options, "admin", startHubUserTOTPHandler(hub)))
+	router.Post("/api/v1/access/users/{id}/totp/verify", withHubAuth(hub, options, "admin", verifyHubUserTOTPHandler(hub)))
+	router.Delete("/api/v1/access/users/{id}/totp", withHubAuth(hub, options, "admin", disableHubUserTOTPHandler(hub)))
 	router.Get("/api/v1/inventory/scopes", withHubAuth(hub, options, "viewer", listInventoryScopesHandler(hub)))
 	router.Get("/api/v1/inventory/apps", withHubAuth(hub, options, "viewer", listInventoryAppsHandler(hub)))
 	router.Get("/api/v1/inventory/services", withHubAuth(hub, options, "viewer", listInventoryServicesHandler(hub)))
@@ -280,17 +289,19 @@ type browserScriptAllowlistEntryResponse struct {
 }
 
 type hubUserResponse struct {
-	ID                string     `json:"id"`
-	Email             string     `json:"email"`
-	DisplayName       string     `json:"display_name"`
-	AccessLevel       string     `json:"access_level"`
-	Status            string     `json:"status"`
-	TwoFactorRequired bool       `json:"two_factor_required"`
-	TwoFactorEnabled  bool       `json:"two_factor_enabled"`
-	TOTPEnrolledAt    *time.Time `json:"totp_enrolled_at,omitempty"`
-	LastLoginAt       *time.Time `json:"last_login_at,omitempty"`
-	CreatedAt         time.Time  `json:"created_at"`
-	UpdatedAt         time.Time  `json:"updated_at"`
+	ID                   string     `json:"id"`
+	Email                string     `json:"email"`
+	DisplayName          string     `json:"display_name"`
+	AccessLevel          string     `json:"access_level"`
+	Status               string     `json:"status"`
+	TwoFactorRequired    bool       `json:"two_factor_required"`
+	TwoFactorEnabled     bool       `json:"two_factor_enabled"`
+	TwoFactorPending     bool       `json:"two_factor_pending"`
+	TOTPEnrolledAt       *time.Time `json:"totp_enrolled_at,omitempty"`
+	PendingTOTPStartedAt *time.Time `json:"pending_totp_started_at,omitempty"`
+	LastLoginAt          *time.Time `json:"last_login_at,omitempty"`
+	CreatedAt            time.Time  `json:"created_at"`
+	UpdatedAt            time.Time  `json:"updated_at"`
 }
 
 type hubUserTOTPEnrollmentResponse struct {
@@ -396,6 +407,32 @@ type allowBrowserScriptFromFindingRequest struct {
 	ApprovedBy string `json:"approved_by"`
 }
 
+type ignoreFilePathFromFindingRequest struct {
+	Path   string `json:"path"`
+	Reason string `json:"reason"`
+	Actor  string `json:"actor"`
+}
+
+type generateModelAnalysisRequest struct {
+	Model                string `json:"model"`
+	MaxEvents            int    `json:"max_events"`
+	MaxMetadataDepth     int    `json:"max_metadata_depth"`
+	MaxStringLength      int    `json:"max_string_length"`
+	MaxCollectionEntries int    `json:"max_collection_entries"`
+}
+
+type fileIgnoreRuleResponse struct {
+	ID              string    `json:"id"`
+	MatchKind       string    `json:"match_kind"`
+	MatchValue      string    `json:"match_value"`
+	NormalizedValue string    `json:"normalized_value"`
+	Reason          string    `json:"reason"`
+	CreatedBy       string    `json:"created_by"`
+	Status          string    `json:"status"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
 type updateBrowserScriptAllowlistStatusRequest struct {
 	Status     string `json:"status"`
 	Reason     string `json:"reason"`
@@ -420,6 +457,18 @@ type updateHubUserRequest struct {
 
 type generateHubUserTOTPRequest struct {
 	Issuer string `json:"issuer"`
+}
+
+type verifyHubUserTOTPRequest struct {
+	Code string `json:"code"`
+}
+
+type createDeploymentMarkerRequest struct {
+	Version    string     `json:"version"`
+	CommitSHA  string     `json:"commit_sha"`
+	Actor      string     `json:"actor"`
+	StartedAt  *time.Time `json:"started_at,omitempty"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
 }
 
 type loginHubUserRequest struct {
@@ -530,6 +579,87 @@ func listFindingsHandler(hub *hubapp.Hub) http.HandlerFunc {
 	}
 }
 
+func getFindingHandler(hub *hubapp.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		finding, err := hub.GetHubFinding(r.Context(), hubapp.GetHubFindingInput{
+			OrganizationSlug: r.URL.Query().Get("org"),
+			ProjectSlug:      r.URL.Query().Get("project"),
+			EnvironmentSlug:  r.URL.Query().Get("environment"),
+			AppSlug:          r.URL.Query().Get("app"),
+			FindingID:        chi.URLParam(r, "id"),
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"finding": hubFindingRecord(finding),
+		})
+	}
+}
+
+func listModelAnalysisReportsForFindingHandler(hub *hubapp.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		finding, err := hub.GetHubFinding(r.Context(), hubapp.GetHubFindingInput{
+			OrganizationSlug: r.URL.Query().Get("org"),
+			ProjectSlug:      r.URL.Query().Get("project"),
+			EnvironmentSlug:  r.URL.Query().Get("environment"),
+			AppSlug:          r.URL.Query().Get("app"),
+			FindingID:        chi.URLParam(r, "id"),
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		limit, err := parseQueryLimit(r, 50)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		reports, err := hub.ListModelAnalysisReports(r.Context(), hubapp.ListModelAnalysisReportsInput{
+			OrganizationSlug: r.URL.Query().Get("org"),
+			ProjectSlug:      r.URL.Query().Get("project"),
+			EnvironmentSlug:  r.URL.Query().Get("environment"),
+			AppSlug:          r.URL.Query().Get("app"),
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		findingID := chi.URLParam(r, "id")
+		reportsForFinding := make([]modelAnalysisReportResponse, 0, len(reports))
+		for _, report := range reports {
+			for _, sourceFindingID := range report.SourceFindingIDs {
+				if string(sourceFindingID) == findingID {
+					reportsForFinding = append(reportsForFinding, modelAnalysisReportRecord(report))
+					break
+				}
+			}
+		}
+		sort.Slice(reportsForFinding, func(left int, right int) bool {
+			return reportsForFinding[left].GeneratedAt.After(reportsForFinding[right].GeneratedAt)
+		})
+		if len(reportsForFinding) > limit {
+			reportsForFinding = reportsForFinding[:limit]
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"finding": hubFindingRecord(finding),
+			"count":   len(reportsForFinding),
+			"reports": reportsForFinding,
+		})
+	}
+}
+
 func updateFindingStatusHandler(hub *hubapp.Hub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if hub == nil {
@@ -595,6 +725,41 @@ func acceptFindingsBaselineHandler(hub *hubapp.Hub) http.HandlerFunc {
 	}
 }
 
+func ignoreFilePathFromFindingHandler(hub *hubapp.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		var request ignoreFilePathFromFindingRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		result, err := hub.IgnoreFilePathFromFinding(r.Context(), hubapp.IgnoreFilePathFromFindingInput{
+			OrganizationSlug: r.URL.Query().Get("org"),
+			ProjectSlug:      r.URL.Query().Get("project"),
+			EnvironmentSlug:  r.URL.Query().Get("environment"),
+			AppSlug:          r.URL.Query().Get("app"),
+			FindingID:        chi.URLParam(r, "id"),
+			Path:             request.Path,
+			Reason:           request.Reason,
+			Actor:            request.Actor,
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"finding":                hubFindingRecord(result.Finding),
+			"ignore_rule":            fileIgnoreRuleRecord(result.Rule),
+			"agent_exclude_hint":     result.AgentExcludeHint,
+			"normalized_pattern":     result.NormalizedPattern,
+			"requires_agent_restart": false,
+		})
+	}
+}
+
 func allowBrowserScriptFromFindingHandler(hub *hubapp.Hub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if hub == nil {
@@ -624,6 +789,39 @@ func allowBrowserScriptFromFindingHandler(hub *hubapp.Hub) http.HandlerFunc {
 		writeJSON(w, http.StatusCreated, map[string]any{
 			"finding": hubFindingRecord(result.Finding),
 			"entry":   browserScriptAllowlistEntryRecord(result.Entry),
+		})
+	}
+}
+
+func generateModelAnalysisFromFindingHandler(hub *hubapp.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		var request generateModelAnalysisRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil && !errors.Is(err, io.EOF) {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		report, err := hub.GenerateModelAnalysisReport(r.Context(), hubapp.GenerateModelAnalysisReportInput{
+			OrganizationSlug:     r.URL.Query().Get("org"),
+			ProjectSlug:          r.URL.Query().Get("project"),
+			EnvironmentSlug:      r.URL.Query().Get("environment"),
+			AppSlug:              r.URL.Query().Get("app"),
+			FindingID:            chi.URLParam(r, "id"),
+			Model:                request.Model,
+			MaxEventsPerFinding:  request.MaxEvents,
+			MaxMetadataDepth:     request.MaxMetadataDepth,
+			MaxStringLength:      request.MaxStringLength,
+			MaxCollectionEntries: request.MaxCollectionEntries,
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"report": modelAnalysisReportRecord(report),
 		})
 	}
 }
@@ -780,6 +978,47 @@ func listDeploymentsHandler(hub *hubapp.Hub) http.HandlerFunc {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"count":       len(records),
 			"deployments": records,
+		})
+	}
+}
+
+func createDeploymentHandler(hub *hubapp.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		var request createDeploymentMarkerRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		startedAt := time.Time{}
+		if request.StartedAt != nil {
+			startedAt = request.StartedAt.UTC()
+		}
+		var finishedAt *time.Time
+		if request.FinishedAt != nil {
+			finished := request.FinishedAt.UTC()
+			finishedAt = &finished
+		}
+		deployment, err := hub.SaveDeploymentMarker(r.Context(), hubapp.SaveDeploymentMarkerInput{
+			OrganizationSlug: r.URL.Query().Get("org"),
+			ProjectSlug:      r.URL.Query().Get("project"),
+			EnvironmentSlug:  r.URL.Query().Get("environment"),
+			AppSlug:          r.URL.Query().Get("app"),
+			Version:          request.Version,
+			CommitSHA:        request.CommitSHA,
+			Actor:            request.Actor,
+			StartedAt:        startedAt,
+			FinishedAt:       finishedAt,
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"deployment": deploymentRecord(deployment),
 		})
 	}
 }
@@ -1122,7 +1361,7 @@ func updateHubUserHandler(hub *hubapp.Hub) http.HandlerFunc {
 	}
 }
 
-func generateHubUserTOTPHandler(hub *hubapp.Hub) http.HandlerFunc {
+func startHubUserTOTPHandler(hub *hubapp.Hub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if hub == nil {
 			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
@@ -1135,7 +1374,7 @@ func generateHubUserTOTPHandler(hub *hubapp.Hub) http.HandlerFunc {
 				return
 			}
 		}
-		result, err := hub.GenerateHubUserTOTP(r.Context(), hubapp.GenerateHubUserTOTPInput{
+		result, err := hub.StartHubUserTOTP(r.Context(), hubapp.StartHubUserTOTPInput{
 			UserID: chi.URLParam(r, "id"),
 			Issuer: request.Issuer,
 		})
@@ -1150,6 +1389,54 @@ func generateHubUserTOTPHandler(hub *hubapp.Hub) http.HandlerFunc {
 				QRCodeDataURL: result.QRCodeDataURL,
 				Secret:        result.Secret,
 			},
+		})
+	}
+}
+
+func verifyHubUserTOTPHandler(hub *hubapp.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		var request verifyHubUserTOTPRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		result, err := hub.VerifyHubUserTOTP(r.Context(), hubapp.VerifyHubUserTOTPInput{
+			UserID: chi.URLParam(r, "id"),
+			Code:   request.Code,
+		})
+		if err != nil {
+			status := http.StatusBadRequest
+			if errors.Is(err, hubapp.ErrHubTOTPInvalidCode) || errors.Is(err, hubapp.ErrHubTOTPNoPending) {
+				status = http.StatusUnauthorized
+			}
+			writeError(w, status, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"user": hubUserRecord(result.User),
+		})
+	}
+}
+
+func disableHubUserTOTPHandler(hub *hubapp.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		result, err := hub.DisableHubUserTOTP(r.Context(), hubapp.DisableHubUserTOTPInput{
+			UserID: chi.URLParam(r, "id"),
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"user": hubUserRecord(result.User),
 		})
 	}
 }
@@ -1472,6 +1759,20 @@ func hubFindingRecord(finding domain.HubFinding) hubFindingResponse {
 	}
 }
 
+func fileIgnoreRuleRecord(rule domain.HubFileIgnoreRule) fileIgnoreRuleResponse {
+	return fileIgnoreRuleResponse{
+		ID:              string(rule.ID),
+		MatchKind:       rule.MatchKind,
+		MatchValue:      rule.MatchValue,
+		NormalizedValue: rule.NormalizedValue,
+		Reason:          rule.Reason,
+		CreatedBy:       rule.CreatedBy,
+		Status:          rule.Status,
+		CreatedAt:       rule.CreatedAt,
+		UpdatedAt:       rule.UpdatedAt,
+	}
+}
+
 func findingStatus(finding domain.HubFinding) string {
 	if strings.TrimSpace(finding.Status) == "" {
 		return "open"
@@ -1674,17 +1975,19 @@ func browserScriptAllowlistEntryRecord(entry domain.BrowserScriptAllowlistEntry)
 
 func hubUserRecord(user domain.HubUser) hubUserResponse {
 	return hubUserResponse{
-		ID:                string(user.ID),
-		Email:             user.Email,
-		DisplayName:       user.DisplayName,
-		AccessLevel:       user.AccessLevel,
-		Status:            user.Status,
-		TwoFactorRequired: user.TwoFactorRequired,
-		TwoFactorEnabled:  user.TwoFactorEnabled,
-		TOTPEnrolledAt:    user.TOTPEnrolledAt,
-		LastLoginAt:       user.LastLoginAt,
-		CreatedAt:         user.CreatedAt,
-		UpdatedAt:         user.UpdatedAt,
+		ID:                   string(user.ID),
+		Email:                user.Email,
+		DisplayName:          user.DisplayName,
+		AccessLevel:          user.AccessLevel,
+		Status:               user.Status,
+		TwoFactorRequired:    user.TwoFactorRequired,
+		TwoFactorEnabled:     user.TwoFactorEnabled,
+		TwoFactorPending:     strings.TrimSpace(user.PendingTOTPSecretCiphertext) != "",
+		TOTPEnrolledAt:       user.TOTPEnrolledAt,
+		PendingTOTPStartedAt: user.PendingTOTPStartedAt,
+		LastLoginAt:          user.LastLoginAt,
+		CreatedAt:            user.CreatedAt,
+		UpdatedAt:            user.UpdatedAt,
 	}
 }
 

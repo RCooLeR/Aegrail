@@ -1,6 +1,7 @@
 import { CheckCircle2, Eye, MonitorCog, Server, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { InstanceModel } from "../../estate";
+import type { CoverageRecord } from "../../types";
 import { nodeLabel } from "../model/viewModels";
 import type { IssueRow } from "../types";
 import { formatRelative } from "../utils/time";
@@ -72,6 +73,8 @@ export function NodesPage({
           </div>
           <h3>Services</h3>
           <ServiceGrid instance={selected} issueRows={issueRows.filter((row) => row.instance.key === selected.key)} />
+          <h3>Agent config</h3>
+          <AgentConfigSummary coverage={selected.latestCoverage} />
           <h3>Open issues</h3>
           <NodeIssueList
             actionLoading={actionLoading}
@@ -83,6 +86,129 @@ export function NodesPage({
       )}
     </div>
   );
+}
+
+type SafeFileIgnore = {
+  path: string;
+  risk: string;
+  scope: string;
+};
+
+function AgentConfigSummary({ coverage }: { coverage?: CoverageRecord }) {
+  const config = coverageConfig(coverage);
+  if (!coverage || !config) {
+    return <EmptyState title="No agent config coverage yet" />;
+  }
+
+  const files = section(config, "files");
+  const logs = section(config, "logs");
+  const databases = section(config, "databases");
+  const browser = section(config, "browser");
+  const ignoredPaths = fileIgnores(files);
+  const profiles = stringList(files.profiles);
+  const databaseNames = stringList(databases.names);
+  const databaseProfiles = stringList(databases.profiles);
+  const logKinds = stringList(logs.kinds);
+  const highRiskIgnores = ignoredPaths.filter((item) => item.risk === "high").length;
+
+  return (
+    <div className="agent-config-grid">
+      <div className="agent-config-card">
+        <strong>Files</strong>
+        <span>{enabledLabel(files.enabled)} / {profiles.join(", ") || "no profile"}</span>
+        <small>{numberValue(files.extra_paths)} extra path(s), {numberValue(files.exclude_patterns)} ignore rule(s)</small>
+        {highRiskIgnores > 0 && <em>{highRiskIgnores} high-risk ignore{highRiskIgnores === 1 ? "" : "s"}</em>}
+      </div>
+      <div className="agent-config-card">
+        <strong>Database</strong>
+        <span>{enabledLabel(databases.enabled)} / {databaseNames.join(", ") || "no database"}</span>
+        <small>{databaseProfiles.join(", ") || "no profile"}; DSN env {databases.all_dsn_env_configured === false ? "missing" : "configured"}</small>
+      </div>
+      <div className="agent-config-card">
+        <strong>Logs</strong>
+        <span>{enabledLabel(logs.enabled)} / {numberValue(logs.count)} file(s)</span>
+        <small>{logKinds.join(", ") || "no log kinds"}</small>
+      </div>
+      <div className="agent-config-card">
+        <strong>Browser</strong>
+        <span>{enabledLabel(browser.enabled)} / {numberValue(browser.urls)} URL(s)</span>
+        <small>{browser.rendered ? "rendered" : "basic"} crawl, max {numberValue(browser.max_pages)} page(s)</small>
+      </div>
+      <div className="agent-config-card wide">
+        <strong>Ignored by agent</strong>
+        {ignoredPaths.length > 0 ? (
+          <ul className="agent-ignore-list">
+            {ignoredPaths.map((item) => (
+              <li className={item.risk} key={`${item.scope}:${item.path}`}>
+                <span>{item.path}</span>
+                <small>{ignoreScopeLabel(item.scope)} / {item.risk || "medium"} risk</small>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <small>No file ignore paths reported by this agent.</small>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function coverageConfig(record?: CoverageRecord) {
+  const value = record?.payload.coverage;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  return value as Record<string, unknown>;
+}
+
+function section(config: Record<string, unknown>, key: string) {
+  const value = config[key];
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {} as Record<string, unknown>;
+  }
+  return value as Record<string, unknown>;
+}
+
+function fileIgnores(files: Record<string, unknown>): SafeFileIgnore[] {
+  const value = files.ignored_paths;
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const record = item as Record<string, unknown>;
+    const path = typeof record.path === "string" ? record.path.trim() : "";
+    if (!path) return [];
+    return [{
+      path,
+      risk: typeof record.risk === "string" && record.risk.trim() ? record.risk.trim() : "medium",
+      scope: typeof record.scope === "string" && record.scope.trim() ? record.scope.trim() : "unknown"
+    }];
+  });
+}
+
+function stringList(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+}
+
+function numberValue(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function enabledLabel(value: unknown) {
+  return value === false ? "disabled" : value === true ? "enabled" : "unknown";
+}
+
+function ignoreScopeLabel(scope: string) {
+  switch (scope) {
+    case "site_relative":
+      return "site path";
+    case "site_root":
+      return "whole site";
+    case "outside_site_root":
+      return "outside site root";
+    default:
+      return scope || "unknown";
+  }
 }
 
 function NodeIssueList({

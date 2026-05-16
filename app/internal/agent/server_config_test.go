@@ -409,6 +409,58 @@ func TestServerConfigAllowsManagedSiteWithoutFilesOrCoverage(t *testing.T) {
 	}
 }
 
+func TestServerConfigCoverageReportsSafeFileIgnorePaths(t *testing.T) {
+	root := t.TempDir()
+	config := NormalizeServerConfig(ServerConfig{
+		Schema: ServerConfigSchema,
+		Hub:    ServerHubConfig{URL: "http://127.0.0.1:8787"},
+		Identity: ServerIdentityConfig{
+			Org:         "acme",
+			Project:     "customer-site",
+			Environment: "production",
+			Host:        "web-01",
+			AgentID:     "agt_web_01",
+		},
+		Runtime: ServerRuntimeConfig{
+			QueueDir: filepath.Join(root, "queue"),
+			StateDir: filepath.Join(root, "state"),
+		},
+		Sites: []ServerSiteConfig{
+			{
+				Slug: "example-com",
+				Kind: "prestashop",
+				Root: filepath.Join(root, "site"),
+				Files: ServerFileWatchConfig{
+					Profiles: []string{"prestashop"},
+					Exclude: []string{
+						filepath.Join(root, "site", "modules", "custom", "logs"),
+						filepath.Join(root, "site"),
+						filepath.Join(root, "outside", "private-cache"),
+					},
+				},
+			},
+		},
+	})
+
+	reports := BuildServerConfigCoverageReports(config, mustTime("2026-05-12T15:00:00Z"))
+	if len(reports) != 1 {
+		t.Fatalf("reports = %#v, want one report", reports)
+	}
+	ignores := reports[0].Coverage.Files.IgnoredPaths
+	if len(ignores) != 3 {
+		t.Fatalf("ignored paths = %#v, want three entries", ignores)
+	}
+	if ignores[0].Path != "modules/custom/logs" || ignores[0].Scope != "site_relative" || ignores[0].Risk != "low" {
+		t.Fatalf("first ignore = %#v, want safe relative low-risk logs path", ignores[0])
+	}
+	if ignores[1].Path != "<site root>" || ignores[1].Scope != "site_root" || ignores[1].Risk != "high" {
+		t.Fatalf("second ignore = %#v, want high-risk site root marker", ignores[1])
+	}
+	if ignores[2].Path != "[outside site root]/private-cache" || ignores[2].Scope != "outside_site_root" || ignores[2].Risk != "high" {
+		t.Fatalf("third ignore = %#v, want redacted outside-root entry", ignores[2])
+	}
+}
+
 func TestQueueServerConfigCoverageDedupesUnchangedConfig(t *testing.T) {
 	root := t.TempDir()
 	config := NormalizeServerConfig(ServerConfig{

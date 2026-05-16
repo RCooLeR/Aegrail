@@ -1,10 +1,11 @@
 import type { InstanceModel } from "../estate";
-import type { HubFinding, ModelAnalysisReport, TimelineEvent } from "../types";
+import type { BrowserAllowlistEntry, BrowserScript, Deployment, HubFinding, ModelAnalysisReport, TimelineEvent } from "../types";
 
-export type ViewKey = "overview" | "companies" | "sites" | "nodes" | "issues" | "issue" | "signals" | "reports" | "settings";
+export type ViewKey = "overview" | "companies" | "sites" | "nodes" | "issues" | "issue" | "signals" | "browser" | "deployments" | "reports" | "settings";
 
 export type ActionState = {
   actor: string;
+  model: string;
   reason: string;
   note: string;
 };
@@ -49,6 +50,22 @@ export type SignalRow = {
 export type ReportRow = {
   instance: InstanceModel;
   report: ModelAnalysisReport;
+};
+
+export type BrowserScriptRow = {
+  instance: InstanceModel;
+  script: BrowserScript;
+  allowlisted: boolean;
+};
+
+export type AllowlistRow = {
+  instance: InstanceModel;
+  entry: BrowserAllowlistEntry;
+};
+
+export type DeploymentRow = {
+  instance: InstanceModel;
+  deployment: Deployment;
 };
 
 export type DashboardStats = {

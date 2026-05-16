@@ -44,6 +44,32 @@ func TestHubRouterUpdatesFindingStatus(t *testing.T) {
 	}
 }
 
+func TestHubRouterGetsFindingByID(t *testing.T) {
+	inventory := newHTTPTestInventoryRepository()
+	findings := newHTTPTestFindingRepository()
+	router := NewHubRouter(domain.AppMeta{Name: "Aegrail", Binary: "aegrail", Version: "test"}, hubapp.New(hubapp.Dependencies{Inventory: inventory, Findings: findings}), HubOptions{})
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/findings/finding-1?org=acme&project=customer-site&environment=production&app=main-web", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Finding struct {
+			ID     string `json:"id"`
+			RuleID string `json:"rule_id"`
+		} `json:"finding"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("Decode returned error: %v", err)
+	}
+	if body.Finding.ID != "finding-1" || body.Finding.RuleID != "wordpress-admin-user-added" {
+		t.Fatalf("body = %#v, want finding-1", body)
+	}
+}
+
 func TestHubRouterAcceptsFindingBaseline(t *testing.T) {
 	inventory := newHTTPTestInventoryRepository()
 	findings := newHTTPTestFindingRepository()

@@ -1,0 +1,54 @@
+# Security And Data Handling
+
+Aegrail must be useful without leaking private project details.
+
+## Privacy And Redaction
+
+Data handling rules:
+
+- Do not commit real customer paths, domains, database DSNs, passwords, tokens, cookies, local queue/state files, or environment dumps.
+- Agent coverage payloads do not include local filesystem roots.
+- Database DSNs must come from environment variables such as `dsn_env`; literal DSNs with passwords are rejected.
+- File evidence does not include file contents.
+- Browser/log URLs are redacted for token, session, password, secret, and API-key-like query values.
+- Free-text log/error evidence is pattern-redacted for credentials, cookies, and authorization-like assignments.
+- Database user/employee evidence may include full normalized emails/logins because the operator needs to know which account changed.
+- Set `AEGRAIL_PII_KEY` on agents that collect database users or employees to add stable one-way HMAC fingerprints for account identifiers.
+- Evidence sent to LLMs must be compact, redacted, and hashable.
+- Dashboard-triggered LLM analysis is generated from persisted Hub findings, not raw site files. The Hub builds an evidence bundle, applies redaction and truncation, hashes the bundle and prompt, calls the configured model gateway, then saves the report and provenance in PostgreSQL.
+- Automatic issue-queue analysis uses the same path. It skips a finding when the Hub already has a model report for the current evidence bundle hash, so repeated scans do not resend unchanged evidence.
+- TOTP enrollment uses a pending flow. The Hub returns a QR/secret once, requires a valid current code, then promotes the encrypted pending secret to the active 2FA secret.
+
+## Transport And Storage
+
+- Agent batches are signed with `AEGRAIL_HUB_INGEST_SECRET` using HMAC-SHA256 over `timestamp + newline + request body`.
+- The Hub rejects missing/invalid signatures and timestamps outside the configured skew window.
+- Signing gives authenticity and tamper detection. It does not encrypt the payload.
+- Transfer confidentiality comes from the URL you configure. Use `https://` or a trusted private tunnel/VPN outside localhost. `http://127.0.0.1` is acceptable for local development; plain `http://` over a network is not encrypted.
+- Aegrail does not currently do separate application-level end-to-end payload encryption before sending JSON to Hub.
+- Hub user TOTP secrets are encrypted at rest with AES-GCM using a key derived from `AEGRAIL_HUB_USER_SECRET`. If that secret is lost, existing TOTP secrets cannot be verified and users must be re-enrolled.
+- Local agent queue/state files are JSON on disk, created with restrictive file permissions where the OS supports them. Treat `queue_dir` and `state_dir` as sensitive runtime data.
+- Hub stores accepted events, payloads, findings, reports, users, and audit-relevant metadata in PostgreSQL. Protect the database with normal database access controls, disk encryption/backup policy, and network restrictions.
+
+## Secret Roles
+
+- `AEGRAIL_HUB_INGEST_SECRET`: shared signing secret for agent-to-Hub ingest.
+- `AEGRAIL_PII_KEY`: optional agent-side key for one-way HMAC fingerprints of account identifiers.
+- `AEGRAIL_HUB_USER_SECRET`: Hub-side encryption secret for user security material such as pending and active TOTP secrets.
+
+## Operating Checklist
+
+Before using Aegrail on real projects:
+
+- Use a strong `AEGRAIL_HUB_INGEST_SECRET`.
+- Use a separate strong `AEGRAIL_PII_KEY`.
+- Use `https://` Hub URLs or a private tunnel/VPN for any agent outside the same local machine.
+- Keep Hub behind local network/VPN/reverse proxy authentication.
+- Use read-only database users where possible.
+- Keep `data/`, `.aegrail/`, queue directories, state directories, and generated reports out of Git.
+- Restrict filesystem permissions on agent `queue_dir` and `state_dir`.
+- Treat Hub PostgreSQL storage as sensitive because event payloads can include account identifiers and operational evidence.
+- Review findings before creating reports for customers.
+- Do not paste local project paths or real customer environment values into docs.
+- Review file ignore rules before adding broad paths. Ignoring a directory suppresses future Hub findings for matching file events; it does not delete existing evidence.
+- Agent config coverage exposes only a safe subset of agent config. It must not include local roots, DSNs, passwords, tokens, or raw environment values. File ignore paths are reported relative to the site root when possible.

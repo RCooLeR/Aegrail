@@ -2,7 +2,9 @@ package postgres
 
 import (
 	"context"
+	"errors"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rcooler/aegrail/internal/domain"
 )
@@ -137,6 +139,32 @@ func (r *ModelAnalysisReportRepository) GetModelAnalysisReport(ctx context.Conte
 			AND ($3::text = '' OR app_id = nullif($3::text, '')::uuid)
 	`
 	return r.scanModelAnalysisReport(r.pool.QueryRow(ctx, query, reportID, environmentID, string(appID)))
+}
+
+func (r *ModelAnalysisReportRepository) FindModelAnalysisReportByEvidence(ctx context.Context, environmentID domain.ID, appID domain.ID, findingID domain.ID, evidenceBundleSHA256 string) (domain.ModelAnalysisReport, bool, error) {
+	const query = `
+		SELECT id::text, organization_id::text, project_id::text, environment_id::text,
+			coalesce(app_id::text, ''), report_schema, status, model_provider, model_name,
+			prompt_template_id, prompt_template_version, prompt_template_sha256, prompt_sha256,
+			evidence_bundle_schema, evidence_bundle_sha256, evidence_bundle_redaction_version,
+			evidence_bundle_generated_at, source_finding_ids, analysis, error, total_duration_millis,
+			prompt_eval_count, eval_count, generated_at, metadata, created_at
+		FROM hub_model_analysis_reports
+		WHERE environment_id = $1
+			AND ($2::text = '' OR app_id = nullif($2::text, '')::uuid)
+			AND source_finding_ids @> ARRAY[$3]::text[]
+			AND evidence_bundle_sha256 = $4
+		ORDER BY generated_at DESC, created_at DESC
+		LIMIT 1
+	`
+	report, err := r.scanModelAnalysisReport(r.pool.QueryRow(ctx, query, environmentID, string(appID), string(findingID), evidenceBundleSHA256))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.ModelAnalysisReport{}, false, nil
+		}
+		return domain.ModelAnalysisReport{}, false, err
+	}
+	return report, true, nil
 }
 
 type modelAnalysisReportRow interface {

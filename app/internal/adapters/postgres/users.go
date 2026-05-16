@@ -132,18 +132,47 @@ func (r *HubUserRepository) UpdateHubUser(ctx context.Context, userID domain.ID,
 	))
 }
 
-func (r *HubUserRepository) UpdateHubUserTOTP(ctx context.Context, userID domain.ID, update domain.HubUserTOTPUpdate) (domain.HubUser, error) {
+func (r *HubUserRepository) StartHubUserTOTP(ctx context.Context, userID domain.ID, start domain.HubUserTOTPStart) (domain.HubUser, error) {
+	const query = `
+		UPDATE hub_users
+		SET pending_totp_secret_ciphertext = $2,
+			pending_totp_started_at = $3,
+			updated_at = now()
+		WHERE id = $1
+		RETURNING ` + hubUserColumns + `
+	`
+	return scanHubUser(r.pool.QueryRow(ctx, query, userID, start.PendingSecretCiphertext, start.StartedAt))
+}
+
+func (r *HubUserRepository) ActivateHubUserTOTP(ctx context.Context, userID domain.ID, activation domain.HubUserTOTPActivation) (domain.HubUser, error) {
 	const query = `
 		UPDATE hub_users
 		SET totp_secret_ciphertext = $2,
 			two_factor_enabled = true,
 			two_factor_required = true,
 			totp_enrolled_at = $3,
+			pending_totp_secret_ciphertext = '',
+			pending_totp_started_at = NULL,
 			updated_at = now()
 		WHERE id = $1
 		RETURNING ` + hubUserColumns + `
 	`
-	return scanHubUser(r.pool.QueryRow(ctx, query, userID, update.SecretCiphertext, update.EnrolledAt))
+	return scanHubUser(r.pool.QueryRow(ctx, query, userID, activation.ActiveSecretCiphertext, activation.EnrolledAt))
+}
+
+func (r *HubUserRepository) DisableHubUserTOTP(ctx context.Context, userID domain.ID) (domain.HubUser, error) {
+	const query = `
+		UPDATE hub_users
+		SET totp_secret_ciphertext = '',
+			two_factor_enabled = false,
+			totp_enrolled_at = NULL,
+			pending_totp_secret_ciphertext = '',
+			pending_totp_started_at = NULL,
+			updated_at = now()
+		WHERE id = $1
+		RETURNING ` + hubUserColumns + `
+	`
+	return scanHubUser(r.pool.QueryRow(ctx, query, userID))
 }
 
 func (r *HubUserRepository) SaveHubUserSession(ctx context.Context, session domain.HubUserSession) (domain.HubUserSession, error) {
@@ -185,7 +214,8 @@ func (r *HubUserRepository) FindHubUserBySessionTokenHash(ctx context.Context, t
 		SELECT
 			u.id::text, u.email, u.display_name, u.access_level, u.status, u.password_hash, u.password_set_at,
 			u.two_factor_required, u.two_factor_enabled, u.totp_secret_ciphertext,
-			u.totp_enrolled_at, u.last_login_at, u.created_at, u.updated_at,
+			u.totp_enrolled_at, u.pending_totp_secret_ciphertext, u.pending_totp_started_at,
+			u.last_login_at, u.created_at, u.updated_at,
 			s.id::text, s.user_id::text, s.token_hash, s.expires_at, s.revoked_at, s.created_at, s.last_seen_at
 		FROM hub_user_sessions s
 		JOIN hub_users u ON u.id = s.user_id
@@ -208,6 +238,8 @@ func (r *HubUserRepository) FindHubUserBySessionTokenHash(ctx context.Context, t
 		&user.TwoFactorEnabled,
 		&user.TOTPSecretCiphertext,
 		&user.TOTPEnrolledAt,
+		&user.PendingTOTPSecretCiphertext,
+		&user.PendingTOTPStartedAt,
 		&user.LastLoginAt,
 		&user.CreatedAt,
 		&user.UpdatedAt,
@@ -240,7 +272,8 @@ func (r *HubUserRepository) RevokeHubUserSession(ctx context.Context, tokenHash 
 
 const hubUserColumns = `id::text, email, display_name, access_level, status, password_hash, password_set_at,
 	two_factor_required, two_factor_enabled, totp_secret_ciphertext,
-	totp_enrolled_at, last_login_at, created_at, updated_at`
+	totp_enrolled_at, pending_totp_secret_ciphertext, pending_totp_started_at,
+	last_login_at, created_at, updated_at`
 
 type hubUserScanner interface {
 	Scan(dest ...any) error
@@ -260,6 +293,8 @@ func scanHubUser(row hubUserScanner) (domain.HubUser, error) {
 		&user.TwoFactorEnabled,
 		&user.TOTPSecretCiphertext,
 		&user.TOTPEnrolledAt,
+		&user.PendingTOTPSecretCiphertext,
+		&user.PendingTOTPStartedAt,
 		&user.LastLoginAt,
 		&user.CreatedAt,
 		&user.UpdatedAt,

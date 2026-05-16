@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -39,6 +40,42 @@ func TestGatewayHealthListsModels(t *testing.T) {
 	}
 }
 
+func TestGatewayHealthSelectsFirstInstalledPreferredModel(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/tags" {
+			t.Fatalf("path = %s, want /api/tags", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"models": []map[string]any{
+				{"name": "mistral-small3.2:latest"},
+				{"name": "qwen3:8b"},
+			},
+		})
+	}))
+	defer server.Close()
+
+	gateway, err := NewGateway(Config{
+		BaseURL: server.URL,
+		InvestigationModels: []string{
+			"qwen2.5-coder:14b",
+			"mistral-small3.2:latest",
+			"qwen3:14b",
+		},
+		EmbeddingModel: "qwen3-embedding",
+		Timeout:        time.Second,
+	})
+	if err != nil {
+		t.Fatalf("NewGateway returned error: %v", err)
+	}
+	health, err := gateway.Health(context.Background())
+	if err != nil {
+		t.Fatalf("Health returned error: %v", err)
+	}
+	if health.InvestigationModel != "mistral-small3.2:latest" {
+		t.Fatalf("investigation model = %q, want first installed ranked model", health.InvestigationModel)
+	}
+}
+
 func TestGatewayGenerateUsesConfiguredDefaultModel(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/generate" {
@@ -69,6 +106,65 @@ func TestGatewayGenerateUsesConfiguredDefaultModel(t *testing.T) {
 	}
 	if response.Model != "qwen3:30b" || response.Text != "ok" || response.TotalDuration != 25*time.Millisecond {
 		t.Fatalf("response = %#v, want normalized generate response", response)
+	}
+}
+
+func TestGatewayGenerateFallsBackAcrossRankedInstalledModels(t *testing.T) {
+	var generatedModels []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"models": []map[string]any{
+					{"name": "mistral-small3.2:latest"},
+					{"name": "qwen3:14b"},
+				},
+			})
+		case "/api/generate":
+			var request generateRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatalf("Decode returned error: %v", err)
+			}
+			generatedModels = append(generatedModels, request.Model)
+			if request.Model == "mistral-small3.2:latest" {
+				w.WriteHeader(http.StatusInternalServerError)
+				_ = json.NewEncoder(w).Encode(map[string]string{"error": "cuda fault"})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(generateResponse{
+				Model:    request.Model,
+				Response: "ok",
+				Done:     true,
+			})
+		default:
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	gateway, err := NewGateway(Config{
+		BaseURL: server.URL,
+		InvestigationModels: []string{
+			"qwen2.5-coder:14b",
+			"mistral-small3.2:latest",
+			"deepseek-coder-v2:16b",
+			"qwen3:14b",
+			"starcoder2:15b",
+		},
+		Timeout: time.Second,
+	})
+	if err != nil {
+		t.Fatalf("NewGateway returned error: %v", err)
+	}
+	response, err := gateway.Generate(context.Background(), ports.ModelGenerateRequest{Prompt: "say ok"})
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+	if response.Model != "qwen3:14b" || response.Text != "ok" {
+		t.Fatalf("response = %#v, want qwen3 fallback response", response)
+	}
+	if got, want := strings.Join(generatedModels, ","), "mistral-small3.2:latest,qwen3:14b"; got != want {
+		t.Fatalf("generated models = %s, want %s", got, want)
 	}
 }
 
