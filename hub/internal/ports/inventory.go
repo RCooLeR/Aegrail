@@ -45,3 +45,49 @@ type InventoryRepository interface {
 	SaveDeploymentMarker(ctx context.Context, marker domain.DeploymentMarker) (domain.DeploymentMarker, error)
 	ListDeploymentMarkers(ctx context.Context, environmentID domain.ID, appID domain.ID) ([]domain.DeploymentMarker, error)
 }
+
+type InventoryScopeTreeRepository interface {
+	ListInventoryScopeTree(ctx context.Context) (InventoryScopeTree, error)
+}
+
+type InventoryEnvironmentScopeRepository interface {
+	GetInventoryScopeForEnvironment(ctx context.Context, organizationSlug string, projectSlug string, environmentSlug string) (InventoryEnvironmentScopePath, bool, error)
+}
+
+type InventoryScopeTree struct {
+	Organizations []InventoryOrganizationScope
+}
+
+type InventoryEnvironmentScopePath struct {
+	Organization domain.Organization
+	Project      domain.Project
+	Environment  domain.Environment
+	Apps         []InventoryAppScope
+	Hosts        []InventoryHostScope
+}
+
+type InventoryOrganizationScope struct {
+	Organization domain.Organization
+	Projects     []InventoryProjectScope
+}
+
+type InventoryProjectScope struct {
+	Project      domain.Project
+	Environments []InventoryEnvironmentScope
+}
+
+type InventoryEnvironmentScope struct {
+	Environment domain.Environment
+	Apps        []InventoryAppScope
+	Hosts       []InventoryHostScope
+}
+
+type InventoryAppScope struct {
+	App      domain.MonitoredApp
+	Services []domain.Service
+}
+
+type InventoryHostScope struct {
+	Host   domain.Host
+	Agents []domain.Agent
+}

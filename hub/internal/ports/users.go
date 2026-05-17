@@ -2,10 +2,13 @@ package ports
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/rcooler/aegrail/hub/internal/domain"
 )
+
+var ErrHubTOTPChanged = errors.New("pending 2FA enrolment changed; start setup again")
 
 type HubUserRepository interface {
 	SaveHubUser(ctx context.Context, user domain.HubUser) (domain.HubUser, error)
@@ -21,4 +24,8 @@ type HubUserRepository interface {
 	FindHubUserBySessionTokenHash(ctx context.Context, tokenHash string, now time.Time) (domain.HubUser, domain.HubUserSession, bool, error)
 	TouchHubUserSession(ctx context.Context, tokenHash string, seenAt time.Time) error
 	RevokeHubUserSession(ctx context.Context, tokenHash string, revokedAt time.Time) error
+}
+
+type BootstrapHubUserRepository interface {
+	CreateBootstrapHubUser(ctx context.Context, user domain.HubUser) (domain.HubUser, bool, error)
 }

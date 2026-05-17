@@ -2,11 +2,13 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rcooler/aegrail/hub/internal/domain"
+	"github.com/rcooler/aegrail/hub/internal/ports"
 )
 
 type HubUserRepository struct {
@@ -50,6 +52,50 @@ func (r *HubUserRepository) SaveHubUser(ctx context.Context, user domain.HubUser
 		user.PasswordSetAt,
 		user.TwoFactorRequired,
 	))
+}
+
+func (r *HubUserRepository) CreateBootstrapHubUser(ctx context.Context, user domain.HubUser) (domain.HubUser, bool, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return domain.HubUser{}, false, err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(6515147730019150001)`); err != nil {
+		return domain.HubUser{}, false, err
+	}
+	var count int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM hub_users`).Scan(&count); err != nil {
+		return domain.HubUser{}, false, err
+	}
+	if count > 0 {
+		if err := tx.Commit(ctx); err != nil {
+			return domain.HubUser{}, false, err
+		}
+		return domain.HubUser{}, false, nil
+	}
+
+	const query = `
+		INSERT INTO hub_users (
+			email,
+			display_name,
+			access_level,
+			status,
+			password_hash,
+			password_set_at,
+			two_factor_required
+		)
+		VALUES ($1, $2, 'owner', 'active', $3, $4, true)
+		RETURNING ` + hubUserColumns + `
+	`
+	saved, err := scanHubUser(tx.QueryRow(ctx, query, user.Email, user.DisplayName, user.PasswordHash, user.PasswordSetAt))
+	if err != nil {
+		return domain.HubUser{}, false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.HubUser{}, false, err
+	}
+	return saved, true, nil
 }
 
 func (r *HubUserRepository) ListHubUsers(ctx context.Context) ([]domain.HubUser, error) {
@@ -155,9 +201,14 @@ func (r *HubUserRepository) ActivateHubUserTOTP(ctx context.Context, userID doma
 			pending_totp_started_at = NULL,
 			updated_at = now()
 		WHERE id = $1
+			AND pending_totp_secret_ciphertext = $4
 		RETURNING ` + hubUserColumns + `
 	`
-	return scanHubUser(r.pool.QueryRow(ctx, query, userID, activation.ActiveSecretCiphertext, activation.EnrolledAt))
+	user, err := scanHubUser(r.pool.QueryRow(ctx, query, userID, activation.ActiveSecretCiphertext, activation.EnrolledAt, activation.ExpectedPendingSecretCiphertext))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.HubUser{}, ports.ErrHubTOTPChanged
+	}
+	return user, err
 }
 
 func (r *HubUserRepository) DisableHubUserTOTP(ctx context.Context, userID domain.ID) (domain.HubUser, error) {

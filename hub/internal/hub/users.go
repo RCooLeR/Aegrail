@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/rcooler/aegrail/hub/internal/domain"
+	"github.com/rcooler/aegrail/hub/internal/ports"
 	qrcode "github.com/skip2/go-qrcode"
 )
 
@@ -25,6 +26,11 @@ type CreateHubUserInput struct {
 	Password          string
 	Status            string
 	TwoFactorRequired bool
+}
+
+type CreateBootstrapHubUserResult struct {
+	User    domain.HubUser
+	Created bool
 }
 
 type UpdateHubUserInput struct {
@@ -68,6 +74,8 @@ var ErrHubTOTPNoPending = errors.New("no pending 2FA enrolment for this user")
 
 var ErrHubTOTPInvalidCode = errors.New("verification code is incorrect")
 
+var ErrHubTOTPChanged = ports.ErrHubTOTPChanged
+
 func (h *Hub) CreateHubUser(ctx context.Context, input CreateHubUserInput) (domain.HubUser, error) {
 	if h.users == nil {
 		return domain.HubUser{}, errors.New("hub user repository is not configured")
@@ -91,7 +99,7 @@ func (h *Hub) CreateHubUser(ctx context.Context, input CreateHubUserInput) (doma
 	if status == "active" && passwordHash == "" {
 		return domain.HubUser{}, errors.New("password is required for active users")
 	}
-	return h.users.SaveHubUser(ctx, domain.HubUser{
+	user, err := h.users.SaveHubUser(ctx, domain.HubUser{
 		Email:             email,
 		DisplayName:       strings.TrimSpace(input.DisplayName),
 		AccessLevel:       accessLevel,
@@ -100,6 +108,61 @@ func (h *Hub) CreateHubUser(ctx context.Context, input CreateHubUserInput) (doma
 		PasswordSetAt:     passwordSetAt,
 		TwoFactorRequired: input.TwoFactorRequired,
 	})
+	if err != nil {
+		return domain.HubUser{}, err
+	}
+	h.markHubUsersExist()
+	return user, nil
+}
+
+func (h *Hub) CreateBootstrapHubUser(ctx context.Context, input CreateHubUserInput) (CreateBootstrapHubUserResult, error) {
+	if h.users == nil {
+		return CreateBootstrapHubUserResult{}, errors.New("hub user repository is not configured")
+	}
+	email, err := normalizeHubUserEmail(input.Email)
+	if err != nil {
+		return CreateBootstrapHubUserResult{}, err
+	}
+	passwordHash, passwordSetAt, err := hashHubPassword(input.Password, time.Now().UTC())
+	if err != nil {
+		return CreateBootstrapHubUserResult{}, err
+	}
+	if passwordHash == "" {
+		return CreateBootstrapHubUserResult{}, errors.New("password is required for active users")
+	}
+	user := domain.HubUser{
+		Email:             email,
+		DisplayName:       strings.TrimSpace(input.DisplayName),
+		AccessLevel:       "owner",
+		Status:            "active",
+		PasswordHash:      passwordHash,
+		PasswordSetAt:     passwordSetAt,
+		TwoFactorRequired: true,
+	}
+	if bootstrapRepo, ok := h.users.(ports.BootstrapHubUserRepository); ok {
+		createdUser, created, err := bootstrapRepo.CreateBootstrapHubUser(ctx, user)
+		if err != nil {
+			return CreateBootstrapHubUserResult{}, err
+		}
+		if created {
+			h.markHubUsersExist()
+		}
+		return CreateBootstrapHubUserResult{User: createdUser, Created: created}, nil
+	}
+	count, err := h.users.CountHubUsers(ctx)
+	if err != nil {
+		return CreateBootstrapHubUserResult{}, err
+	}
+	if count > 0 {
+		h.markHubUsersExist()
+		return CreateBootstrapHubUserResult{}, nil
+	}
+	createdUser, err := h.users.SaveHubUser(ctx, user)
+	if err != nil {
+		return CreateBootstrapHubUserResult{}, err
+	}
+	h.markHubUsersExist()
+	return CreateBootstrapHubUserResult{User: createdUser, Created: true}, nil
 }
 
 func (h *Hub) ListHubUsers(ctx context.Context) ([]domain.HubUser, error) {
@@ -204,8 +267,9 @@ func (h *Hub) VerifyHubUserTOTP(ctx context.Context, input VerifyHubUserTOTPInpu
 		return VerifyHubUserTOTPResult{}, ErrHubTOTPInvalidCode
 	}
 	activated, err := h.users.ActivateHubUserTOTP(ctx, userID, domain.HubUserTOTPActivation{
-		ActiveSecretCiphertext: user.PendingTOTPSecretCiphertext,
-		EnrolledAt:             time.Now().UTC(),
+		ActiveSecretCiphertext:          user.PendingTOTPSecretCiphertext,
+		ExpectedPendingSecretCiphertext: user.PendingTOTPSecretCiphertext,
+		EnrolledAt:                      time.Now().UTC(),
 	})
 	if err != nil {
 		return VerifyHubUserTOTPResult{}, err

@@ -271,6 +271,7 @@ type HubUserTOTPStart struct {
 
 type HubUserTOTPActivation struct {
 	ActiveSecretCiphertext string
+	ExpectedPendingSecretCiphertext string
 	EnrolledAt             time.Time
 }
 

@@ -28,11 +28,12 @@ $env:AEGRAIL_CORRELATION_WORKERS = "2"
 $env:AEGRAIL_HUB_USER_SECRET = "replace-with-strong-user-secret"
 ```
 
-`go run ./cmd/hub serve` validates that both `AEGRAIL_HUB_USER_SECRET` and
-`AEGRAIL_HUB_WIRE_PRIVATE_KEY` are set. Local development can use generated
-throwaway values, but do not reuse local secrets for real projects.
+`go run ./cmd/hub serve` validates that `AEGRAIL_DATABASE_URL`,
+`AEGRAIL_HUB_USER_SECRET`, and `AEGRAIL_HUB_WIRE_PRIVATE_KEY` are set. Local
+development can use generated throwaway values, but do not reuse local secrets
+for real projects.
 
-Redis is optional for very small local tests. For the normal 20+ site setup, configure it. Hub uses Redis for short-lived ingest correlation jobs and distributed worker locks, while PostgreSQL still stores durable evidence, findings, users, sessions, and reports.
+Redis is optional for very small local tests. For the normal 20+ site setup, configure it. Hub uses Redis for short-lived ingest correlation jobs, distributed worker locks, and shared auth rate limiting, while PostgreSQL still stores durable evidence, findings, users, sessions, and reports.
 
 Optional finding notification webhook:
 
@@ -43,6 +44,14 @@ AEGRAIL_NOTIFICATION_WEBHOOK_TIMEOUT
 ```
 
 When configured, Hub sends JSON when findings are observed and when an operator changes finding status. If `AEGRAIL_NOTIFICATION_WEBHOOK_SECRET` is set, each request includes `X-Aegrail-Signature: sha256=<hmac>`.
+
+Optional reverse-proxy trust:
+
+```text
+AEGRAIL_TRUSTED_PROXY_CIDRS
+```
+
+Hub parses trusted proxy CIDRs at startup and warns about invalid entries. It trusts `X-Forwarded-Proto` and `X-Forwarded-Host` only from loopback or from CIDRs listed in `AEGRAIL_TRUSTED_PROXY_CIDRS`, for example `10.0.0.0/8,172.16.0.0/12`. Leave it empty when Hub is not behind a trusted reverse proxy.
 
 Generate and set the Hub wire key for encrypted Agent traffic:
 
@@ -117,8 +126,10 @@ Invoke-RestMethod http://127.0.0.1:8787/healthz
 ```
 
 `/healthz` returns `200` when required dependencies are healthy and `503` when
-PostgreSQL, configured Redis, or the model gateway is unavailable. Ollama
-`offline` mode is reported but is not treated as unhealthy.
+PostgreSQL or configured Redis is unavailable. Ollama/model-analysis failures
+are reported as degraded health because the Hub can still ingest evidence and
+serve the dashboard while local model infrastructure is being repaired. Ollama
+`offline` mode is also reported but is not treated as unhealthy.
 
 ## Verification
 

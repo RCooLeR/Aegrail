@@ -27,26 +27,30 @@ import (
 )
 
 const (
-	dashboardProtocol    = "aegrail.dashboard.v1"
-	headerDashboardProto = "X-Aegrail-Dashboard-Protocol"
-	headerDashboardCSRF  = "X-Aegrail-CSRF"
-	hubSessionCookieName = "aegrail_session"
-	maxHTTPQueryLimit    = 5000
+	dashboardProtocol     = "aegrail.dashboard.v1"
+	headerDashboardProto  = "X-Aegrail-Dashboard-Protocol"
+	headerDashboardCSRF   = "X-Aegrail-CSRF"
+	hubSessionCookieName  = "aegrail_session"
+	maxHTTPQueryLimit     = 5000
+	defaultAuthRateLimit  = 10
+	defaultAuthRateWindow = time.Minute
 )
 
 type hubUserContextKey struct{}
 
 var (
-	hubBootstrapUserMu sync.Mutex
-	hubAuthLimiter     = newHubAuthRateLimiter(10, time.Minute)
+	hubAuthLimiter              = newHubAuthRateLimiter(defaultAuthRateLimit, defaultAuthRateWindow)
+	dashboardCSRFSecretFallback = randomToken(32)
 )
 
 type HubOptions struct {
-	WirePrivateKey    string
-	WireTimestampSkew time.Duration
-	DashboardDir      string
-	Now               func() time.Time
-	HealthCheck       func(context.Context) map[string]string
+	WirePrivateKey      string
+	WireTimestampSkew   time.Duration
+	DashboardDir        string
+	DashboardCSRFSecret string
+	TrustedProxyCIDRs   []*net.IPNet
+	Now                 func() time.Time
+	HealthCheck         func(context.Context) map[string]string
 }
 
 func NewHubRouter(meta domain.AppMeta, hub *hubapp.Hub, options HubOptions) http.Handler {
@@ -78,8 +82,12 @@ func NewHubRouter(meta domain.AppMeta, hub *hubapp.Hub, options HubOptions) http
 			ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 			defer cancel()
 			checks = options.HealthCheck(ctx)
-			for _, value := range checks {
+			for name, value := range checks {
 				if value != "ok" && !strings.HasPrefix(value, "ok: ") && value != "offline" {
+					if isOptionalHealthCheck(name) {
+						status = "degraded"
+						continue
+					}
 					status = "unhealthy"
 					statusCode = http.StatusServiceUnavailable
 					break
@@ -144,6 +152,15 @@ func NewHubRouter(meta domain.AppMeta, hub *hubapp.Hub, options HubOptions) http
 	router.Patch("/api/v1/inventory/agents/{id}", withHubAuth(hub, options, "admin", updateInventoryAgentHandler(hub)))
 	mountDashboard(router, options.DashboardDir)
 	return router
+}
+
+func isOptionalHealthCheck(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "ollama", "model", "model_analysis":
+		return true
+	default:
+		return false
+	}
 }
 
 type hubFindingResponse struct {
@@ -1346,12 +1363,12 @@ func getHubAuthMeHandler(hub *hubapp.Hub, options HubOptions) http.HandlerFunc {
 			})
 			return
 		}
-		count, err := hub.CountHubUsers(r.Context())
+		usersExist, err := hub.HubUsersExist(r.Context())
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "could not check hub users")
 			return
 		}
-		if count == 0 {
+		if !usersExist {
 			writeJSON(w, http.StatusOK, hubAuthMeResponse{
 				Authenticated:     false,
 				AuthConfigured:    true,
@@ -1379,7 +1396,7 @@ func getHubAuthMeHandler(hub *hubapp.Hub, options HubOptions) http.HandlerFunc {
 			Authenticated:     true,
 			AuthConfigured:    true,
 			Protocol:          dashboardProtocol,
-			CSRFToken:         dashboardCSRFToken(sessionToken),
+			CSRFToken:         dashboardCSRFToken(options, sessionToken),
 			DashboardReady:    hubUserDashboardReady(user),
 			TOTPSetupRequired: !hubUserDashboardReady(user),
 			User:              &record,
@@ -1398,7 +1415,12 @@ func loginHubUserHandler(hub *hubapp.Hub, options HubOptions) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
-		if !allowHubAuthAttempt(r, options, "login:"+strings.ToLower(strings.TrimSpace(request.Email))) {
+		allowed, err := allowHubAuthAttempt(r, hub, options, "login:"+strings.ToLower(strings.TrimSpace(request.Email)))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not check authentication rate limit")
+			return
+		}
+		if !allowed {
 			writeError(w, http.StatusTooManyRequests, "too many authentication attempts")
 			return
 		}
@@ -1424,10 +1446,10 @@ func loginHubUserHandler(hub *hubapp.Hub, options HubOptions) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		http.SetCookie(w, hubSessionCookie(result.Token, result.ExpiresAt, r))
+		http.SetCookie(w, hubSessionCookie(result.Token, result.ExpiresAt, r, options))
 		writeJSON(w, http.StatusOK, map[string]any{
 			"protocol":            dashboardProtocol,
-			"csrf_token":          dashboardCSRFToken(result.Token),
+			"csrf_token":          dashboardCSRFToken(options, result.Token),
 			"dashboard_ready":     hubUserDashboardReady(result.User),
 			"totp_setup_required": !hubUserDashboardReady(result.User),
 			"user":                hubUserRecord(result.User),
@@ -1442,7 +1464,7 @@ func logoutHubUserHandler(hub *hubapp.Hub, options HubOptions) http.HandlerFunc 
 			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
 			return
 		}
-		if err := verifyDashboardCSRF(r); err != nil {
+		if err := verifyDashboardCSRF(r, options); err != nil {
 			writeError(w, http.StatusForbidden, err.Error())
 			return
 		}
@@ -1452,7 +1474,7 @@ func logoutHubUserHandler(hub *hubapp.Hub, options HubOptions) http.HandlerFunc 
 				return
 			}
 		}
-		http.SetCookie(w, clearHubSessionCookie(r))
+		http.SetCookie(w, clearHubSessionCookie(r, options))
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	}
 }
@@ -1463,7 +1485,7 @@ func startCurrentHubUserTOTPHandler(hub *hubapp.Hub, options HubOptions) http.Ha
 		if !ok {
 			return
 		}
-		if err := verifyDashboardCSRF(r); err != nil {
+		if err := verifyDashboardCSRF(r, options); err != nil {
 			writeError(w, http.StatusForbidden, err.Error())
 			return
 		}
@@ -1499,7 +1521,7 @@ func verifyCurrentHubUserTOTPHandler(hub *hubapp.Hub, options HubOptions) http.H
 		if !ok {
 			return
 		}
-		if err := verifyDashboardCSRF(r); err != nil {
+		if err := verifyDashboardCSRF(r, options); err != nil {
 			writeError(w, http.StatusForbidden, err.Error())
 			return
 		}
@@ -1508,7 +1530,12 @@ func verifyCurrentHubUserTOTPHandler(hub *hubapp.Hub, options HubOptions) http.H
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
-		if !allowHubAuthAttempt(r, options, "totp-current:"+string(user.ID)) {
+		allowed, err := allowHubAuthAttempt(r, hub, options, "totp-current:"+string(user.ID))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not check authentication rate limit")
+			return
+		}
+		if !allowed {
 			writeError(w, http.StatusTooManyRequests, "too many authentication attempts")
 			return
 		}
@@ -1520,6 +1547,9 @@ func verifyCurrentHubUserTOTPHandler(hub *hubapp.Hub, options HubOptions) http.H
 			status := http.StatusBadRequest
 			if errors.Is(err, hubapp.ErrHubTOTPInvalidCode) || errors.Is(err, hubapp.ErrHubTOTPNoPending) {
 				status = http.StatusUnauthorized
+			}
+			if errors.Is(err, hubapp.ErrHubTOTPChanged) {
+				status = http.StatusConflict
 			}
 			writeError(w, status, err.Error())
 			return
@@ -1559,28 +1589,20 @@ func createHubUserHandler(hub *hubapp.Hub, options HubOptions) http.HandlerFunc 
 			return
 		}
 		bootstrap := false
-		bootstrapLockHeld := false
 		if hub.HubUsersConfigured() {
-			hubBootstrapUserMu.Lock()
-			count, err := hub.CountHubUsers(r.Context())
+			usersExist, err := hub.HubUsersExist(r.Context())
 			if err != nil {
-				hubBootstrapUserMu.Unlock()
 				writeError(w, http.StatusInternalServerError, "could not check hub users")
 				return
 			}
-			bootstrap = count == 0
-			bootstrapLockHeld = bootstrap
-			if !bootstrap {
-				hubBootstrapUserMu.Unlock()
+			bootstrap = !usersExist
+			if usersExist {
 				user, ok := requireHubUser(w, r, hub, options, "admin")
 				if !ok {
 					return
 				}
 				_ = user
 			}
-		}
-		if bootstrapLockHeld {
-			defer hubBootstrapUserMu.Unlock()
 		}
 		var request createHubUserRequest
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
@@ -1592,14 +1614,27 @@ func createHubUserHandler(hub *hubapp.Hub, options HubOptions) http.HandlerFunc 
 			request.Status = "active"
 			request.TwoFactorRequired = true
 		}
-		user, err := hub.CreateHubUser(r.Context(), hubapp.CreateHubUserInput{
+		input := hubapp.CreateHubUserInput{
 			Email:             request.Email,
 			DisplayName:       request.DisplayName,
 			AccessLevel:       request.AccessLevel,
 			Password:          request.Password,
 			Status:            request.Status,
 			TwoFactorRequired: request.TwoFactorRequired,
-		})
+		}
+		var user domain.HubUser
+		var err error
+		if bootstrap {
+			result, createErr := hub.CreateBootstrapHubUser(r.Context(), input)
+			err = createErr
+			if err == nil && !result.Created {
+				writeError(w, http.StatusConflict, "hub bootstrap was already completed")
+				return
+			}
+			user = result.User
+		} else {
+			user, err = hub.CreateHubUser(r.Context(), input)
+		}
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
@@ -1681,7 +1716,12 @@ func verifyHubUserTOTPHandler(hub *hubapp.Hub, options HubOptions) http.HandlerF
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
-		if !allowHubAuthAttempt(r, options, "totp-admin:"+chi.URLParam(r, "id")) {
+		allowed, err := allowHubAuthAttempt(r, hub, options, "totp-admin:"+chi.URLParam(r, "id"))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not check authentication rate limit")
+			return
+		}
+		if !allowed {
 			writeError(w, http.StatusTooManyRequests, "too many authentication attempts")
 			return
 		}
@@ -1693,6 +1733,9 @@ func verifyHubUserTOTPHandler(hub *hubapp.Hub, options HubOptions) http.HandlerF
 			status := http.StatusBadRequest
 			if errors.Is(err, hubapp.ErrHubTOTPInvalidCode) || errors.Is(err, hubapp.ErrHubTOTPNoPending) {
 				status = http.StatusUnauthorized
+			}
+			if errors.Is(err, hubapp.ErrHubTOTPChanged) {
+				status = http.StatusConflict
 			}
 			writeError(w, status, err.Error())
 			return
@@ -1944,7 +1987,7 @@ func createInventoryNodeHandler(hub *hubapp.Hub, options HubOptions) http.Handle
 			writeError(w, http.StatusServiceUnavailable, "Hub wire private key is not configured")
 			return
 		}
-		if !isSecureRequest(r) && !isLoopbackRequest(r) {
+		if !isSecureRequest(r, options) && !isLoopbackRequest(r) {
 			writeError(w, http.StatusBadRequest, "node secrets can only be created over HTTPS or loopback")
 			return
 		}
@@ -1994,7 +2037,7 @@ func createInventoryNodeHandler(hub *hubapp.Hub, options HubOptions) http.Handle
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		sample := buildAgentSampleConfig(r, request, host, agent, hubPublicKey, nodeSecret)
+		sample := buildAgentSampleConfig(r, options, request, host, agent, hubPublicKey, nodeSecret)
 		writeJSON(w, http.StatusCreated, map[string]any{
 			"host":           hostRecord(host),
 			"agent":          agentRecord(agent),
@@ -2062,71 +2105,41 @@ func listInventoryScopesHandler(hub *hubapp.Hub) http.HandlerFunc {
 			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
 			return
 		}
-		organizations, err := hub.ListOrganizations(r.Context())
+		tree, err := hub.ListInventoryScopeTree(r.Context())
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 
-		records := make([]organizationResponse, 0, len(organizations))
+		records := make([]organizationResponse, 0, len(tree.Organizations))
 		projectCount := 0
 		environmentCount := 0
 		appCount := 0
-		for _, organization := range organizations {
-			orgRecord := organizationRecord(organization)
-			projects, err := hub.ListProjects(r.Context(), organization.Slug)
-			if err != nil {
-				writeError(w, http.StatusBadRequest, err.Error())
-				return
-			}
-			orgRecord.Projects = make([]projectResponse, 0, len(projects))
-			projectCount += len(projects)
-			for _, project := range projects {
-				projectRecord := projectRecord(project)
-				environments, err := hub.ListEnvironments(r.Context(), organization.Slug, project.Slug)
-				if err != nil {
-					writeError(w, http.StatusBadRequest, err.Error())
-					return
-				}
-				projectRecord.Environments = make([]environmentResponse, 0, len(environments))
-				environmentCount += len(environments)
-				for _, environment := range environments {
-					environmentRecord := environmentRecord(environment)
-					apps, err := hub.ListMonitoredApps(r.Context(), organization.Slug, project.Slug, environment.Slug)
-					if err != nil {
-						writeError(w, http.StatusBadRequest, err.Error())
-						return
-					}
-					environmentRecord.Apps = make([]monitoredAppResponse, 0, len(apps))
-					appCount += len(apps)
-					for _, app := range apps {
-						appRecord := monitoredAppRecord(app)
-						services, err := hub.ListServices(r.Context(), organization.Slug, project.Slug, environment.Slug, app.Slug)
-						if err != nil {
-							writeError(w, http.StatusBadRequest, err.Error())
-							return
-						}
-						appRecord.Services = make([]serviceResponse, 0, len(services))
-						for _, service := range services {
+		for _, organizationScope := range tree.Organizations {
+			orgRecord := organizationRecord(organizationScope.Organization)
+			orgRecord.Projects = make([]projectResponse, 0, len(organizationScope.Projects))
+			projectCount += len(organizationScope.Projects)
+			for _, projectScope := range organizationScope.Projects {
+				projectRecord := projectRecord(projectScope.Project)
+				projectRecord.Environments = make([]environmentResponse, 0, len(projectScope.Environments))
+				environmentCount += len(projectScope.Environments)
+				for _, environmentScope := range projectScope.Environments {
+					environmentRecord := environmentRecord(environmentScope.Environment)
+					environmentRecord.Apps = make([]monitoredAppResponse, 0, len(environmentScope.Apps))
+					appCount += len(environmentScope.Apps)
+					for _, appScope := range environmentScope.Apps {
+						appRecord := monitoredAppRecord(appScope.App)
+						appRecord.Services = make([]serviceResponse, 0, len(appScope.Services))
+						for _, service := range appScope.Services {
 							appRecord.Services = append(appRecord.Services, serviceRecord(service))
 						}
 						environmentRecord.Apps = append(environmentRecord.Apps, appRecord)
 					}
-					hosts, err := hub.ListHosts(r.Context(), organization.Slug, project.Slug, environment.Slug)
-					if err != nil {
-						writeError(w, http.StatusBadRequest, err.Error())
-						return
-					}
-					environmentRecord.Hosts = make([]hostResponse, 0, len(hosts))
-					for _, host := range hosts {
-						hostResponse := hostRecord(host)
-						agents, err := hub.ListAgents(r.Context(), organization.Slug, project.Slug, environment.Slug, host.Slug)
-						if err != nil {
-							writeError(w, http.StatusBadRequest, err.Error())
-							return
-						}
-						hostResponse.Agents = make([]agentResponse, 0, len(agents))
-						for _, agent := range agents {
+					environmentRecord.Hosts = make([]hostResponse, 0, len(environmentScope.Hosts))
+					for _, hostScope := range environmentScope.Hosts {
+						hostResponse := hostRecord(hostScope.Host)
+						hostResponse.Agents = make([]agentResponse, 0, len(hostScope.Agents))
+						for _, agent := range hostScope.Agents {
 							hostResponse.Agents = append(hostResponse.Agents, agentRecord(agent))
 						}
 						environmentRecord.Hosts = append(environmentRecord.Hosts, hostResponse)
@@ -2246,41 +2259,29 @@ func listInventoryTopologyHandler(hub *hubapp.Hub) http.HandlerFunc {
 		project := r.URL.Query().Get("project")
 		environment := r.URL.Query().Get("environment")
 
-		apps, err := hub.ListMonitoredApps(r.Context(), org, project, environment)
+		scope, ok, err := hub.GetInventoryScopeForEnvironment(r.Context(), org, project, environment)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		hosts, err := hub.ListHosts(r.Context(), org, project, environment)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+		if !ok {
+			writeError(w, http.StatusBadRequest, "inventory environment path does not exist")
 			return
 		}
 
-		appRecords := make([]monitoredAppResponse, 0, len(apps))
+		appRecords := make([]monitoredAppResponse, 0, len(scope.Apps))
 		serviceRecords := []serviceResponse{}
-		for _, app := range apps {
-			appRecords = append(appRecords, monitoredAppRecord(app))
-			services, err := hub.ListServices(r.Context(), org, project, environment, app.Slug)
-			if err != nil {
-				writeError(w, http.StatusBadRequest, err.Error())
-				return
-			}
-			for _, service := range services {
+		hostRecords := make([]hostResponse, 0, len(scope.Hosts))
+		agentRecords := []agentResponse{}
+		for _, appScope := range scope.Apps {
+			appRecords = append(appRecords, monitoredAppRecord(appScope.App))
+			for _, service := range appScope.Services {
 				serviceRecords = append(serviceRecords, serviceRecord(service))
 			}
 		}
-
-		hostRecords := make([]hostResponse, 0, len(hosts))
-		agentRecords := []agentResponse{}
-		for _, host := range hosts {
-			hostRecords = append(hostRecords, hostRecord(host))
-			agents, err := hub.ListAgents(r.Context(), org, project, environment, host.Slug)
-			if err != nil {
-				writeError(w, http.StatusBadRequest, err.Error())
-				return
-			}
-			for _, agent := range agents {
+		for _, hostScope := range scope.Hosts {
+			hostRecords = append(hostRecords, hostRecord(hostScope.Host))
+			for _, agent := range hostScope.Agents {
 				agentRecords = append(agentRecords, agentRecord(agent))
 			}
 		}
@@ -2382,10 +2383,11 @@ func parseQueryLimit(r *http.Request, fallback int) (int, error) {
 }
 
 type hubAuthRateLimiter struct {
-	mu       sync.Mutex
-	limit    int
-	window   time.Duration
-	attempts map[string][]time.Time
+	mu        sync.Mutex
+	limit     int
+	window    time.Duration
+	lastSweep time.Time
+	attempts  map[string][]time.Time
 }
 
 func newHubAuthRateLimiter(limit int, window time.Duration) *hubAuthRateLimiter {
@@ -2396,7 +2398,7 @@ func newHubAuthRateLimiter(limit int, window time.Duration) *hubAuthRateLimiter 
 	}
 }
 
-func allowHubAuthAttempt(r *http.Request, options HubOptions, routeKey string) bool {
+func allowHubAuthAttempt(r *http.Request, hub *hubapp.Hub, options HubOptions, routeKey string) (bool, error) {
 	now := time.Now().UTC()
 	if options.Now != nil {
 		now = options.Now().UTC()
@@ -2406,7 +2408,14 @@ func allowHubAuthAttempt(r *http.Request, options HubOptions, routeKey string) b
 	if ip != nil {
 		remote = ip.String()
 	}
-	return hubAuthLimiter.allow(remote+"|"+routeKey, now)
+	key := remote + "|" + routeKey
+	if hub != nil {
+		allowed, err := hub.AllowRateLimit(r.Context(), "auth:"+key, defaultAuthRateLimit, defaultAuthRateWindow)
+		if err != nil || !allowed {
+			return allowed, err
+		}
+	}
+	return hubAuthLimiter.allow(key, now), nil
 }
 
 func (l *hubAuthRateLimiter) allow(key string, now time.Time) bool {
@@ -2422,6 +2431,10 @@ func (l *hubAuthRateLimiter) allow(key string, now time.Time) bool {
 	cutoff := now.Add(-l.window)
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if l.lastSweep.IsZero() || now.Sub(l.lastSweep) >= l.window {
+		l.sweepLocked(cutoff)
+		l.lastSweep = now
+	}
 	items := l.attempts[key]
 	kept := items[:0]
 	for _, at := range items {
@@ -2435,6 +2448,22 @@ func (l *hubAuthRateLimiter) allow(key string, now time.Time) bool {
 	}
 	l.attempts[key] = append(kept, now)
 	return true
+}
+
+func (l *hubAuthRateLimiter) sweepLocked(cutoff time.Time) {
+	for key, items := range l.attempts {
+		kept := items[:0]
+		for _, at := range items {
+			if at.After(cutoff) {
+				kept = append(kept, at)
+			}
+		}
+		if len(kept) == 0 {
+			delete(l.attempts, key)
+			continue
+		}
+		l.attempts[key] = kept
+	}
 }
 
 func hubFindingRecord(finding domain.HubFinding) hubFindingResponse {
@@ -2811,12 +2840,12 @@ func requireHubUser(w http.ResponseWriter, r *http.Request, hub *hubapp.Hub, opt
 	if !hub.HubUsersConfigured() {
 		return domain.HubUser{AccessLevel: "owner", Status: "active"}, true
 	}
-	count, err := hub.CountHubUsers(r.Context())
+	usersExist, err := hub.HubUsersExist(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not check hub users")
 		return domain.HubUser{}, false
 	}
-	if count == 0 {
+	if !usersExist {
 		writeError(w, http.StatusUnauthorized, hubapp.ErrHubAuthBootstrapNeeded.Error())
 		return domain.HubUser{}, false
 	}
@@ -2833,7 +2862,7 @@ func requireHubUser(w http.ResponseWriter, r *http.Request, hub *hubapp.Hub, opt
 		writeError(w, http.StatusForbidden, "2FA enrollment required")
 		return domain.HubUser{}, false
 	}
-	if err := verifyDashboardCSRF(r); err != nil {
+	if err := verifyDashboardCSRF(r, options); err != nil {
 		writeError(w, http.StatusForbidden, err.Error())
 		return domain.HubUser{}, false
 	}
@@ -2888,17 +2917,23 @@ func hubSessionToken(r *http.Request) string {
 	return strings.TrimSpace(cookie.Value)
 }
 
-func dashboardCSRFToken(sessionToken string) string {
+func dashboardCSRFToken(options HubOptions, sessionToken string) string {
 	sessionToken = strings.TrimSpace(sessionToken)
 	if sessionToken == "" {
 		return ""
 	}
-	mac := hmac.New(sha256.New, []byte(sessionToken))
+	secret := strings.TrimSpace(options.DashboardCSRFSecret)
+	if secret == "" {
+		secret = dashboardCSRFSecretFallback
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write([]byte(dashboardProtocol))
+	mac.Write([]byte{0})
+	mac.Write([]byte(sessionToken))
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-func verifyDashboardCSRF(r *http.Request) error {
+func verifyDashboardCSRF(r *http.Request, options HubOptions) error {
 	if r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions {
 		return nil
 	}
@@ -2909,7 +2944,7 @@ func verifyDashboardCSRF(r *http.Request) error {
 	if sessionToken == "" {
 		return hubapp.ErrHubAuthRequired
 	}
-	expected := dashboardCSRFToken(sessionToken)
+	expected := dashboardCSRFToken(options, sessionToken)
 	actual := strings.TrimSpace(r.Header.Get(headerDashboardCSRF))
 	if expected == "" || actual == "" {
 		return errors.New("dashboard CSRF token is required")
@@ -2928,7 +2963,7 @@ func verifyDashboardCSRF(r *http.Request) error {
 	return nil
 }
 
-func hubSessionCookie(token string, expiresAt time.Time, r *http.Request) *http.Cookie {
+func hubSessionCookie(token string, expiresAt time.Time, r *http.Request, options HubOptions) *http.Cookie {
 	return &http.Cookie{
 		Name:     hubSessionCookieName,
 		Value:    token,
@@ -2937,11 +2972,11 @@ func hubSessionCookie(token string, expiresAt time.Time, r *http.Request) *http.
 		MaxAge:   int(time.Until(expiresAt).Seconds()),
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
-		Secure:   isSecureRequest(r),
+		Secure:   isSecureRequest(r, options),
 	}
 }
 
-func clearHubSessionCookie(r *http.Request) *http.Cookie {
+func clearHubSessionCookie(r *http.Request, options HubOptions) *http.Cookie {
 	return &http.Cookie{
 		Name:     hubSessionCookieName,
 		Value:    "",
@@ -2949,12 +2984,12 @@ func clearHubSessionCookie(r *http.Request) *http.Cookie {
 		MaxAge:   -1,
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
-		Secure:   isSecureRequest(r),
+		Secure:   isSecureRequest(r, options),
 	}
 }
 
-func isSecureRequest(r *http.Request) bool {
-	return r.TLS != nil || (trustedForwardedHeaders(r) && strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https"))
+func isSecureRequest(r *http.Request, options HubOptions) bool {
+	return r.TLS != nil || (trustedForwardedHeaders(r, options) && strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https"))
 }
 
 func decodeIngestBody(r *http.Request, body []byte, hub *hubapp.Hub, options HubOptions) ([]byte, string, error) {
@@ -3001,7 +3036,7 @@ func verifyWireEnvelopeMatchesBatch(signature string, agentID string) error {
 	return nil
 }
 
-func buildAgentSampleConfig(r *http.Request, request createInventoryNodeRequest, host domain.Host, agent domain.Agent, hubPublicKey string, nodeSecret string) string {
+func buildAgentSampleConfig(r *http.Request, options HubOptions, request createInventoryNodeRequest, host domain.Host, agent domain.Agent, hubPublicKey string, nodeSecret string) string {
 	environment := defaultString(request.EnvironmentSlug, "production")
 	app := defaultString(request.AppSlug, "main-web")
 	service := defaultString(request.ServiceSlug, "frontend")
@@ -3044,7 +3079,7 @@ sites:
     coverage:
       enabled: true
 `,
-		requestBaseURL(r),
+		requestBaseURL(r, options),
 		hubPublicKey,
 		nodeSecret,
 		request.OrganizationSlug,
@@ -3063,13 +3098,13 @@ sites:
 	)
 }
 
-func requestBaseURL(r *http.Request) string {
+func requestBaseURL(r *http.Request, options HubOptions) string {
 	scheme := "http"
 	if r.TLS != nil {
 		scheme = "https"
 	}
 	host := r.Host
-	if trustedForwardedHeaders(r) {
+	if trustedForwardedHeaders(r, options) {
 		if forwardedScheme := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); forwardedScheme != "" {
 			scheme = forwardedScheme
 		}
@@ -3080,12 +3115,23 @@ func requestBaseURL(r *http.Request) string {
 	return strings.TrimRight(scheme+"://"+host, "/")
 }
 
-func trustedForwardedHeaders(r *http.Request) bool {
+func trustedForwardedHeaders(r *http.Request, options HubOptions) bool {
 	ip := requestRemoteIP(r)
 	if ip == nil {
 		return false
 	}
-	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()
+	if ip.IsLoopback() {
+		return true
+	}
+	for _, network := range options.TrustedProxyCIDRs {
+		if network == nil {
+			continue
+		}
+		if network.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 func isLoopbackRequest(r *http.Request) bool {

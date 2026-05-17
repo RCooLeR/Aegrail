@@ -27,7 +27,8 @@ func agentInstallCommand() *urfavecli.Command {
 			&urfavecli.StringFlag{Name: "hub-url", Required: true},
 			&urfavecli.StringFlag{Name: "hub-protocol", Value: "aegrail-wire-v1"},
 			&urfavecli.StringFlag{Name: "hub-public-key", Required: true},
-			&urfavecli.StringFlag{Name: "node-secret", Required: true},
+			&urfavecli.StringFlag{Name: "node-secret"},
+			&urfavecli.StringFlag{Name: "node-secret-env"},
 			&urfavecli.StringFlag{Name: "org", Required: true},
 			&urfavecli.StringFlag{Name: "project", Required: true},
 			&urfavecli.StringFlag{Name: "env", Required: true},
@@ -39,22 +40,26 @@ func agentInstallCommand() *urfavecli.Command {
 			&urfavecli.StringSliceFlag{Name: "label"},
 		),
 		Action: func(c *urfavecli.Context) error {
+			if strings.TrimSpace(c.String("node-secret")) == "" && strings.TrimSpace(c.String("node-secret-env")) == "" {
+				return fmt.Errorf("node-secret or node-secret-env is required")
+			}
 			runtime := newAgentRuntime(c)
 			identity, err := runtime.Install(c.Context, agent.Identity{
-				HubURL:       c.String("hub-url"),
-				HubProtocol:  c.String("hub-protocol"),
-				HubPublicKey: c.String("hub-public-key"),
-				NodeSecret:   c.String("node-secret"),
-				QueueDir:     c.String("queue-dir"),
-				Org:          c.String("org"),
-				Project:      c.String("project"),
-				Environment:  c.String("env"),
-				App:          c.String("app"),
-				Service:      c.String("service"),
-				Host:         c.String("host"),
-				AgentID:      c.String("agent-id"),
-				Region:       c.String("region"),
-				Labels:       parseLabels(c.StringSlice("label")),
+				HubURL:        c.String("hub-url"),
+				HubProtocol:   c.String("hub-protocol"),
+				HubPublicKey:  c.String("hub-public-key"),
+				NodeSecret:    c.String("node-secret"),
+				NodeSecretEnv: c.String("node-secret-env"),
+				QueueDir:      c.String("queue-dir"),
+				Org:           c.String("org"),
+				Project:       c.String("project"),
+				Environment:   c.String("env"),
+				App:           c.String("app"),
+				Service:       c.String("service"),
+				Host:          c.String("host"),
+				AgentID:       c.String("agent-id"),
+				Region:        c.String("region"),
+				Labels:        parseLabels(c.StringSlice("label")),
 			})
 			if err != nil {
 				return err
@@ -526,21 +531,33 @@ func runConfiguredDatabaseCollectors(ctx context.Context, runtime *agent.Runtime
 				}
 			}
 			labels := databaseBatchLabels(site, snapshot)
-			diffResult, err := collector.UpdateDatabaseSnapshotState(databaseStatePath(config, site, snapshot), snapshot)
+			statePath = databaseStatePath(config, site, snapshot)
+			stateUpdate, err := collector.PlanDatabaseSnapshotStateUpdate(statePath, snapshot)
 			if err != nil {
-				snapshot.Warnings = append(snapshot.Warnings, fmt.Sprintf("database snapshot state update failed: %v", err))
+				snapshot.Warnings = append(snapshot.Warnings, fmt.Sprintf("database snapshot state planning failed: %v", err))
 			}
+			diffResult := stateUpdate.Diff
 			if diffResult.Baselined {
 				siteSummary.Baselines++
 			}
 			siteSummary.Changes += len(diffResult.Changes) + len(diffResult.EntityChanges)
 			siteSummary.Warnings += len(snapshot.Warnings)
 			if bootstrap {
+				if err == nil {
+					if commitErr := collector.CommitDatabaseSnapshotStateUpdate(statePath, stateUpdate); commitErr != nil {
+						return agentDatabaseRunResult{}, fmt.Errorf("site %s database %s state save: %w", site.Slug, name, commitErr)
+					}
+				}
 				continue
 			}
 			events := collector.BuildDatabaseSnapshotEvents(snapshot, labels)
 			events = append(events, collector.BuildDatabaseSnapshotDiffEvents(snapshot, diffResult, labels)...)
 			if len(events) == 0 {
+				if err == nil {
+					if commitErr := collector.CommitDatabaseSnapshotStateUpdate(statePath, stateUpdate); commitErr != nil {
+						return agentDatabaseRunResult{}, fmt.Errorf("site %s database %s state save: %w", site.Slug, name, commitErr)
+					}
+				}
 				continue
 			}
 			inputEvents := make([]agent.EnqueueEventInput, 0, len(events))
@@ -565,6 +582,11 @@ func runConfiguredDatabaseCollectors(ctx context.Context, runtime *agent.Runtime
 				Events:  inputEvents,
 			}); err != nil {
 				return agentDatabaseRunResult{}, fmt.Errorf("site %s database %s enqueue: %w", site.Slug, name, err)
+			}
+			if err == nil {
+				if commitErr := collector.CommitDatabaseSnapshotStateUpdate(statePath, stateUpdate); commitErr != nil {
+					return agentDatabaseRunResult{}, fmt.Errorf("site %s database %s state save: %w", site.Slug, name, commitErr)
+				}
 			}
 			siteSummary.Queued += len(events)
 			summary.Queued += len(events)
@@ -650,17 +672,17 @@ func runConfiguredBrowserCrawls(ctx context.Context, runtime *agent.Runtime, con
 		labels := agent.SiteEventLabels(site)
 		siteSummary.Pages = len(crawlResult.Pages)
 		summary.Pages += len(crawlResult.Pages)
-		if !bootstrap && crawl.Schedule != "" {
-			if err := touchCollectionState(browserStatePath(config, site), crawlResult.FinishedAt); err != nil {
-				return agentBrowserRunResult{}, fmt.Errorf("site %s browser schedule state: %w", site.Slug, err)
-			}
-		}
 		if bootstrap {
 			summary.Sites = append(summary.Sites, siteSummary)
 			continue
 		}
 		events := collector.BuildBrowserCrawlEvents(crawlResult, labels)
 		if len(events) == 0 {
+			if crawl.Schedule != "" {
+				if err := touchCollectionState(browserStatePath(config, site), crawlResult.FinishedAt); err != nil {
+					return agentBrowserRunResult{}, fmt.Errorf("site %s browser schedule state: %w", site.Slug, err)
+				}
+			}
 			summary.Sites = append(summary.Sites, siteSummary)
 			continue
 		}
@@ -687,6 +709,11 @@ func runConfiguredBrowserCrawls(ctx context.Context, runtime *agent.Runtime, con
 		}); err != nil {
 			return agentBrowserRunResult{}, fmt.Errorf("site %s browser enqueue: %w", site.Slug, err)
 		}
+		if crawl.Schedule != "" {
+			if err := touchCollectionState(browserStatePath(config, site), crawlResult.FinishedAt); err != nil {
+				return agentBrowserRunResult{}, fmt.Errorf("site %s browser schedule state: %w", site.Slug, err)
+			}
+		}
 		siteSummary.Queued = len(events)
 		summary.Queued += len(events)
 		summary.Sites = append(summary.Sites, siteSummary)
@@ -698,14 +725,52 @@ func touchCollectionState(path string, timestamp time.Time) error {
 	if timestamp.IsZero() {
 		timestamp = time.Now().UTC()
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 	content := []byte(timestamp.UTC().Format(time.RFC3339Nano) + "\n")
-	if err := os.WriteFile(path, content, 0o600); err != nil {
+	temp, err := os.CreateTemp(dir, ".state-*.tmp")
+	if err != nil {
 		return err
 	}
+	tempPath := temp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tempPath)
+		}
+	}()
+	if err := temp.Chmod(0o600); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if _, err := temp.Write(content); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if err := temp.Sync(); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		return err
+	}
+	cleanup = false
+	syncCollectionStateDir(dir)
 	return os.Chtimes(path, timestamp, timestamp)
+}
+
+func syncCollectionStateDir(dir string) {
+	handle, err := os.Open(dir)
+	if err != nil {
+		return
+	}
+	defer handle.Close()
+	_ = handle.Sync()
 }
 
 func parseOptionalDuration(value string) (time.Duration, error) {

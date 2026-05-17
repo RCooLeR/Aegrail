@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/rcooler/aegrail/agent/internal/domain"
+	"github.com/rcooler/aegrail/agent/internal/fsutil"
 )
 
 const WatchStateSchema = "aegrail.agent.watch_state.v1"
@@ -413,7 +414,7 @@ func saveWatchState(path string, state watchState) error {
 	if err != nil {
 		return err
 	}
-	return writeFileAtomicSync(path, append(content, '\n'), 0o600)
+	return fsutil.WriteFileAtomicSync(path, append(content, '\n'), 0o600)
 }
 
 type watchScanResult struct {
@@ -426,10 +427,16 @@ type watchScanResult struct {
 
 func scanPaths(paths []string, queueDir string, root string, exclude []string, previous map[string]fileState, forceFullHash bool) (watchScanResult, error) {
 	result := watchScanResult{Files: map[string]fileState{}, StartedAt: time.Now().UTC()}
-	queueAbs, _ := filepath.Abs(queueDir)
+	queueAbs, err := filepath.Abs(queueDir)
+	if err != nil {
+		queueAbs = queueDir
+	}
 	rootAbs := ""
 	if strings.TrimSpace(root) != "" {
-		rootAbs, _ = filepath.Abs(root)
+		rootAbs, err = filepath.Abs(root)
+		if err != nil {
+			rootAbs = root
+		}
 	}
 	excludeAbs := resolveExcludePaths(exclude)
 	for _, path := range paths {

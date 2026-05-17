@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/rcooler/aegrail/hub/internal/domain"
+	"github.com/rcooler/aegrail/hub/internal/ports"
 )
 
 const (
@@ -129,6 +130,21 @@ func (h *Hub) AnalyzeModelAnalysisQueue(ctx context.Context, input AnalyzeModelA
 	}
 
 	result := AnalyzeModelAnalysisQueueResult{}
+	if scopeRepo, ok := h.findings.(ports.ModelAnalysisQueueScopeRepository); ok {
+		scopes, err := scopeRepo.ListModelAnalysisQueueScopes(ctx, limit)
+		if err != nil {
+			return AnalyzeModelAnalysisQueueResult{}, err
+		}
+		for _, scope := range scopes {
+			if result.Findings >= limit {
+				return result, nil
+			}
+			result.Scopes++
+			remaining := limit - result.Findings
+			h.analyzeModelAnalysisQueueScope(ctx, input, scope.Organization, scope.Project, scope.Environment, remaining, &result)
+		}
+		return result, nil
+	}
 	organizations, err := h.inventory.ListOrganizations(ctx)
 	if err != nil {
 		return AnalyzeModelAnalysisQueueResult{}, err

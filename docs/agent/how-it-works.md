@@ -506,13 +506,16 @@ Entity observations:
 
 ## Database State And Events
 
-After a database snapshot, the agent writes local state:
+After a database snapshot, the agent prepares the next local state:
 
 ```text
 <state_dir>/sites/<site_slug>/db-<database_name>.json
 ```
 
-Then it compares the new snapshot to the previous one.
+Then it compares the new snapshot to the previous one. On normal runs, that new
+state is committed only after the related queue batch is written successfully.
+If queueing fails or the process crashes first, the next run repeats the diff
+instead of silently accepting an unreported state.
 
 First run behavior:
 
@@ -619,9 +622,10 @@ intentionally want a short local audit cache.
 
 Queue and state files are written defensively. The Agent writes JSON state to a
 temporary file in the same directory, flushes it, renames it into place, and
-best-effort flushes the parent directory. Pending queue batches are also flushed
-before they are eligible to be sent. This keeps crash or power-loss failures from
-silently producing half-written state or disappearing pending batches.
+best-effort flushes the parent directory. Pending queue batches and browser
+schedule markers are also flushed before they are eligible to be sent or used
+for skip decisions. This keeps crash or power-loss failures from silently
+producing half-written state or disappearing pending batches.
 
 A queued batch has this shape:
 

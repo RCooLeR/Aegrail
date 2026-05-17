@@ -7,6 +7,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rcooler/aegrail/hub/internal/domain"
+	"github.com/rcooler/aegrail/hub/internal/ports"
 )
 
 type HubFindingRepository struct {
@@ -55,7 +56,7 @@ func (r *HubFindingRepository) SaveHubFindings(ctx context.Context, findings []d
 			nullif($4::text, '')::uuid,
 			$5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
 		)
-		ON CONFLICT (environment_id, rule_id, dedupe_key) DO UPDATE
+		ON CONFLICT (environment_id, (coalesce(app_id, '00000000-0000-0000-0000-000000000000'::uuid)), rule_id, dedupe_key) DO UPDATE
 		SET rule_version = EXCLUDED.rule_version,
 			severity = EXCLUDED.severity,
 			confidence = EXCLUDED.confidence,
@@ -134,7 +135,7 @@ func (r *HubFindingRepository) SaveHubFindings(ctx context.Context, findings []d
 			&item.UpdatedAt,
 		); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				item, err = r.getHubFindingByDedupeKey(ctx, tx, finding.EnvironmentID, finding.RuleID, finding.DedupeKey)
+				item, err = r.getHubFindingByDedupeKey(ctx, tx, finding.EnvironmentID, finding.AppID, finding.RuleID, finding.DedupeKey)
 				if err != nil {
 					return nil, err
 				}
@@ -154,7 +155,7 @@ func (r *HubFindingRepository) SaveHubFindings(ctx context.Context, findings []d
 	return saved, nil
 }
 
-func (r *HubFindingRepository) getHubFindingByDedupeKey(ctx context.Context, row hubFindingQuerier, environmentID domain.ID, ruleID string, dedupeKey string) (domain.HubFinding, error) {
+func (r *HubFindingRepository) getHubFindingByDedupeKey(ctx context.Context, row hubFindingQuerier, environmentID domain.ID, appID domain.ID, ruleID string, dedupeKey string) (domain.HubFinding, error) {
 	const query = `
 		SELECT id::text, organization_id::text, project_id::text, environment_id::text,
 			coalesce(app_id::text, ''), rule_id, rule_version, dedupe_key, severity,
@@ -163,12 +164,14 @@ func (r *HubFindingRepository) getHubFindingByDedupeKey(ctx context.Context, row
 			status_updated_at, metadata, created_at, updated_at
 		FROM hub_findings
 		WHERE environment_id = $1
-			AND rule_id = $2
-			AND dedupe_key = $3
+			AND coalesce(app_id, '00000000-0000-0000-0000-000000000000'::uuid) =
+				coalesce(nullif($2::text, '')::uuid, '00000000-0000-0000-0000-000000000000'::uuid)
+			AND rule_id = $3
+			AND dedupe_key = $4
 	`
 	var item domain.HubFinding
 	var eventIDs []string
-	if err := row.QueryRow(ctx, query, environmentID, ruleID, dedupeKey).Scan(
+	if err := row.QueryRow(ctx, query, environmentID, string(appID), ruleID, dedupeKey).Scan(
 		&item.ID,
 		&item.OrganizationID,
 		&item.ProjectID,
@@ -310,6 +313,55 @@ func (r *HubFindingRepository) GetHubFinding(ctx context.Context, findingID doma
 	}
 	item.EventIDs = domainIDs(eventIDs)
 	return item, nil
+}
+
+func (r *HubFindingRepository) ListModelAnalysisQueueScopes(ctx context.Context, limit int) ([]ports.ModelAnalysisQueueScope, error) {
+	if limit <= 0 {
+		limit = 5
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	const query = `
+		SELECT DISTINCT
+			o.id::text, o.slug::text, o.name, o.created_at, o.updated_at,
+			p.id::text, p.organization_id::text, p.slug::text, p.name, p.created_at, p.updated_at,
+			e.id::text, e.project_id::text, e.slug::text, e.name, e.created_at, e.updated_at
+		FROM hub_findings f
+		JOIN organizations o ON o.id = f.organization_id
+		JOIN projects p ON p.id = f.project_id
+		JOIN environments e ON e.id = f.environment_id
+		WHERE coalesce(nullif(f.status, ''), 'open') = 'open'
+			AND NOT EXISTS (
+				SELECT 1
+				FROM hub_model_analysis_reports r
+				WHERE r.environment_id = f.environment_id
+					AND coalesce(r.app_id, '00000000-0000-0000-0000-000000000000'::uuid) =
+						coalesce(f.app_id, '00000000-0000-0000-0000-000000000000'::uuid)
+					AND r.source_finding_ids @> ARRAY[f.id::text]::text[]
+					AND r.status = 'completed'
+			)
+		ORDER BY o.slug, p.slug, e.slug
+		LIMIT $1
+	`
+	rows, err := r.pool.Query(ctx, query, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var scopes []ports.ModelAnalysisQueueScope
+	for rows.Next() {
+		var scope ports.ModelAnalysisQueueScope
+		if err := rows.Scan(
+			&scope.Organization.ID, &scope.Organization.Slug, &scope.Organization.Name, &scope.Organization.CreatedAt, &scope.Organization.UpdatedAt,
+			&scope.Project.ID, &scope.Project.OrganizationID, &scope.Project.Slug, &scope.Project.Name, &scope.Project.CreatedAt, &scope.Project.UpdatedAt,
+			&scope.Environment.ID, &scope.Environment.ProjectID, &scope.Environment.Slug, &scope.Environment.Name, &scope.Environment.CreatedAt, &scope.Environment.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		scopes = append(scopes, scope)
+	}
+	return scopes, rows.Err()
 }
 
 func (r *HubFindingRepository) UpdateHubFindingStatus(ctx context.Context, findingID domain.ID, environmentID domain.ID, update domain.HubFindingStatusUpdate) (domain.HubFinding, error) {

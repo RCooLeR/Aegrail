@@ -106,7 +106,7 @@ limit
 | `POST` | `/api/v1/access/users/{id}/totp/start` | admin | Start pending TOTP enrollment and return QR/secret once. |
 | `POST` | `/api/v1/access/users/{id}/totp/verify` | admin | Verify current code and activate TOTP. |
 | `DELETE` | `/api/v1/access/users/{id}/totp` | admin | Disable TOTP. |
-| `GET` | `/api/v1/inventory/scopes` | viewer | List organization/project/environment scopes. |
+| `GET` | `/api/v1/inventory/scopes` | viewer | List the full organization/project/environment/app/service/host/agent tree. |
 | `GET` | `/api/v1/inventory/apps` | viewer | List apps for a scope. |
 | `GET` | `/api/v1/inventory/services` | viewer | List services for a scope/app. |
 | `GET` | `/api/v1/inventory/hosts` | viewer | List hosts for a scope. |

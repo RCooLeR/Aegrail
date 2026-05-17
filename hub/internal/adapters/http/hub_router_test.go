@@ -95,3 +95,20 @@ func TestHubRouterListsRuleDefinitions(t *testing.T) {
 		t.Fatalf("first rule = %#v, want versioned database rule", body.Rules[0])
 	}
 }
+
+func TestHubAuthRateLimiterSweepsStaleKeys(t *testing.T) {
+	limiter := newHubAuthRateLimiter(1, time.Minute)
+	now := time.Date(2026, 5, 17, 1, 2, 3, 0, time.UTC)
+	if !limiter.allow("one", now) || !limiter.allow("two", now) {
+		t.Fatalf("initial attempts should be allowed")
+	}
+	if got := len(limiter.attempts); got != 2 {
+		t.Fatalf("attempt keys = %d, want 2 before sweep", got)
+	}
+	if !limiter.allow("three", now.Add(2*time.Minute)) {
+		t.Fatalf("attempt after window should be allowed")
+	}
+	if got := len(limiter.attempts); got != 1 {
+		t.Fatalf("attempt keys = %d, want stale keys swept", got)
+	}
+}

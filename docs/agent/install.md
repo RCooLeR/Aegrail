@@ -36,7 +36,7 @@ Database DSNs should be stored in environment variables referenced by `dsn_env`.
 $env:AEGRAIL_PII_KEY = "replace-with-agent-side-hmac-key"
 ```
 
-For production, prefer `hub.node_secret_env` so the node secret lives in the host environment instead of the YAML file. The Hub still shows the value only once when the node is created.
+For production, prefer `hub.node_secret_env` so the node secret lives in the host environment instead of the YAML file. The Hub still shows the value only once when the node is created. The legacy `agent install` command also accepts `--node-secret-env`; avoid passing private key material through command-line history on real nodes.
 
 Optional controls:
 

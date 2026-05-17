@@ -3,6 +3,7 @@ package redis
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -116,12 +117,47 @@ func (c *Client) TryLock(ctx context.Context, key string, ttl time.Duration) (po
 	}, true, nil
 }
 
+func (c *Client) Allow(ctx context.Context, key string, limit int, window time.Duration) (bool, error) {
+	if c == nil || c.client == nil {
+		return true, nil
+	}
+	if limit <= 0 {
+		return true, nil
+	}
+	if window <= 0 {
+		window = time.Minute
+	}
+	rateKey, err := c.rateLimitKey(key)
+	if err != nil {
+		return false, err
+	}
+	count, err := c.client.Incr(ctx, rateKey).Result()
+	if err != nil {
+		return false, err
+	}
+	if count == 1 {
+		if err := c.client.Expire(ctx, rateKey, window).Err(); err != nil {
+			return false, err
+		}
+	}
+	return count <= int64(limit), nil
+}
+
 func (c *Client) queueKey(queue string) (string, error) {
 	name := strings.TrimSpace(queue)
 	if name == "" {
 		return "", errors.New("queue name is required")
 	}
 	return c.keyPrefix + ":queue:" + name, nil
+}
+
+func (c *Client) rateLimitKey(key string) (string, error) {
+	name := strings.TrimSpace(key)
+	if name == "" {
+		return "", errors.New("rate limit key is required")
+	}
+	sum := sha256.Sum256([]byte(name))
+	return c.keyPrefix + ":rate:" + hex.EncodeToString(sum[:]), nil
 }
 
 func (c *Client) lockKey(key string) (string, error) {

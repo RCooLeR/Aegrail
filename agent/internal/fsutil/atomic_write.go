@@ -1,4 +1,4 @@
-package agent
+package fsutil
 
 import (
 	"io/fs"
@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 )
 
-func writeFileAtomicSync(path string, content []byte, perm fs.FileMode) error {
+func WriteFileAtomicSync(path string, content []byte, perm fs.FileMode) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
@@ -41,11 +41,11 @@ func writeFileAtomicSync(path string, content []byte, perm fs.FileMode) error {
 		return err
 	}
 	cleanup = false
-	syncParentDir(path)
+	SyncParentDir(path)
 	return nil
 }
 
-func syncParentDir(path string) {
+func SyncParentDir(path string) {
 	dir, err := os.Open(filepath.Dir(path))
 	if err != nil {
 		return

@@ -14,6 +14,16 @@ type HubFindingRepository interface {
 	UpdateOpenHubFindingStatuses(ctx context.Context, environmentID domain.ID, appID domain.ID, update domain.HubFindingStatusUpdate) (int, error)
 }
 
+type ModelAnalysisQueueScope struct {
+	Organization domain.Organization
+	Project      domain.Project
+	Environment  domain.Environment
+}
+
+type ModelAnalysisQueueScopeRepository interface {
+	ListModelAnalysisQueueScopes(ctx context.Context, limit int) ([]ModelAnalysisQueueScope, error)
+}
+
 type HubFileIgnoreRuleRepository interface {
 	SaveHubFileIgnoreRule(ctx context.Context, rule domain.HubFileIgnoreRule) (domain.HubFileIgnoreRule, error)
 	ListActiveHubFileIgnoreRules(ctx context.Context, environmentID domain.ID, appID domain.ID) ([]domain.HubFileIgnoreRule, error)

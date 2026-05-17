@@ -171,7 +171,6 @@ CREATE TABLE hub_findings (
 	metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
 	created_at timestamptz NOT NULL DEFAULT now(),
 	updated_at timestamptz NOT NULL DEFAULT now(),
-	UNIQUE (environment_id, rule_id, dedupe_key),
 	CONSTRAINT hub_findings_rule_id_present CHECK (length(trim(rule_id)) > 0),
 	CONSTRAINT hub_findings_rule_version_present CHECK (length(trim(rule_version)) > 0),
 	CONSTRAINT hub_findings_dedupe_key_present CHECK (length(trim(dedupe_key)) > 0),
@@ -318,6 +317,8 @@ CREATE INDEX hub_findings_app_event_idx ON hub_findings (app_id, first_event_at 
 CREATE INDEX hub_findings_severity_idx ON hub_findings (severity);
 CREATE INDEX hub_findings_status_idx ON hub_findings (status);
 CREATE INDEX hub_findings_metadata_gin_idx ON hub_findings USING gin (metadata);
+CREATE UNIQUE INDEX hub_findings_scope_rule_dedupe_unique_idx
+	ON hub_findings (environment_id, (coalesce(app_id, '00000000-0000-0000-0000-000000000000'::uuid)), rule_id, dedupe_key);
 
 CREATE INDEX hub_browser_script_allowlist_environment_idx ON hub_browser_script_allowlist (environment_id, app_id, kind);
 CREATE INDEX hub_browser_script_allowlist_status_idx ON hub_browser_script_allowlist (status);
@@ -328,6 +329,7 @@ CREATE INDEX hub_model_analysis_reports_status_idx ON hub_model_analysis_reports
 CREATE INDEX hub_model_analysis_reports_bundle_sha_idx ON hub_model_analysis_reports (evidence_bundle_sha256);
 CREATE INDEX hub_model_analysis_reports_prompt_template_idx ON hub_model_analysis_reports (prompt_template_id, prompt_template_version);
 CREATE INDEX hub_model_analysis_reports_metadata_gin_idx ON hub_model_analysis_reports USING gin (metadata);
+CREATE INDEX hub_model_analysis_reports_source_finding_ids_gin_idx ON hub_model_analysis_reports USING gin (source_finding_ids);
 
 CREATE UNIQUE INDEX hub_users_email_lower_idx ON hub_users (lower(email));
 CREATE INDEX hub_users_access_level_idx ON hub_users (access_level);

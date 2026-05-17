@@ -99,9 +99,13 @@ func (c *Container) ConnectDatabase(ctx context.Context) error {
 		Model:            c.Model,
 		Jobs:             c.redis,
 		Locks:            c.redis,
+		RateLimiter:      c.redis,
 		Users:            postgres.NewHubUserRepository(pool),
 		Notifications:    notificationSink,
 		UserSecretKey:    c.Config.Hub.UserSecretKey,
+		BackgroundError: func(err error) {
+			c.Logger.Error().Err(err).Msg("hub background task failed")
+		},
 	})
 	return nil
 }

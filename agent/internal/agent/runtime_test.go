@@ -103,6 +103,61 @@ func TestAgentQueueSendDeletesBatchByDefault(t *testing.T) {
 	}
 }
 
+func TestAgentQueueSendCanReadNodeSecretFromEnvironment(t *testing.T) {
+	root := t.TempDir()
+	nodeSecret, _, err := wire.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("GenerateKeyPair node returned error: %v", err)
+	}
+	_, hubPublic, err := wire.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("GenerateKeyPair hub returned error: %v", err)
+	}
+	t.Setenv("AEGRAIL_TEST_NODE_SECRET", nodeSecret)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var envelope wire.Envelope
+		if err := json.NewDecoder(r.Body).Decode(&envelope); err != nil {
+			t.Fatalf("Decode envelope returned error: %v", err)
+		}
+		if envelope.Ciphertext == "" || envelope.NodeID != "agt_web_01" {
+			t.Fatalf("envelope = %#v, want encrypted node batch", envelope)
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+
+	runtime := NewRuntime(Config{
+		ConfigPath: filepath.Join(root, "agent.json"),
+		QueueDir:   filepath.Join(root, "queue"),
+	})
+	_, err = runtime.Install(context.Background(), Identity{
+		HubURL:        server.URL,
+		HubProtocol:   "aegrail-wire-v1",
+		HubPublicKey:  hubPublic,
+		NodeSecretEnv: "AEGRAIL_TEST_NODE_SECRET",
+		QueueDir:      filepath.Join(root, "queue"),
+		Org:           "acme",
+		Project:       "customer-site",
+		Environment:   "production",
+		Host:          "web-01",
+		AgentID:       "agt_web_01",
+	})
+	if err != nil {
+		t.Fatalf("Install returned error: %v", err)
+	}
+	if _, _, err := runtime.EnqueueEvent(context.Background(), EnqueueEventInput{BatchID: "batch-env", Type: "file.created"}); err != nil {
+		t.Fatalf("EnqueueEvent returned error: %v", err)
+	}
+	result, err := runtime.SendQueued(context.Background(), 0)
+	if err != nil {
+		t.Fatalf("SendQueued returned error: %v", err)
+	}
+	if result.Sent != 1 || result.Failed != 0 {
+		t.Fatalf("result = %+v, want env-secret send success", result)
+	}
+}
+
 func TestAgentQueueSendCanRetainSentBatch(t *testing.T) {
 	root := t.TempDir()
 	fixedNow := time.Date(2026, 5, 12, 2, 10, 0, 0, time.UTC)

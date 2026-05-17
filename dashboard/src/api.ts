@@ -348,14 +348,98 @@ export async function loadEstateDashboard(scope: ApiScope): Promise<EstateDashbo
   ]);
 
   const choices = estateScopeChoices(scope.baseUrl, scopes.data);
+  const shared = { health, scopes, rules };
+  const topologyCache = new Map<string, Promise<RequestState<Topology>>>();
   const instances = await Promise.all(
     choices.map(async (choice) => ({
       ...choice,
-      data: await loadDashboard(choice.scope)
+      data: await loadEstateInstanceDashboard(choice.scope, shared, topologyCache)
     }))
   );
 
   return { health, instances, rules, scopes };
+}
+
+async function loadEstateInstanceDashboard(
+  scope: ApiScope,
+  shared: Pick<DashboardData, "health" | "rules" | "scopes">,
+  topologyCache: Map<string, Promise<RequestState<Topology>>>
+): Promise<DashboardData> {
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const scoped = query(scope);
+
+  const [
+    findings,
+    timeline,
+    coverage,
+    topology,
+    deployments,
+    browserScripts,
+    allowlist,
+    reports
+  ] = await Promise.all([
+    state(
+      apiGet<ApiEnvelope<{ findings: HubFinding[] }>>(scope, `/api/v1/findings?${scoped}&limit=200`).then(
+        (body) => body.findings ?? []
+      ),
+      defaults.findings
+    ),
+    state(
+      apiGet<ApiEnvelope<{ events: TimelineEvent[] }>>(
+        scope,
+        `/api/v1/timeline?${scoped}&since=${encodeURIComponent(since)}&limit=250`
+      ).then((body) => sortTimelineNewestFirst(body.events ?? [])),
+      defaults.timeline
+    ),
+    state(
+      apiGet<ApiEnvelope<{ coverage: CoverageRecord[] }>>(
+        scope,
+        `/api/v1/coverage?${scoped}&limit=1000`
+      ).then((body) => body.coverage ?? []),
+      defaults.coverage
+    ),
+    estateTopologyState(scope, topologyCache),
+    state(
+      apiGet<ApiEnvelope<{ deployments: Deployment[] }>>(scope, `/api/v1/deployments?${scoped}`).then(
+        (body) => body.deployments ?? []
+      ),
+      defaults.deployments
+    ),
+    state(
+      apiGet<ApiEnvelope<{ scripts: BrowserScript[] }>>(
+        scope,
+        `/api/v1/browser/scripts?${scoped}&since=${encodeURIComponent(since)}&limit=500`
+      ).then((body) => body.scripts ?? []),
+      defaults.browserScripts
+    ),
+    state(
+      apiGet<ApiEnvelope<{ allowlist: BrowserAllowlistEntry[] }>>(
+        scope,
+        `/api/v1/browser/script-allowlist?${scoped}`
+      ).then((body) => body.allowlist ?? []),
+      defaults.allowlist
+    ),
+    state(
+      apiGet<ApiEnvelope<{ reports: ModelAnalysisReport[] }>>(
+        scope,
+        `/api/v1/reports/model-analysis?${scoped}&limit=50`
+      ).then((body) => body.reports ?? []),
+      defaults.reports
+    )
+  ]);
+
+  return { ...shared, findings, timeline, coverage, topology, deployments, browserScripts, allowlist, reports };
+}
+
+function estateTopologyState(scope: ApiScope, cache: Map<string, Promise<RequestState<Topology>>>) {
+  const key = [scope.baseUrl, scope.org, scope.project, scope.environment].join("\u0000");
+  const existing = cache.get(key);
+  if (existing) {
+    return existing;
+  }
+  const request = state(apiGet<Topology>(scope, `/api/v1/inventory/topology?${query(scope, false)}`), defaults.topology);
+  cache.set(key, request);
+  return request;
 }
 
 export async function updateFindingStatus(

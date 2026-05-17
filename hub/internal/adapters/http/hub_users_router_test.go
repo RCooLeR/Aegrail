@@ -5,8 +5,10 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/base32"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -79,6 +81,11 @@ func TestHubRouterManagesUsersAndTOTPEnrollment(t *testing.T) {
 	cookies := loginResponse.Result().Cookies()
 	if len(cookies) == 0 {
 		t.Fatalf("login did not set a session cookie")
+	}
+	oldStyleMAC := hmac.New(sha256.New, []byte(cookies[0].Value))
+	oldStyleMAC.Write([]byte(dashboardProtocol))
+	if loginBody.CSRFToken == hex.EncodeToString(oldStyleMAC.Sum(nil)) {
+		t.Fatalf("csrf token is still derivable from the session cookie")
 	}
 
 	blockedListRequest := httptest.NewRequest(http.MethodGet, "/api/v1/access/users", nil)
@@ -376,6 +383,9 @@ func (r *httpTestHubUserRepository) ActivateHubUserTOTP(ctx context.Context, use
 	user, ok := r.users[userID]
 	if !ok {
 		return domain.HubUser{}, fmt.Errorf("user %q was not found", userID)
+	}
+	if user.PendingTOTPSecretCiphertext != activation.ExpectedPendingSecretCiphertext {
+		return domain.HubUser{}, hubapp.ErrHubTOTPChanged
 	}
 	user.TOTPSecretCiphertext = activation.ActiveSecretCiphertext
 	user.TwoFactorEnabled = true

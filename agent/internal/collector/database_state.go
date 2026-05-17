@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/rcooler/aegrail/agent/internal/fsutil"
 )
 
 const DatabaseSnapshotStateSchema = "aegrail.collector.database_snapshot_state.v1"
@@ -56,6 +58,12 @@ type DatabaseSnapshotDiffResult struct {
 	EntityChanges     []DatabaseEntityChange
 }
 
+type DatabaseSnapshotStateUpdate struct {
+	Current DatabaseSnapshotState
+	Diff    DatabaseSnapshotDiffResult
+	Save    bool
+}
+
 type DatabaseSnapshotChange struct {
 	Type     string
 	Previous DatabaseSnapshotCheckState
@@ -69,20 +77,40 @@ type DatabaseEntityChange struct {
 }
 
 func UpdateDatabaseSnapshotState(path string, result DatabaseCollectResult) (DatabaseSnapshotDiffResult, error) {
+	update, err := PlanDatabaseSnapshotStateUpdate(path, result)
+	if err != nil {
+		return DatabaseSnapshotDiffResult{}, err
+	}
+	if err := CommitDatabaseSnapshotStateUpdate(path, update); err != nil {
+		return DatabaseSnapshotDiffResult{}, err
+	}
+	return update.Diff, nil
+}
+
+func PlanDatabaseSnapshotStateUpdate(path string, result DatabaseCollectResult) (DatabaseSnapshotStateUpdate, error) {
 	current := BuildDatabaseSnapshotState(result)
 	if len(current.Checks) == 0 && len(current.Entities) == 0 {
-		return DatabaseSnapshotDiffResult{Skipped: true}, nil
+		return DatabaseSnapshotStateUpdate{
+			Diff: DatabaseSnapshotDiffResult{Skipped: true},
+		}, nil
 	}
 
 	previous, found, err := LoadDatabaseSnapshotState(path)
 	if err != nil {
-		return DatabaseSnapshotDiffResult{}, err
+		return DatabaseSnapshotStateUpdate{}, err
 	}
-	diff := DiffDatabaseSnapshotState(previous, found, current)
-	if err := SaveDatabaseSnapshotState(path, current); err != nil {
-		return DatabaseSnapshotDiffResult{}, err
+	return DatabaseSnapshotStateUpdate{
+		Current: current,
+		Diff:    DiffDatabaseSnapshotState(previous, found, current),
+		Save:    true,
+	}, nil
+}
+
+func CommitDatabaseSnapshotStateUpdate(path string, update DatabaseSnapshotStateUpdate) error {
+	if !update.Save {
+		return nil
 	}
-	return diff, nil
+	return SaveDatabaseSnapshotState(path, update.Current)
 }
 
 func BuildDatabaseSnapshotState(result DatabaseCollectResult) DatabaseSnapshotState {
@@ -157,7 +185,7 @@ func SaveDatabaseSnapshotState(path string, state DatabaseSnapshotState) error {
 	if err != nil {
 		return err
 	}
-	return writeFileAtomicSync(path, append(content, '\n'), 0o600)
+	return fsutil.WriteFileAtomicSync(path, append(content, '\n'), 0o600)
 }
 
 func DiffDatabaseSnapshotState(previous DatabaseSnapshotState, found bool, current DatabaseSnapshotState) DatabaseSnapshotDiffResult {
@@ -244,6 +272,9 @@ func databaseEntityEquivalentForDiff(previous DatabaseEntityState, current Datab
 	if !isDatabasePIIAccountEntity(current.Type) {
 		return false
 	}
+	if !databaseEntityPIIIdentityEquivalent(previous.Attributes, current.Attributes) {
+		return false
+	}
 	previousAttributes := databaseEntityComparableAttributes(previous.Attributes)
 	currentAttributes := databaseEntityComparableAttributes(current.Attributes)
 	if len(previousAttributes) != len(currentAttributes) {
@@ -255,6 +286,36 @@ func databaseEntityEquivalentForDiff(previous DatabaseEntityState, current Datab
 		}
 	}
 	return true
+}
+
+func databaseEntityPIIIdentityEquivalent(previous map[string]any, current map[string]any) bool {
+	for _, key := range []string{
+		"email_hmac_sha256",
+		"login_hmac_sha256",
+		"email",
+		"login",
+	} {
+		previousValue := databaseEntityAttributeString(previous, key)
+		currentValue := databaseEntityAttributeString(current, key)
+		if previousValue == "" || currentValue == "" {
+			continue
+		}
+		if previousValue != currentValue {
+			return false
+		}
+	}
+	return true
+}
+
+func databaseEntityAttributeString(attributes map[string]any, key string) string {
+	if attributes == nil {
+		return ""
+	}
+	value, ok := attributes[key]
+	if !ok || value == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
 }
 
 func isDatabasePIIAccountEntity(entityType string) bool {

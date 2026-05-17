@@ -200,7 +200,7 @@ func (h *Hub) autoCorrelateIngestEvents(ctx context.Context, organizationSlug st
 	if since.IsZero() {
 		since = time.Now().UTC()
 	}
-	_, _ = h.CorrelateEvents(ctx, CorrelateEventsInput{
+	if _, err := h.CorrelateEvents(ctx, CorrelateEventsInput{
 		OrganizationSlug: organizationSlug,
 		ProjectSlug:      projectSlug,
 		EnvironmentSlug:  environmentSlug,
@@ -209,7 +209,9 @@ func (h *Hub) autoCorrelateIngestEvents(ctx context.Context, organizationSlug st
 		Window:           autoCorrelationWindow,
 		Limit:            autoCorrelationLimit,
 		SaveFindings:     true,
-	})
+	}); err != nil && h.backgroundError != nil {
+		h.backgroundError(err)
+	}
 }
 
 func shouldAutoCorrelateIngestEvents(events []domain.IngestEvent) bool {

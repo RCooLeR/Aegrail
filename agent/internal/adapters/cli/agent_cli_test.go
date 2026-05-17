@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -577,6 +578,67 @@ func TestRunConfiguredBrowserCrawlsCanSkipBySchedule(t *testing.T) {
 	}
 	if len(entries) == 0 {
 		t.Fatalf("pending files=%d, want browser batch", len(entries))
+	}
+}
+
+func TestRunConfiguredBrowserCrawlsDoesNotAdvanceScheduleWhenEnqueueFails(t *testing.T) {
+	pageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<!doctype html><html><head><script src="/app.js"></script></head><body></body></html>`))
+	}))
+	defer pageServer.Close()
+
+	root := t.TempDir()
+	queuePath := filepath.Join(root, "queue-is-file")
+	if err := os.WriteFile(queuePath, []byte("not a directory"), 0o600); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+	config := agent.ServerConfig{
+		Runtime: agent.ServerRuntimeConfig{
+			QueueDir: queuePath,
+			StateDir: filepath.Join(root, "state"),
+		},
+		Identity: agent.ServerIdentityConfig{
+			Org:         "acme",
+			Project:     "hosted-sites",
+			Environment: "production",
+			Host:        "web-01",
+			AgentID:     "agt_web_01",
+		},
+		Sites: []agent.ServerSiteConfig{
+			{
+				Slug:    "example-com",
+				Kind:    "wordpress",
+				App:     "example-com",
+				Service: "frontend",
+				BrowserCrawl: agent.ServerBrowserCrawlConfig{
+					Enabled:  true,
+					URLs:     []string{pageServer.URL},
+					Schedule: "1h",
+				},
+			},
+		},
+	}
+	runtime := agent.NewRuntime(agent.Config{
+		ConfigPath: filepath.Join(root, "agent.json"),
+		QueueDir:   queuePath,
+		Identity: &agent.Identity{
+			HubURL:      "http://127.0.0.1:8787",
+			QueueDir:    queuePath,
+			Org:         "acme",
+			Project:     "hosted-sites",
+			Environment: "production",
+			Host:        "web-01",
+			AgentID:     "agt_web_01",
+		},
+	})
+
+	_, err := runConfiguredBrowserCrawls(context.Background(), runtime, config, false)
+	if err == nil {
+		t.Fatalf("runConfiguredBrowserCrawls returned nil error, want enqueue failure")
+	}
+	if _, statErr := os.Stat(browserStatePath(config, config.Sites[0])); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("browser state stat error = %v, want not exist", statErr)
 	}
 }
 

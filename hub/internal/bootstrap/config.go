@@ -2,6 +2,8 @@ package bootstrap
 
 import (
 	"errors"
+	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -57,6 +59,8 @@ type HubConfig struct {
 	WirePrivateKey     string
 	WireTimestampSkew  time.Duration
 	UserSecretKey      string
+	TrustedProxyCIDRs  []*net.IPNet
+	TrustedProxyErrors []string
 	ModelAnalysisAuto  bool
 	ModelAnalysisEvery time.Duration
 	ModelAnalysisLimit int
@@ -69,6 +73,7 @@ type LoggingConfig struct {
 }
 
 func LoadConfig() Config {
+	trustedProxies := parseCIDRList(envString("AEGRAIL_TRUSTED_PROXY_CIDRS", ""))
 	return Config{
 		Environment: envString("AEGRAIL_ENV", "local"),
 		Paths: PathsConfig{
@@ -76,7 +81,7 @@ func LoadConfig() Config {
 			MigrationsDir: envString("AEGRAIL_MIGRATIONS_DIR", "migrations"),
 		},
 		Database: DatabaseConfig{
-			URL: envString("AEGRAIL_DATABASE_URL", "postgres://aegrail:aegrail@localhost:55432/aegrail?sslmode=disable"),
+			URL: envString("AEGRAIL_DATABASE_URL", ""),
 		},
 		Cache: CacheConfig{
 			RedisURL:  envString("AEGRAIL_REDIS_URL", ""),
@@ -102,6 +107,8 @@ func LoadConfig() Config {
 			WirePrivateKey:     envString("AEGRAIL_HUB_WIRE_PRIVATE_KEY", ""),
 			WireTimestampSkew:  envDuration("AEGRAIL_HUB_WIRE_TIMESTAMP_SKEW", 5*time.Minute),
 			UserSecretKey:      envString("AEGRAIL_HUB_USER_SECRET", ""),
+			TrustedProxyCIDRs:  trustedProxies.Networks,
+			TrustedProxyErrors: trustedProxies.Errors,
 			ModelAnalysisAuto:  envBool("AEGRAIL_MODEL_ANALYSIS_AUTO", true),
 			ModelAnalysisEvery: envDuration("AEGRAIL_MODEL_ANALYSIS_INTERVAL", time.Minute),
 			ModelAnalysisLimit: envInt("AEGRAIL_MODEL_ANALYSIS_LIMIT", 5),
@@ -115,6 +122,9 @@ func LoadConfig() Config {
 }
 
 func (c Config) ValidateServe() error {
+	if strings.TrimSpace(c.Database.URL) == "" {
+		return errors.New("AEGRAIL_DATABASE_URL is required")
+	}
 	if strings.TrimSpace(c.Hub.WirePrivateKey) == "" {
 		return errors.New("AEGRAIL_HUB_WIRE_PRIVATE_KEY is required")
 	}
@@ -122,6 +132,28 @@ func (c Config) ValidateServe() error {
 		return errors.New("AEGRAIL_HUB_USER_SECRET is required")
 	}
 	return nil
+}
+
+type parsedCIDRList struct {
+	Networks []*net.IPNet
+	Errors   []string
+}
+
+func parseCIDRList(value string) parsedCIDRList {
+	var parsed parsedCIDRList
+	for _, item := range strings.Split(value, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		_, network, err := net.ParseCIDR(item)
+		if err != nil {
+			parsed.Errors = append(parsed.Errors, fmt.Sprintf("%s: %v", item, err))
+			continue
+		}
+		parsed.Networks = append(parsed.Networks, network)
+	}
+	return parsed
 }
 
 func defaultInvestigationModels() []string {

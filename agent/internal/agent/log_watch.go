@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/rcooler/aegrail/agent/internal/domain"
+	"github.com/rcooler/aegrail/agent/internal/fsutil"
 	"github.com/rcooler/aegrail/agent/internal/redaction"
 )
 
@@ -278,13 +279,16 @@ func saveLogWatchState(path string, state logWatchState) error {
 	if err != nil {
 		return err
 	}
-	return writeFileAtomicSync(path, append(content, '\n'), 0o600)
+	return fsutil.WriteFileAtomicSync(path, append(content, '\n'), 0o600)
 }
 
 func resolveLogTargets(paths []string, queueDir string) ([]logTarget, error) {
 	var targets []logTarget
 	seen := map[string]struct{}{}
-	queueAbs, _ := filepath.Abs(queueDir)
+	queueAbs, err := filepath.Abs(queueDir)
+	if err != nil {
+		queueAbs = queueDir
+	}
 	for _, path := range paths {
 		if err := resolveLogPath(path, queueAbs, seen, &targets); err != nil {
 			return nil, err

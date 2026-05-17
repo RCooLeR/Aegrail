@@ -71,6 +71,36 @@ func (h *Hub) CountHubUsers(ctx context.Context) (int, error) {
 	return h.users.CountHubUsers(ctx)
 }
 
+func (h *Hub) HubUsersExist(ctx context.Context) (bool, error) {
+	if h == nil || h.users == nil {
+		return false, nil
+	}
+	h.usersExistMu.RLock()
+	if h.usersExist {
+		h.usersExistMu.RUnlock()
+		return true, nil
+	}
+	h.usersExistMu.RUnlock()
+	count, err := h.users.CountHubUsers(ctx)
+	if err != nil {
+		return false, err
+	}
+	if count > 0 {
+		h.markHubUsersExist()
+		return true, nil
+	}
+	return false, nil
+}
+
+func (h *Hub) markHubUsersExist() {
+	if h == nil {
+		return
+	}
+	h.usersExistMu.Lock()
+	h.usersExist = true
+	h.usersExistMu.Unlock()
+}
+
 func (h *Hub) LoginHubUser(ctx context.Context, input LoginHubUserInput) (LoginHubUserResult, error) {
 	if h.users == nil {
 		return LoginHubUserResult{}, errors.New("hub user repository is not configured")

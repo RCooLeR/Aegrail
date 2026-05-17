@@ -24,9 +24,13 @@ type Hub struct {
 	model            ports.ModelGateway
 	jobs             ports.JobQueue
 	locks            ports.LockManager
+	rateLimiter      ports.RateLimiter
 	users            ports.HubUserRepository
 	notifications    ports.NotificationSink
 	userSecretKey    string
+	backgroundError  func(error)
+	usersExistMu     sync.RWMutex
+	usersExist       bool
 	totpReplayMu     sync.Mutex
 	totpReplay       map[totpReplayKey]time.Time
 	workersWG        sync.WaitGroup
@@ -43,9 +47,11 @@ type Dependencies struct {
 	Model            ports.ModelGateway
 	Jobs             ports.JobQueue
 	Locks            ports.LockManager
+	RateLimiter      ports.RateLimiter
 	Users            ports.HubUserRepository
 	Notifications    ports.NotificationSink
 	UserSecretKey    string
+	BackgroundError  func(error)
 }
 
 func New(deps Dependencies) *Hub {
@@ -60,9 +66,11 @@ func New(deps Dependencies) *Hub {
 		model:            deps.Model,
 		jobs:             deps.Jobs,
 		locks:            deps.Locks,
+		rateLimiter:      deps.RateLimiter,
 		users:            deps.Users,
 		notifications:    deps.Notifications,
 		userSecretKey:    strings.TrimSpace(deps.UserSecretKey),
+		backgroundError:  deps.BackgroundError,
 		totpReplay:       map[totpReplayKey]time.Time{},
 	}
 }
@@ -203,6 +211,122 @@ func (h *Hub) ListOrganizations(ctx context.Context) ([]domain.Organization, err
 		return nil, err
 	}
 	return h.inventory.ListOrganizations(ctx)
+}
+
+func (h *Hub) ListInventoryScopeTree(ctx context.Context) (ports.InventoryScopeTree, error) {
+	if err := h.requireInventory(); err != nil {
+		return ports.InventoryScopeTree{}, err
+	}
+	if treeRepository, ok := h.inventory.(ports.InventoryScopeTreeRepository); ok {
+		return treeRepository.ListInventoryScopeTree(ctx)
+	}
+	return h.listInventoryScopeTreeFallback(ctx)
+}
+
+func (h *Hub) GetInventoryScopeForEnvironment(ctx context.Context, organizationSlug string, projectSlug string, environmentSlug string) (ports.InventoryEnvironmentScopePath, bool, error) {
+	if err := h.requireInventory(); err != nil {
+		return ports.InventoryEnvironmentScopePath{}, false, err
+	}
+	if scopeRepository, ok := h.inventory.(ports.InventoryEnvironmentScopeRepository); ok {
+		return scopeRepository.GetInventoryScopeForEnvironment(ctx, organizationSlug, projectSlug, environmentSlug)
+	}
+	org, project, environment, err := h.resolveEnvironmentContext(ctx, organizationSlug, projectSlug, environmentSlug)
+	if err != nil {
+		return ports.InventoryEnvironmentScopePath{}, false, err
+	}
+	apps, err := h.inventory.ListMonitoredApps(ctx, environment.ID)
+	if err != nil {
+		return ports.InventoryEnvironmentScopePath{}, false, err
+	}
+	hosts, err := h.inventory.ListHosts(ctx, environment.ID)
+	if err != nil {
+		return ports.InventoryEnvironmentScopePath{}, false, err
+	}
+	path := ports.InventoryEnvironmentScopePath{
+		Organization: org,
+		Project:      project,
+		Environment:  environment,
+		Apps:         make([]ports.InventoryAppScope, 0, len(apps)),
+		Hosts:        make([]ports.InventoryHostScope, 0, len(hosts)),
+	}
+	for _, app := range apps {
+		services, err := h.inventory.ListServices(ctx, app.ID)
+		if err != nil {
+			return ports.InventoryEnvironmentScopePath{}, false, err
+		}
+		path.Apps = append(path.Apps, ports.InventoryAppScope{App: app, Services: services})
+	}
+	for _, host := range hosts {
+		agents, err := h.inventory.ListAgents(ctx, host.ID)
+		if err != nil {
+			return ports.InventoryEnvironmentScopePath{}, false, err
+		}
+		path.Hosts = append(path.Hosts, ports.InventoryHostScope{Host: host, Agents: agents})
+	}
+	return path, true, nil
+}
+
+func (h *Hub) listInventoryScopeTreeFallback(ctx context.Context) (ports.InventoryScopeTree, error) {
+	organizations, err := h.inventory.ListOrganizations(ctx)
+	if err != nil {
+		return ports.InventoryScopeTree{}, err
+	}
+	tree := ports.InventoryScopeTree{
+		Organizations: make([]ports.InventoryOrganizationScope, 0, len(organizations)),
+	}
+	for _, organization := range organizations {
+		orgScope := ports.InventoryOrganizationScope{Organization: organization}
+		projects, err := h.inventory.ListProjects(ctx, organization.ID)
+		if err != nil {
+			return ports.InventoryScopeTree{}, err
+		}
+		orgScope.Projects = make([]ports.InventoryProjectScope, 0, len(projects))
+		for _, project := range projects {
+			projectScope := ports.InventoryProjectScope{Project: project}
+			environments, err := h.inventory.ListEnvironments(ctx, project.ID)
+			if err != nil {
+				return ports.InventoryScopeTree{}, err
+			}
+			projectScope.Environments = make([]ports.InventoryEnvironmentScope, 0, len(environments))
+			for _, environment := range environments {
+				environmentScope := ports.InventoryEnvironmentScope{Environment: environment}
+				apps, err := h.inventory.ListMonitoredApps(ctx, environment.ID)
+				if err != nil {
+					return ports.InventoryScopeTree{}, err
+				}
+				environmentScope.Apps = make([]ports.InventoryAppScope, 0, len(apps))
+				for _, app := range apps {
+					services, err := h.inventory.ListServices(ctx, app.ID)
+					if err != nil {
+						return ports.InventoryScopeTree{}, err
+					}
+					environmentScope.Apps = append(environmentScope.Apps, ports.InventoryAppScope{
+						App:      app,
+						Services: services,
+					})
+				}
+				hosts, err := h.inventory.ListHosts(ctx, environment.ID)
+				if err != nil {
+					return ports.InventoryScopeTree{}, err
+				}
+				environmentScope.Hosts = make([]ports.InventoryHostScope, 0, len(hosts))
+				for _, host := range hosts {
+					agents, err := h.inventory.ListAgents(ctx, host.ID)
+					if err != nil {
+						return ports.InventoryScopeTree{}, err
+					}
+					environmentScope.Hosts = append(environmentScope.Hosts, ports.InventoryHostScope{
+						Host:   host,
+						Agents: agents,
+					})
+				}
+				projectScope.Environments = append(projectScope.Environments, environmentScope)
+			}
+			orgScope.Projects = append(orgScope.Projects, projectScope)
+		}
+		tree.Organizations = append(tree.Organizations, orgScope)
+	}
+	return tree, nil
 }
 
 func (h *Hub) UpdateOrganization(ctx context.Context, input UpdateOrganizationInput) (domain.Organization, error) {

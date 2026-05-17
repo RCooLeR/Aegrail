@@ -143,6 +143,46 @@ func TestDatabaseSnapshotStateIgnoresPIIEvidenceFormatMigration(t *testing.T) {
 	}
 }
 
+func TestDatabaseSnapshotStateDetectsAccountIdentityDrift(t *testing.T) {
+	previous := DatabaseSnapshotState{
+		Checks: map[string]DatabaseSnapshotCheckState{},
+		Entities: map[string]DatabaseEntityState{
+			"wordpress_user:abc": {
+				Type:       "wordpress_user",
+				Key:        "wordpress_user:abc",
+				Privileged: true,
+				Signature:  "old-email",
+				Attributes: map[string]any{
+					"administrator":       true,
+					"capabilities_sha256": "roles",
+					"email_hmac_sha256":   "old-fingerprint",
+				},
+			},
+		},
+	}
+	current := DatabaseSnapshotState{
+		Checks: map[string]DatabaseSnapshotCheckState{},
+		Entities: map[string]DatabaseEntityState{
+			"wordpress_user:abc": {
+				Type:       "wordpress_user",
+				Key:        "wordpress_user:abc",
+				Privileged: true,
+				Signature:  "new-email",
+				Attributes: map[string]any{
+					"administrator":       true,
+					"capabilities_sha256": "roles",
+					"email_hmac_sha256":   "new-fingerprint",
+				},
+			},
+		},
+	}
+
+	diff := DiffDatabaseSnapshotState(previous, true, current)
+	if len(diff.EntityChanges) != 1 || diff.EntityChanges[0].Type != "changed" {
+		t.Fatalf("entity changes = %+v, want identity drift change", diff.EntityChanges)
+	}
+}
+
 func TestBuildDatabaseSnapshotDiffEvents(t *testing.T) {
 	result := databaseStateTestResult(3, "ccc")
 	diff := DatabaseSnapshotDiffResult{

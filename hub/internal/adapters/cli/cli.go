@@ -132,6 +132,9 @@ func hubServeCommand(meta domain.AppMeta) *urfavecli.Command {
 			if err := container.Config.ValidateServe(); err != nil {
 				return err
 			}
+			for _, parseError := range container.Config.Hub.TrustedProxyErrors {
+				container.Logger.Warn().Str("cidr", parseError).Msg("ignored invalid trusted proxy CIDR")
+			}
 
 			ctx, stop := signal.NotifyContext(c.Context, syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
@@ -157,10 +160,12 @@ func hubServeCommand(meta domain.AppMeta) *urfavecli.Command {
 			server := &nethttp.Server{
 				Addr: addr,
 				Handler: httpadapter.NewHubRouter(meta, container.Hub, httpadapter.HubOptions{
-					WirePrivateKey:    container.Config.Hub.WirePrivateKey,
-					WireTimestampSkew: c.Duration("wire-timestamp-skew"),
-					DashboardDir:      c.String("dashboard-dir"),
-					HealthCheck:       container.HealthCheck,
+					WirePrivateKey:      container.Config.Hub.WirePrivateKey,
+					WireTimestampSkew:   c.Duration("wire-timestamp-skew"),
+					DashboardDir:        c.String("dashboard-dir"),
+					DashboardCSRFSecret: container.Config.Hub.UserSecretKey,
+					TrustedProxyCIDRs:   container.Config.Hub.TrustedProxyCIDRs,
+					HealthCheck:         container.HealthCheck,
 				}),
 				ReadHeaderTimeout: 5 * time.Second,
 				ReadTimeout:       15 * time.Second,

@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/rcooler/aegrail/agent/internal/fsutil"
 )
 
 const (
@@ -545,7 +547,7 @@ func saveServerConfigCoverageState(path string, state serverConfigCoverageState)
 	if err != nil {
 		return err
 	}
-	return writeFileAtomicSync(path, append(content, '\n'), 0o600)
+	return fsutil.WriteFileAtomicSync(path, append(content, '\n'), 0o600)
 }
 
 func serverConfigCoverageHeartbeatInterval() time.Duration {

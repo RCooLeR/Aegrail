@@ -21,7 +21,13 @@ import { collectorLabel, issueStatusLabel, nodeLabel, recommendedAction, signalT
 import type { IssueRow, ReportRow, SignalRow } from "../types";
 import { fileIgnorePathCandidate, firstMetadataString, metadataNumber, metadataString, metadataStringList, operatorActionGuidance } from "../utils/metadata";
 import { copyIssueBrief, exportIssueBrief } from "../utils/reports";
-import { AnalysisLine, isModelAnalysisHTML, parseModelAnalysisSections, splitCodeTokens } from "../utils/modelAnalysis";
+import {
+  AnalysisLine,
+  isModelAnalysisHTML,
+  parseModelAnalysisSections,
+  sanitizeModelAnalysisHTML,
+  splitCodeTokens
+} from "../utils/modelAnalysis";
 import { formatDate, formatRelative } from "../utils/time";
 import { EmptyState, Panel, ResponsiveTable, SeverityPill, StatusPill } from "../components/common";
 
@@ -433,7 +439,7 @@ function latestReportsForFinding(reportRows: ReportRow[], findingID: string) {
 
 function AnalysisOutput({ analysis }: { analysis: string }) {
   if (isModelAnalysisHTML(analysis)) {
-    return <div className="analysis-output" dangerouslySetInnerHTML={{ __html: analysis }} />;
+    return <div className="analysis-output" dangerouslySetInnerHTML={{ __html: sanitizeModelAnalysisHTML(analysis) }} />;
   }
   return (
     <div className="analysis-output">

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/rcooler/aegrail/agent/internal/domain"
+	"github.com/rcooler/aegrail/agent/internal/fsutil"
 	"github.com/rcooler/aegrail/agent/internal/wire"
 )
 
@@ -40,22 +41,23 @@ type Config struct {
 }
 
 type Identity struct {
-	Schema       string            `json:"schema"`
-	HubURL       string            `json:"hub_url"`
-	HubProtocol  string            `json:"hub_protocol,omitempty"`
-	HubPublicKey string            `json:"hub_public_key,omitempty"`
-	NodeSecret   string            `json:"node_secret,omitempty"`
-	QueueDir     string            `json:"queue_dir"`
-	Org          string            `json:"org"`
-	Project      string            `json:"project"`
-	Environment  string            `json:"environment"`
-	App          string            `json:"app,omitempty"`
-	Service      string            `json:"service,omitempty"`
-	Host         string            `json:"host"`
-	AgentID      string            `json:"agent_id"`
-	Region       string            `json:"region,omitempty"`
-	Labels       map[string]string `json:"labels,omitempty"`
-	InstalledAt  time.Time         `json:"installed_at"`
+	Schema        string            `json:"schema"`
+	HubURL        string            `json:"hub_url"`
+	HubProtocol   string            `json:"hub_protocol,omitempty"`
+	HubPublicKey  string            `json:"hub_public_key,omitempty"`
+	NodeSecret    string            `json:"node_secret,omitempty"`
+	NodeSecretEnv string            `json:"node_secret_env,omitempty"`
+	QueueDir      string            `json:"queue_dir"`
+	Org           string            `json:"org"`
+	Project       string            `json:"project"`
+	Environment   string            `json:"environment"`
+	App           string            `json:"app,omitempty"`
+	Service       string            `json:"service,omitempty"`
+	Host          string            `json:"host"`
+	AgentID       string            `json:"agent_id"`
+	Region        string            `json:"region,omitempty"`
+	Labels        map[string]string `json:"labels,omitempty"`
+	InstalledAt   time.Time         `json:"installed_at"`
 }
 
 func (i Identity) UsesWireProtocol() bool {
@@ -163,6 +165,7 @@ func (r *Runtime) Install(_ context.Context, identity Identity) (Identity, error
 	identity.HubProtocol = strings.TrimSpace(identity.HubProtocol)
 	identity.HubPublicKey = strings.TrimSpace(identity.HubPublicKey)
 	identity.NodeSecret = strings.TrimSpace(identity.NodeSecret)
+	identity.NodeSecretEnv = strings.TrimSpace(identity.NodeSecretEnv)
 	identity.QueueDir = strings.TrimSpace(identity.QueueDir)
 	if identity.QueueDir == "" {
 		identity.QueueDir = r.Config.QueueDir
@@ -190,7 +193,7 @@ func (r *Runtime) Install(_ context.Context, identity Identity) (Identity, error
 	if err != nil {
 		return Identity{}, err
 	}
-	if err := writeFileAtomicSync(r.Config.ConfigPath, append(content, '\n'), 0o600); err != nil {
+	if err := fsutil.WriteFileAtomicSync(r.Config.ConfigPath, append(content, '\n'), 0o600); err != nil {
 		return Identity{}, err
 	}
 	return identity, nil
@@ -343,25 +346,17 @@ func (r *Runtime) EnqueueEvents(ctx context.Context, input EnqueueEventsInput) (
 		return QueuedBatch{}, "", err
 	}
 	path := filepath.Join(identity.QueueDir, "pending", safeFilename(batchID)+".json")
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
+	if _, err := os.Stat(path); err == nil {
+		return batch, path, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return QueuedBatch{}, "", err
+	}
+	if err := fsutil.WriteFileAtomicSync(path, append(content, '\n'), 0o600); err != nil {
 		if errors.Is(err, os.ErrExist) {
 			return batch, path, nil
 		}
 		return QueuedBatch{}, "", err
 	}
-	if _, err := file.Write(append(content, '\n')); err != nil {
-		_ = file.Close()
-		return QueuedBatch{}, "", err
-	}
-	if err := file.Sync(); err != nil {
-		_ = file.Close()
-		return QueuedBatch{}, "", err
-	}
-	if err := file.Close(); err != nil {
-		return QueuedBatch{}, "", err
-	}
-	syncParentDir(path)
 	return batch, path, nil
 }
 
@@ -373,7 +368,8 @@ func (r *Runtime) SendQueued(ctx context.Context, limit int) (SendResult, error)
 	if strings.TrimSpace(identity.HubPublicKey) == "" {
 		return SendResult{}, errors.New("hub public key is required")
 	}
-	if strings.TrimSpace(identity.NodeSecret) == "" {
+	nodeSecret := identity.ResolvedNodeSecret()
+	if strings.TrimSpace(nodeSecret) == "" {
 		return SendResult{}, errors.New("node secret is required")
 	}
 	pendingDir := filepath.Join(identity.QueueDir, "pending")
@@ -396,7 +392,7 @@ func (r *Runtime) SendQueued(ctx context.Context, limit int) (SendResult, error)
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", filepath.Base(path), err))
 			continue
 		}
-		if err := r.sendBatch(ctx, identity, content); err != nil {
+		if err := r.sendBatch(ctx, identity, nodeSecret, content); err != nil {
 			result.Failed++
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", filepath.Base(path), err))
 			continue
@@ -464,9 +460,9 @@ func (r *Runtime) DiscardPending(ctx context.Context, limit int) (DiscardPending
 	return result, nil
 }
 
-func (r *Runtime) sendBatch(ctx context.Context, identity Identity, body []byte) error {
+func (r *Runtime) sendBatch(ctx context.Context, identity Identity, nodeSecret string, body []byte) error {
 	endpoint := strings.TrimRight(strings.TrimSpace(identity.HubURL), "/") + "/api/v1/ingest/events"
-	envelope, err := wire.Encrypt(body, identity.AgentID, identity.NodeSecret, identity.HubPublicKey, r.now())
+	envelope, err := wire.Encrypt(body, identity.AgentID, nodeSecret, identity.HubPublicKey, r.now())
 	if err != nil {
 		return err
 	}
@@ -489,6 +485,16 @@ func (r *Runtime) sendBatch(ctx context.Context, identity Identity, body []byte)
 		return fmt.Errorf("Hub returned %s: %s", response.Status, strings.TrimSpace(string(body)))
 	}
 	return nil
+}
+
+func (identity Identity) ResolvedNodeSecret() string {
+	if strings.TrimSpace(identity.NodeSecret) != "" {
+		return strings.TrimSpace(identity.NodeSecret)
+	}
+	if strings.TrimSpace(identity.NodeSecretEnv) == "" {
+		return ""
+	}
+	return strings.TrimSpace(os.Getenv(identity.NodeSecretEnv))
 }
 
 func validateIdentity(identity Identity) error {

@@ -7,6 +7,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rcooler/aegrail/hub/internal/domain"
+	"github.com/rcooler/aegrail/hub/internal/ports"
 )
 
 type InventoryRepository struct {
@@ -475,6 +476,348 @@ func (r *InventoryRepository) ListDeploymentMarkers(ctx context.Context, environ
 	for rows.Next() {
 		var item domain.DeploymentMarker
 		if err := rows.Scan(&item.ID, &item.EnvironmentID, &item.AppID, &item.Version, &item.CommitSHA, &item.Actor, &item.StartedAt, &item.FinishedAt, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (r *InventoryRepository) ListInventoryScopeTree(ctx context.Context) (ports.InventoryScopeTree, error) {
+	organizations, err := r.ListOrganizations(ctx)
+	if err != nil {
+		return ports.InventoryScopeTree{}, err
+	}
+	projects, err := r.listAllProjects(ctx)
+	if err != nil {
+		return ports.InventoryScopeTree{}, err
+	}
+	environments, err := r.listAllEnvironments(ctx)
+	if err != nil {
+		return ports.InventoryScopeTree{}, err
+	}
+	apps, err := r.listAllMonitoredApps(ctx)
+	if err != nil {
+		return ports.InventoryScopeTree{}, err
+	}
+	services, err := r.listAllServices(ctx)
+	if err != nil {
+		return ports.InventoryScopeTree{}, err
+	}
+	hosts, err := r.listAllHosts(ctx)
+	if err != nil {
+		return ports.InventoryScopeTree{}, err
+	}
+	agents, err := r.listAllAgents(ctx)
+	if err != nil {
+		return ports.InventoryScopeTree{}, err
+	}
+
+	tree := ports.InventoryScopeTree{
+		Organizations: make([]ports.InventoryOrganizationScope, 0, len(organizations)),
+	}
+	organizationIndexes := map[domain.ID]int{}
+	for _, organization := range organizations {
+		organizationIndexes[organization.ID] = len(tree.Organizations)
+		tree.Organizations = append(tree.Organizations, ports.InventoryOrganizationScope{
+			Organization: organization,
+		})
+	}
+
+	type projectIndex struct {
+		organization int
+		project      int
+	}
+	projectIndexes := map[domain.ID]projectIndex{}
+	for _, project := range projects {
+		organizationIndex, ok := organizationIndexes[project.OrganizationID]
+		if !ok {
+			continue
+		}
+		projects := &tree.Organizations[organizationIndex].Projects
+		projectIndexes[project.ID] = projectIndex{organization: organizationIndex, project: len(*projects)}
+		*projects = append(*projects, ports.InventoryProjectScope{Project: project})
+	}
+
+	type environmentIndex struct {
+		organization int
+		project      int
+		environment  int
+	}
+	environmentIndexes := map[domain.ID]environmentIndex{}
+	for _, environment := range environments {
+		parent, ok := projectIndexes[environment.ProjectID]
+		if !ok {
+			continue
+		}
+		environments := &tree.Organizations[parent.organization].Projects[parent.project].Environments
+		environmentIndexes[environment.ID] = environmentIndex{organization: parent.organization, project: parent.project, environment: len(*environments)}
+		*environments = append(*environments, ports.InventoryEnvironmentScope{Environment: environment})
+	}
+
+	type appIndex struct {
+		organization int
+		project      int
+		environment  int
+		app          int
+	}
+	appIndexes := map[domain.ID]appIndex{}
+	for _, app := range apps {
+		parent, ok := environmentIndexes[app.EnvironmentID]
+		if !ok {
+			continue
+		}
+		apps := &tree.Organizations[parent.organization].Projects[parent.project].Environments[parent.environment].Apps
+		appIndexes[app.ID] = appIndex{organization: parent.organization, project: parent.project, environment: parent.environment, app: len(*apps)}
+		*apps = append(*apps, ports.InventoryAppScope{App: app})
+	}
+	for _, service := range services {
+		parent, ok := appIndexes[service.AppID]
+		if !ok {
+			continue
+		}
+		app := &tree.Organizations[parent.organization].Projects[parent.project].Environments[parent.environment].Apps[parent.app]
+		app.Services = append(app.Services, service)
+	}
+
+	type hostIndex struct {
+		organization int
+		project      int
+		environment  int
+		host         int
+	}
+	hostIndexes := map[domain.ID]hostIndex{}
+	for _, host := range hosts {
+		parent, ok := environmentIndexes[host.EnvironmentID]
+		if !ok {
+			continue
+		}
+		hosts := &tree.Organizations[parent.organization].Projects[parent.project].Environments[parent.environment].Hosts
+		hostIndexes[host.ID] = hostIndex{organization: parent.organization, project: parent.project, environment: parent.environment, host: len(*hosts)}
+		*hosts = append(*hosts, ports.InventoryHostScope{Host: host})
+	}
+	for _, agent := range agents {
+		parent, ok := hostIndexes[agent.HostID]
+		if !ok {
+			continue
+		}
+		host := &tree.Organizations[parent.organization].Projects[parent.project].Environments[parent.environment].Hosts[parent.host]
+		host.Agents = append(host.Agents, agent)
+	}
+	return tree, nil
+}
+
+func (r *InventoryRepository) GetInventoryScopeForEnvironment(ctx context.Context, organizationSlug string, projectSlug string, environmentSlug string) (ports.InventoryEnvironmentScopePath, bool, error) {
+	const query = `
+		SELECT
+			o.id::text, o.slug::text, o.name, o.created_at, o.updated_at,
+			p.id::text, p.organization_id::text, p.slug::text, p.name, p.created_at, p.updated_at,
+			e.id::text, e.project_id::text, e.slug::text, e.name, e.created_at, e.updated_at
+		FROM organizations o
+		JOIN projects p ON p.organization_id = o.id
+		JOIN environments e ON e.project_id = p.id
+		WHERE o.slug = $1
+			AND p.slug = $2
+			AND e.slug = $3
+	`
+	var path ports.InventoryEnvironmentScopePath
+	err := r.pool.QueryRow(ctx, query, organizationSlug, projectSlug, environmentSlug).Scan(
+		&path.Organization.ID, &path.Organization.Slug, &path.Organization.Name, &path.Organization.CreatedAt, &path.Organization.UpdatedAt,
+		&path.Project.ID, &path.Project.OrganizationID, &path.Project.Slug, &path.Project.Name, &path.Project.CreatedAt, &path.Project.UpdatedAt,
+		&path.Environment.ID, &path.Environment.ProjectID, &path.Environment.Slug, &path.Environment.Name, &path.Environment.CreatedAt, &path.Environment.UpdatedAt,
+	)
+	ok, err := found(err)
+	if err != nil || !ok {
+		return ports.InventoryEnvironmentScopePath{}, ok, err
+	}
+
+	apps, err := r.ListMonitoredApps(ctx, path.Environment.ID)
+	if err != nil {
+		return ports.InventoryEnvironmentScopePath{}, false, err
+	}
+	hosts, err := r.ListHosts(ctx, path.Environment.ID)
+	if err != nil {
+		return ports.InventoryEnvironmentScopePath{}, false, err
+	}
+	services, err := r.listServicesForApps(ctx, apps)
+	if err != nil {
+		return ports.InventoryEnvironmentScopePath{}, false, err
+	}
+	agents, err := r.listAgentsForHosts(ctx, hosts)
+	if err != nil {
+		return ports.InventoryEnvironmentScopePath{}, false, err
+	}
+
+	path.Apps = make([]ports.InventoryAppScope, 0, len(apps))
+	for _, app := range apps {
+		path.Apps = append(path.Apps, ports.InventoryAppScope{
+			App:      app,
+			Services: services[app.ID],
+		})
+	}
+	path.Hosts = make([]ports.InventoryHostScope, 0, len(hosts))
+	for _, host := range hosts {
+		path.Hosts = append(path.Hosts, ports.InventoryHostScope{
+			Host:   host,
+			Agents: agents[host.ID],
+		})
+	}
+	return path, true, nil
+}
+
+func (r *InventoryRepository) listServicesForApps(ctx context.Context, apps []domain.MonitoredApp) (map[domain.ID][]domain.Service, error) {
+	byApp := make(map[domain.ID][]domain.Service, len(apps))
+	if len(apps) == 0 {
+		return byApp, nil
+	}
+	ids := make([]domain.ID, 0, len(apps))
+	for _, app := range apps {
+		ids = append(ids, app.ID)
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT id::text, app_id::text, slug::text, name, role, created_at, updated_at
+		FROM services
+		WHERE app_id = ANY($1::uuid[])
+		ORDER BY app_id, slug
+	`, stringIDs(ids))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var item domain.Service
+		if err := rows.Scan(&item.ID, &item.AppID, &item.Slug, &item.Name, &item.Role, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		byApp[item.AppID] = append(byApp[item.AppID], item)
+	}
+	return byApp, rows.Err()
+}
+
+func (r *InventoryRepository) listAgentsForHosts(ctx context.Context, hosts []domain.Host) (map[domain.ID][]domain.Agent, error) {
+	byHost := make(map[domain.ID][]domain.Agent, len(hosts))
+	if len(hosts) == 0 {
+		return byHost, nil
+	}
+	ids := make([]domain.ID, 0, len(hosts))
+	for _, host := range hosts {
+		ids = append(ids, host.ID)
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT id::text, host_id::text, agent_id::text, fingerprint, version, last_seen_at, wire_protocol, node_public_key, created_at, updated_at
+		FROM agents
+		WHERE host_id = ANY($1::uuid[])
+		ORDER BY host_id, agent_id
+	`, stringIDs(ids))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var item domain.Agent
+		if err := rows.Scan(&item.ID, &item.HostID, &item.AgentID, &item.Fingerprint, &item.Version, &item.LastSeenAt, &item.WireProtocol, &item.NodePublicKey, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		byHost[item.HostID] = append(byHost[item.HostID], item)
+	}
+	return byHost, rows.Err()
+}
+
+func (r *InventoryRepository) listAllProjects(ctx context.Context) ([]domain.Project, error) {
+	rows, err := r.pool.Query(ctx, `SELECT id::text, organization_id::text, slug::text, name, created_at, updated_at FROM projects ORDER BY organization_id, slug`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []domain.Project
+	for rows.Next() {
+		var item domain.Project
+		if err := rows.Scan(&item.ID, &item.OrganizationID, &item.Slug, &item.Name, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (r *InventoryRepository) listAllEnvironments(ctx context.Context) ([]domain.Environment, error) {
+	rows, err := r.pool.Query(ctx, `SELECT id::text, project_id::text, slug::text, name, created_at, updated_at FROM environments ORDER BY project_id, slug`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []domain.Environment
+	for rows.Next() {
+		var item domain.Environment
+		if err := rows.Scan(&item.ID, &item.ProjectID, &item.Slug, &item.Name, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (r *InventoryRepository) listAllMonitoredApps(ctx context.Context) ([]domain.MonitoredApp, error) {
+	rows, err := r.pool.Query(ctx, `SELECT id::text, environment_id::text, slug::text, name, kind, created_at, updated_at FROM monitored_apps ORDER BY environment_id, slug`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []domain.MonitoredApp
+	for rows.Next() {
+		var item domain.MonitoredApp
+		if err := rows.Scan(&item.ID, &item.EnvironmentID, &item.Slug, &item.Name, &item.Kind, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (r *InventoryRepository) listAllServices(ctx context.Context) ([]domain.Service, error) {
+	rows, err := r.pool.Query(ctx, `SELECT id::text, app_id::text, slug::text, name, role, created_at, updated_at FROM services ORDER BY app_id, slug`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []domain.Service
+	for rows.Next() {
+		var item domain.Service
+		if err := rows.Scan(&item.ID, &item.AppID, &item.Slug, &item.Name, &item.Role, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (r *InventoryRepository) listAllHosts(ctx context.Context) ([]domain.Host, error) {
+	rows, err := r.pool.Query(ctx, `SELECT id::text, environment_id::text, slug::text, hostname, region, labels, created_at, updated_at FROM hosts ORDER BY environment_id, slug`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []domain.Host
+	for rows.Next() {
+		var item domain.Host
+		if err := rows.Scan(&item.ID, &item.EnvironmentID, &item.Slug, &item.Hostname, &item.Region, &item.Labels, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (r *InventoryRepository) listAllAgents(ctx context.Context) ([]domain.Agent, error) {
+	rows, err := r.pool.Query(ctx, `SELECT id::text, host_id::text, agent_id::text, fingerprint, version, last_seen_at, wire_protocol, node_public_key, created_at, updated_at FROM agents ORDER BY host_id, agent_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []domain.Agent
+	for rows.Next() {
+		var item domain.Agent
+		if err := rows.Scan(&item.ID, &item.HostID, &item.AgentID, &item.Fingerprint, &item.Version, &item.LastSeenAt, &item.WireProtocol, &item.NodePublicKey, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
