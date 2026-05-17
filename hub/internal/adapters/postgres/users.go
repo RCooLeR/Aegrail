@@ -178,6 +178,30 @@ func (r *HubUserRepository) UpdateHubUser(ctx context.Context, userID domain.ID,
 	))
 }
 
+func (r *HubUserRepository) DeleteHubUser(ctx context.Context, userID domain.ID) (int, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+
+	tag, err := tx.Exec(ctx, `DELETE FROM hub_users WHERE id = $1`, userID)
+	if err != nil {
+		return 0, err
+	}
+	if tag.RowsAffected() == 0 {
+		return 0, ports.ErrHubNotFound
+	}
+	var remaining int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM hub_users`).Scan(&remaining); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return remaining, nil
+}
+
 func (r *HubUserRepository) StartHubUserTOTP(ctx context.Context, userID domain.ID, start domain.HubUserTOTPStart) (domain.HubUser, error) {
 	const query = `
 		UPDATE hub_users

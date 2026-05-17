@@ -101,6 +101,15 @@ func (h *Hub) markHubUsersExist() {
 	h.usersExistMu.Unlock()
 }
 
+func (h *Hub) markHubUsersUnknown() {
+	if h == nil {
+		return
+	}
+	h.usersExistMu.Lock()
+	h.usersExist = false
+	h.usersExistMu.Unlock()
+}
+
 func (h *Hub) LoginHubUser(ctx context.Context, input LoginHubUserInput) (LoginHubUserResult, error) {
 	if h.users == nil {
 		return LoginHubUserResult{}, errors.New("hub user repository is not configured")

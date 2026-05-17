@@ -1,188 +1,80 @@
 # Aegrail — Issues, Bugs & Gaps Analysis
 
-**Analyzed:** 2026-05-17  
-**Scope:** Full codebase — `agent/` and `hub/` modules  
-**Analysis:** Fresh read of all source files; no assumptions carried from prior versions.
-
-## Codex Resolution Pass
-
-Applied in the current worktree after this report:
-
-- BUG-02: inline auto-correlation now reports errors through the Hub background error hook.
-- BUG-03: file and log scanners now fall back safely when `filepath.Abs` fails.
-- BUG-04: TOTP activation is conditional on the pending secret that was verified.
-- SEC-01: the process-local auth limiter now sweeps stale keys.
-- SEC-02: dashboard CSRF tokens are derived from a Hub-side secret.
-- SEC-03: PostgreSQL bootstrap user creation uses an advisory transaction lock.
-- SEC-04: Redis-backed shared auth rate limiting is used when Redis is configured.
-- ARCH-01: authenticated requests stop calling `CountHubUsers` after users exist.
-- ARCH-02: topology reads use a direct environment-scope query path.
-- ARCH-03: model-analysis queue selection can query scopes with unanalyzed open findings directly.
-- ARCH-04: Agent atomic file writing now lives in shared `agent/internal/fsutil`.
-- OPS-01: Hub `serve` now requires an explicit `AEGRAIL_DATABASE_URL`.
-- OPS-02: trusted proxy CIDRs are parsed at startup and invalid entries are warned.
-- TEST-01/02: added focused HTTP auth/CSRF/rate-limit and wire tamper/expiry/node mismatch tests.
-
-Notes:
-
-- BUG-01 was already fixed before this pass: `SaveHubUserSession` persists `last_login_at`.
-- TEST-03 was already covered by existing correlation tests in `hub/internal/hub/*correlation*_test.go`.
+**Analyzed:** 2026-05-18 (fourth full pass — all files read from scratch)
+**Scope:** Full codebase — `agent/` and `hub/` modules
+**Analysis:** Fresh read of every source file; no assumptions carried from prior passes.
 
 ---
 
 ## What Was Fixed Since Last Analysis
 
-The following issues identified in the previous report were resolved and are **not listed again** in the active issues below:
+All 8 issues from the previous report were verified resolved in the current source.
 
-| Previously | Fix Applied |
-|---|---|
-| Non-atomic state-file writes (crash = corruption) | `writeFileAtomicSync` added to `agent/internal/agent/` and `agent/internal/collector/` — temp-file + fsync + rename pattern used everywhere |
-| Queue batch file missing `file.Sync()` | Same fix — `EnqueueEvents` and `Install` now use `writeFileAtomicSync` |
-| HTTP server missing ReadTimeout / WriteTimeout / IdleTimeout | All four timeouts now set: `ReadHeaderTimeout: 5s`, `ReadTimeout: 15s`, `WriteTimeout: 60s`, `IdleTimeout: 60s` |
-| DB connection pool unconfigured | `MinConns: 1`, `MaxConns: 20`, `MaxConnLifetime: 1h`, `MaxConnIdleTime: 10m`, `HealthCheckPeriod: 1m` now set in `pool.go` |
-| `TwoFactorRequired` hardcoded `true` in `CreateHubUser` / `UpdateHubUser` | Now reads `input.TwoFactorRequired` correctly in both methods |
-| TOTP replay attack — used codes never invalidated | `consumeTOTPCode` stores used `(userID, counter)` pairs for 90 s in `h.totpReplay`; test added in `auth_test.go` |
-| No graceful shutdown for background workers | `WaitForWorkers()` called during server shutdown with a 5-second timeout |
-| Dead code `region = ""` in ingest.go | Removed — `buildIngestEvent` is clean |
-| `listInventoryScopesHandler` N+1 nested DB queries | Replaced with single `hub.ListInventoryScopeTree(ctx)` call |
-| Redis client leaked when `webhook.NewNotificationSink` fails | `c.redis.Close()` now called in the error path in `container.go` |
-| No rate limiting on `/api/v1/auth/login` | `hubAuthLimiter` (10 attempts/min per IP+email) now applied to login and TOTP endpoints |
-| `parseQueryLimit` had no upper-bound enforcement | `maxHTTPQueryLimit = 5000` cap enforced |
+| ID | Summary | Fix Verified In |
+|---|---|---|
+| BUG-01 | Redis `Allow` non-atomic INCR+EXPIRE | `Allow` now runs a single Lua script: `INCR` + conditional `PEXPIRE` in one Redis round-trip (`hub/internal/adapters/redis/queue.go:145`) |
+| BUG-02 | Model-analysis fallback iterated without a limit | Fallback now checks `result.Scopes >= limit \|\| result.Findings >= limit` at each org/project/environment level before entering the next one |
+| SEC-01 | `dashboardCSRFSecretFallback` was process-local | `NewHubRouter` panics with an explicit error when `hub.HubUsersConfigured()` is true but `DashboardCSRFSecret` is empty |
+| ARCH-01 | `HubUsersExist` cache never invalidated on user deletion | `markHubUsersUnknown()` is called in `DeleteHubUser` when `remaining == 0` |
+| ARCH-02 | Model-analysis fallback activated silently | `warnModelAnalysisQueueScopeFallback()` fires once via `sync.Once` and routes the warning through `h.backgroundError` |
+| OPS-01 | Invalid CIDR entries were silently ignored at startup | `ValidateServe` returns an error listing every bad entry if `TrustedProxyErrors` is non-empty; invalid entries block startup |
+| TEST-01 | No unit tests for model-analysis queue paths | Codex added model-analysis scope and fallback tests |
+| TEST-02 | No PostgreSQL integration tests for critical adapters | Codex added opt-in integration tests for session `last_login_at`, bootstrap locking, and stale TOTP activation |
 
 ---
 
 ## Active Issues
 
+## Codex Follow-Up Fixes
+
+Implemented on 2026-05-18 after this fourth pass:
+
+| ID | Resolution |
+|---|---|
+| BUG-01 | Added `woocommerce` to the accepted site-kind list and covered validation with an agent config test. |
+| ARCH-01 | Added `DELETE /api/v1/access/users/{id}` with admin auth, self-delete protection, `204` on success, and `404` for missing users. |
+| ARCH-02 | Added centralized Hub HTTP error mapping so not-found domain/repository errors return `404` while validation errors still return `400`. |
+| TEST-01 | Moved the in-memory auth limiter into each router instance and added a regression test proving one router's blocked state does not affect another. |
+
+The issue details below are retained as the source analysis. The table above is the current implementation status.
+
 ### Bugs
 
 ---
 
-#### BUG-01 — `LastLoginAt` is set in memory but never persisted to the database
+#### BUG-01 — `kind: woocommerce` accepted by normalizer but rejected by validator
 
-**File:** `hub/internal/hub/auth.go:117`
+**File:** `agent/internal/agent/server_config.go:215` (normalizer), `agent/internal/agent/server_config.go:622` (validator)
+
+`NormalizeServerConfig` explicitly handles `kind: woocommerce` — it assigns the `wordpress` file-watch profile when the site kind is `woocommerce`:
 
 ```go
-user.LastLoginAt = &now
-return LoginHubUserResult{User: user, ...}  // DB record is never updated
+case "wordpress", "wordpress-multisite", "woocommerce":
+    site.Files.Profiles = []string{"wordpress"}
 ```
 
-`LoginHubUser` assigns the current time to `user.LastLoginAt` but does not call any repository method to save it. The value is visible in the JSON response of the login endpoint but does not survive the request.
-
-**Fix:** Add an `UpdateHubUserLastLoginAt(ctx, userID, now)` method to the user repository and call it from `LoginHubUser` before returning.
-
----
-
-#### BUG-02 — `autoCorrelateIngestEvents` silently discards errors
-
-**File:** `hub/internal/hub/ingest.go:203`
+`ValidateServerConfig` then calls `isKnownSiteKind` which does not include `woocommerce`:
 
 ```go
-_, _ = h.CorrelateEvents(ctx, CorrelateEventsInput{...})
-```
-
-When Redis is unavailable and the async queue fallback is triggered, correlation errors are swallowed entirely. Database errors, missing finding repositories, and inventory resolution failures are all invisible.
-
-**Fix:** Accept an `onError func(error)` callback (already on the worker options) or at minimum log the error through the Hub's logger so operators can see when synchronous correlation is failing.
-
----
-
-#### BUG-03 — `filepath.Abs` error silently ignored in `scanPaths`
-
-**File:** `agent/internal/agent/watch.go:429`
-
-```go
-queueAbs, _ := filepath.Abs(queueDir)
-```
-
-If `filepath.Abs` fails (process cannot determine its working directory), `queueAbs` is `""`. The subsequent `shouldSkipDir(current, queueAbs)` check will then never match the queue directory, allowing queue files to be hashed and reported as file-change events.
-
-**Fix:** Return the error or fall back to the raw `queueDir` string:
-
-```go
-queueAbs, err := filepath.Abs(queueDir)
-if err != nil {
-    queueAbs = queueDir
+func isKnownSiteKind(kind string) bool {
+    switch kind {
+    case "wordpress", "wordpress-multisite", "prestashop", "generic-php", "mautic", "yii2-rbac", "laravel":
+        return true
+    ...
+    }
 }
 ```
 
----
+Any operator who configures `kind: woocommerce` gets a validation error ("kind is unknown") and the agent refuses to start. The normalization code confirms the intent to support WooCommerce as a site variant — the omission from `isKnownSiteKind` is an oversight.
 
-#### BUG-04 — TOCTOU race in `VerifyHubUserTOTP` between reading and activating
+`isKnownWatchProfile` does include `woocommerce` (line 633), further confirming the intent.
 
-**File:** `hub/internal/hub/users.go:189-213`
-
-The function reads the user, checks `PendingTOTPSecretCiphertext`, verifies the TOTP code, then calls `ActivateHubUserTOTP`. Under concurrent requests (e.g., a user double-submitting the enrollment form), two goroutines can verify the same pending code and both proceed to activate — potentially storing two different secrets if the second request raced a new `StartHubUserTOTP` in between.
-
-**Fix:** Make `ActivateHubUserTOTP` check that the `PendingTOTPSecretCiphertext` being activated matches the value that was read, using a conditional UPDATE (`WHERE pending_secret = $old_value`). Return an error if the conditional update matches zero rows.
-
----
-
-### Security
-
----
-
-#### SEC-01 — In-memory auth rate limiter grows without bound
-
-**File:** `hub/internal/adapters/http/hub_router.go:2386`
+**Fix:** Add `"woocommerce"` to the `isKnownSiteKind` switch:
 
 ```go
-type hubAuthRateLimiter struct {
-    attempts map[string][]time.Time
-}
+case "wordpress", "wordpress-multisite", "woocommerce", "prestashop", "generic-php", "mautic", "yii2-rbac", "laravel":
+    return true
 ```
-
-Each `allow()` call prunes entries for the specific key being checked, but keys for IP+email combinations that are never seen again remain in the map indefinitely. An attacker cycling through many unique source IPs (or email addresses) can grow this map without limit, leading to a memory exhaustion DoS.
-
-**Fix:** Add a periodic sweeper goroutine (or use a TTL-based map / LRU cache) that removes keys whose last attempt is older than the rate-limit window. Alternatively, use an existing library like `golang.org/x/time/rate` per-key with LRU eviction.
-
----
-
-#### SEC-02 — CSRF token is derivable from the session cookie
-
-**File:** `hub/internal/adapters/http/hub_router.go:2890-2898`
-
-```go
-func dashboardCSRFToken(sessionToken string) string {
-    mac := hmac.New(sha256.New, []byte(sessionToken))
-    mac.Write([]byte(dashboardProtocol))
-    return hex.EncodeToString(mac.Sum(nil))
-}
-```
-
-The CSRF token is an HMAC of the session token keyed by the session token itself. Any code that can read the session cookie can compute a valid CSRF token. The protection depends entirely on `SameSite=Strict` preventing cross-site cookie access. In environments where `SameSite` is not enforced (older browsers, non-browser clients, subdomain attacks), CSRF protection degrades to nothing.
-
-**Fix:** Derive the CSRF token from a server-side secret (e.g., `HMAC(server_secret, session_token)`) rather than from the session token itself. This way an attacker who steals the session cookie cannot compute the CSRF token without also knowing the server secret.
-
----
-
-#### SEC-03 — Bootstrap mutex is process-local; multi-instance deployments have a TOCTOU race
-
-**File:** `hub/internal/adapters/http/hub_router.go:1580-1598`
-
-```go
-hubBootstrapUserMu.Lock()
-count, err := hub.CountHubUsers(r.Context())
-// ...
-bootstrap = count == 0
-```
-
-`hubBootstrapUserMu` is a `sync.Mutex` — it only synchronizes within a single process. When two Hub instances are running simultaneously and both receive the first-user-creation request, both see `count == 0` and both attempt to create the owner user. The result is two owner accounts instead of one.
-
-**Fix:** Use a database-level advisory lock (e.g., `pg_try_advisory_lock`) held for the duration of the bootstrap creation transaction, or use a unique constraint on `access_level = 'owner'` combined with `INSERT ... ON CONFLICT DO NOTHING` + count check.
-
----
-
-#### SEC-04 — Auth rate limiter state is not shared across Hub instances
-
-**File:** `hub/internal/adapters/http/hub_router.go:42`
-
-```go
-var hubAuthLimiter = newHubAuthRateLimiter(10, time.Minute)
-```
-
-Like `hubBootstrapUserMu`, `hubAuthLimiter` is process-local. An attacker can multiply their attempt budget by the number of Hub instances behind the load balancer.
-
-**Fix:** Back the rate limiter with Redis (increment + expire pattern) when Redis is configured, and fall back to process-local limiting when it is not.
 
 ---
 
@@ -190,87 +82,64 @@ Like `hubBootstrapUserMu`, `hubAuthLimiter` is process-local. An attacker can mu
 
 ---
 
-#### ARCH-01 — `requireHubUser` queries `CountHubUsers` on every authenticated request
+#### ARCH-01 — No HTTP endpoint for user deletion
 
-**File:** `hub/internal/adapters/http/hub_router.go:2813`
+**File:** `hub/internal/adapters/http/hub_router.go` (router registration), `hub/internal/hub/users.go:203`
+
+The full deletion stack exists:
+- `hub.DeleteHubUser` domain method (calls `ports.DeleteHubUserRepository`)
+- `postgres.HubUserRepository.DeleteHubUser` — runs in a transaction, deletes the user, counts remaining, returns the count
+- `hub.markHubUsersUnknown()` — called when `remaining == 0`
+
+But the router contains no `DELETE /api/v1/access/users/{id}` route. The only user-related `DELETE` endpoint is TOTP disable:
 
 ```go
-count, err := hub.CountHubUsers(r.Context())
+router.Delete("/api/v1/access/users/{id}/totp", ...)
 ```
 
-Every API call that goes through `requireHubUser` (which is every authenticated endpoint) issues a `COUNT(*)` to the database to check whether any users are configured. This adds one extra round-trip per request.
+As a consequence:
+1. Users cannot be deleted through the HTTP API.
+2. `markHubUsersUnknown()` can never be called from HTTP traffic — the code path is effectively dead.
 
-**Fix:** Cache the "users configured" boolean in the `Hub` struct and set it when the user repository is attached (or on first login). Invalidate only when a user is created or deleted. Alternatively, move the bootstrap check to startup and express "configured" as a boolean flag set once.
-
----
-
-#### ARCH-02 — `listInventoryTopologyHandler` loads the entire scope tree to filter one environment
-
-**File:** `hub/internal/adapters/http/hub_router.go:2235-2285`
-
-`ListInventoryScopeTree` fetches all organizations, projects, environments, apps, services, hosts, and agents. The handler then iterates the full tree to find the single matching `org/project/environment`. In a multi-tenant deployment this is an expensive full-table scan for every topology request.
-
-**Fix:** Add a `GetInventoryScopeForEnvironment(ctx, org, project, env)` method to the Hub and inventory repository that queries directly by slug path, and use it from this handler.
-
----
-
-#### ARCH-03 — `AnalyzeModelAnalysisQueue` iterates all organizations and environments
-
-**File:** `hub/internal/hub/model_analysis_queue.go:136-156`
-
-The model analysis worker calls `ListOrganizations`, then for each org calls `ListProjects`, then for each project calls `ListEnvironments`. At scale this is O(orgs × projects × environments) round-trips per worker tick.
-
-**Fix:** Add a `ListEnvironmentsNeedingModelAnalysis(ctx, limit)` query to the repository that returns the relevant environments directly (e.g., environments that have open findings without a model analysis report), avoiding nested iteration.
-
----
-
-#### ARCH-04 — `writeFileAtomicSync` is duplicated across two packages
-
-**Files:** `agent/internal/agent/atomic_write.go`, `agent/internal/collector/atomic_write.go`
-
-Both files contain byte-for-byte identical implementations. If one is fixed, the other is likely forgotten.
-
-**Fix:** Move `writeFileAtomicSync` and `syncParentDir` to a shared internal package (e.g., `agent/internal/fsutil`) and import it from both packages.
-
----
-
-### Operations / Configuration
-
----
-
-#### OPS-01 — Default database URL contains hardcoded credentials and `sslmode=disable`
-
-**File:** `hub/internal/bootstrap/config.go:79`
+**Fix:** Add the route and handler:
 
 ```go
-URL: envString("AEGRAIL_DATABASE_URL", "postgres://aegrail:aegrail@localhost:55432/aegrail?sslmode=disable"),
+router.Delete("/api/v1/access/users/{id}", withHubAuth(hub, options, "admin", deleteHubUserHandler(hub)))
 ```
 
-If `AEGRAIL_DATABASE_URL` is not set in a production environment, the server silently connects with these defaults — no TLS and well-known credentials.
+With a `deleteHubUserHandler` that calls `hub.DeleteHubUser` and returns 204 on success, 403 if the caller attempts to delete their own account (to prevent lockout), and 404 if the user does not exist.
 
-**Fix:** Change the default to `""` (empty) and fail fast at startup if the URL is not provided. The `ValidateServe()` function already validates other required secrets; add the database URL there:
+---
+
+#### ARCH-02 — All domain errors return HTTP 400 in the handler layer
+
+**File:** `hub/internal/adapters/http/hub_router.go:664` (example in `ingestEventsHandler`)
+
+The ingest handler, and the majority of handlers in the router, map every domain error to `http.StatusBadRequest`:
 
 ```go
-if strings.TrimSpace(c.Database.URL) == "" {
-    return errors.New("AEGRAIL_DATABASE_URL is required")
+result, err := hub.IngestEvents(r.Context(), input)
+if err != nil {
+    writeError(w, http.StatusBadRequest, err.Error())
+    return
 }
 ```
 
----
+Domain errors include not-found conditions (`organization %q does not exist`, `host %q does not exist in environment`), which are semantically "404 Not Found", not "400 Bad Request". Returning 400 misleads API clients into thinking their request body is malformed, when the issue is that the referenced resource does not exist.
 
-#### OPS-02 — Trusted proxy CIDR list is parsed only once via `sync.Once`
+This is a systematic pattern throughout the router (findings, inventory, model analysis, etc.).
 
-**File:** `hub/internal/adapters/http/hub_router.go:3099`
+**Fix:** Introduce a typed error for not-found conditions in the domain layer (e.g., `ErrNotFound` or a sentinel type), and map it to 404 at the handler boundary:
 
 ```go
-trustedProxyOnce.Do(func() {
-    // parse AEGRAIL_TRUSTED_PROXY_CIDRS once
-})
+if errors.Is(err, hub.ErrNotFound) {
+    writeError(w, http.StatusNotFound, err.Error())
+    return
+}
+writeError(w, http.StatusBadRequest, err.Error())
 ```
 
-The trusted proxy CIDRs are read from the environment variable at first HTTP request. Subsequent changes to the env var (e.g., in containerized restarts without a full process restart) are not picked up. More importantly, invalid CIDR entries are silently skipped with no log or error.
-
-**Fix:** Parse `AEGRAIL_TRUSTED_PROXY_CIDRS` at startup in `LoadConfig` and store it in the `Config` struct. Pass it into `HubOptions`. Log a warning for each entry that fails to parse.
+At minimum, handle the ingest endpoint first since agents rely on it and need to distinguish "bad payload" (fix the data) from "resource not registered" (fix the agent configuration).
 
 ---
 
@@ -278,33 +147,29 @@ The trusted proxy CIDRs are read from the environment variable at first HTTP req
 
 ---
 
-#### TEST-01 — No tests for HTTP handler behavior (status codes, error paths, auth enforcement)
+#### TEST-01 — `hubAuthLimiter` is a package-level variable shared across test cases
 
-The only test file under `hub/` is `auth_test.go`, which covers TOTP replay. There are no tests verifying that:
+**File:** `hub/internal/adapters/http/hub_router.go:42`
 
-- Unauthenticated requests to protected endpoints return 401, not 200 or 500.
-- CSRF verification rejects requests missing the header.
-- `createHubUserHandler` correctly enforces bootstrap logic.
-- Error responses from domain layer use the correct HTTP status codes.
-- `parseQueryLimit` clamps values correctly.
+```go
+var hubAuthLimiter = newHubAuthRateLimiter(defaultAuthRateLimit, defaultAuthRateWindow)
+```
 
-**Fix:** Add HTTP-level integration tests using `httptest.NewRecorder` and a test-scoped Hub instance. At minimum, cover the auth middleware, login, logout, and the bootstrap flow.
+`hubAuthLimiter` is a package-level singleton. Every call to `NewHubRouter` uses the same limiter. In tests that create multiple routers or that run multiple login attempts across different test cases within the same test binary, the in-memory attempt counters are shared. A test that exhausts the rate limit leaves the limiter in a blocked state for subsequent tests.
 
----
+This explains any intermittent test failures in auth-path tests when run alongside rate-limit tests.
 
-#### TEST-02 — No tests for the agent wire protocol (encrypt → send → decrypt round-trip)
+**Fix:** Move the limiter into `HubOptions` or construct it inside `NewHubRouter`:
 
-`agent/internal/wire/wire.go` and `hub/internal/wire/wire.go` implement the X25519 + AES-256-GCM protocol, but there are no tests verifying that agent-signed envelopes are accepted by the hub decryption path, that expired envelopes are rejected, or that tampered ciphertext is rejected.
+```go
+func NewHubRouter(meta domain.AppMeta, hub *hubapp.Hub, options HubOptions) http.Handler {
+    authLimiter := newHubAuthRateLimiter(defaultAuthRateLimit, defaultAuthRateWindow)
+    // pass authLimiter through closures to login/TOTP handlers
+    ...
+}
+```
 
-**Fix:** Add table-driven tests in a `wire_test.go` file covering: valid envelope, expired timestamp, wrong nonce, bit-flipped ciphertext, mismatched node ID.
-
----
-
-#### TEST-03 — Correlation engine rules have no unit tests
-
-`hub/internal/hub/correlation.go` contains a set of pattern-matching rules (`isSuspiciousWebEvent`, `isHighSignalFileEvent`, `isDatabaseSecurityEvent`, `isPersistenceEvent`). These rules are purely functional and easy to unit-test, but have no tests.
-
-**Fix:** Add a `correlation_test.go` with table-driven tests for each rule function using representative `domain.TimelineEvent` fixtures, and for `correlateTimelineEvents` with end-to-end chain examples.
+This gives each router instance an independent limiter and eliminates cross-test state.
 
 ---
 
@@ -312,20 +177,7 @@ The only test file under `hub/` is `auth_test.go`, which covers TOTP replay. The
 
 | ID | Category | Severity | File | Status |
 |---|---|---|---|---|
-| BUG-01 | Bug | Medium | `hub/internal/hub/auth.go:117` | Open |
-| BUG-02 | Bug | Low | `hub/internal/hub/ingest.go:203` | Open |
-| BUG-03 | Bug | Low | `agent/internal/agent/watch.go:429` | Open |
-| BUG-04 | Bug | Low | `hub/internal/hub/users.go:203` | Open |
-| SEC-01 | Security | High | `hub/internal/adapters/http/hub_router.go:2386` | Open |
-| SEC-02 | Security | Medium | `hub/internal/adapters/http/hub_router.go:2890` | Open |
-| SEC-03 | Security | High | `hub/internal/adapters/http/hub_router.go:1580` | Open |
-| SEC-04 | Security | Medium | `hub/internal/adapters/http/hub_router.go:42` | Open |
-| ARCH-01 | Architecture | Medium | `hub/internal/adapters/http/hub_router.go:2813` | Open |
-| ARCH-02 | Architecture | Low | `hub/internal/adapters/http/hub_router.go:2235` | Open |
-| ARCH-03 | Architecture | Low | `hub/internal/hub/model_analysis_queue.go:136` | Open |
-| ARCH-04 | Architecture | Low | `agent/internal/agent/atomic_write.go` | Open |
-| OPS-01 | Operations | High | `hub/internal/bootstrap/config.go:79` | Open |
-| OPS-02 | Operations | Low | `hub/internal/adapters/http/hub_router.go:3099` | Open |
-| TEST-01 | Testing | Medium | `hub/internal/adapters/http/` | Open |
-| TEST-02 | Testing | Medium | `agent/internal/wire/`, `hub/internal/wire/` | Open |
-| TEST-03 | Testing | Low | `hub/internal/hub/correlation.go` | Open |
+| BUG-01 | Bug | Medium | `agent/internal/agent/server_config.go:622` | Open |
+| ARCH-01 | Architecture | Medium | `hub/internal/adapters/http/hub_router.go` | Open |
+| ARCH-02 | Architecture | Low | `hub/internal/adapters/http/hub_router.go:664` | Open |
+| TEST-01 | Testing | Low | `hub/internal/adapters/http/hub_router.go:42` | Open |

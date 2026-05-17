@@ -145,22 +145,29 @@ func (h *Hub) AnalyzeModelAnalysisQueue(ctx context.Context, input AnalyzeModelA
 		}
 		return result, nil
 	}
+	h.warnModelAnalysisQueueScopeFallback()
 	organizations, err := h.inventory.ListOrganizations(ctx)
 	if err != nil {
 		return AnalyzeModelAnalysisQueueResult{}, err
 	}
 	for _, org := range organizations {
+		if result.Scopes >= limit || result.Findings >= limit {
+			return result, nil
+		}
 		projects, err := h.inventory.ListProjects(ctx, org.ID)
 		if err != nil {
 			return result, err
 		}
 		for _, project := range projects {
+			if result.Scopes >= limit || result.Findings >= limit {
+				return result, nil
+			}
 			environments, err := h.inventory.ListEnvironments(ctx, project.ID)
 			if err != nil {
 				return result, err
 			}
 			for _, environment := range environments {
-				if result.Findings >= limit {
+				if result.Scopes >= limit || result.Findings >= limit {
 					return result, nil
 				}
 				result.Scopes++
@@ -170,6 +177,15 @@ func (h *Hub) AnalyzeModelAnalysisQueue(ctx context.Context, input AnalyzeModelA
 		}
 	}
 	return result, nil
+}
+
+func (h *Hub) warnModelAnalysisQueueScopeFallback() {
+	if h == nil || h.backgroundError == nil {
+		return
+	}
+	h.modelQueueFallbackWarnOnce.Do(func() {
+		h.backgroundError(fmt.Errorf("findings repository does not implement ModelAnalysisQueueScopeRepository; using bounded fallback scan"))
+	})
 }
 
 func (h *Hub) analyzeModelAnalysisQueueScope(ctx context.Context, input AnalyzeModelAnalysisQueueInput, org domain.Organization, project domain.Project, environment domain.Environment, limit int, result *AnalyzeModelAnalysisQueueResult) {

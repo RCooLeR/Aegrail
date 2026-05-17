@@ -38,11 +38,6 @@ const (
 
 type hubUserContextKey struct{}
 
-var (
-	hubAuthLimiter              = newHubAuthRateLimiter(defaultAuthRateLimit, defaultAuthRateWindow)
-	dashboardCSRFSecretFallback = randomToken(32)
-)
-
 type HubOptions struct {
 	WirePrivateKey      string
 	WireTimestampSkew   time.Duration
@@ -51,6 +46,7 @@ type HubOptions struct {
 	TrustedProxyCIDRs   []*net.IPNet
 	Now                 func() time.Time
 	HealthCheck         func(context.Context) map[string]string
+	authRateLimiter     *hubAuthRateLimiter
 }
 
 func NewHubRouter(meta domain.AppMeta, hub *hubapp.Hub, options HubOptions) http.Handler {
@@ -59,6 +55,12 @@ func NewHubRouter(meta domain.AppMeta, hub *hubapp.Hub, options HubOptions) http
 	}
 	if options.Now == nil {
 		options.Now = time.Now
+	}
+	if options.authRateLimiter == nil {
+		options.authRateLimiter = newHubAuthRateLimiter(defaultAuthRateLimit, defaultAuthRateWindow)
+	}
+	if hub != nil && hub.HubUsersConfigured() && strings.TrimSpace(options.DashboardCSRFSecret) == "" {
+		panic("DashboardCSRFSecret is required when Hub dashboard users are configured")
 	}
 
 	router := chi.NewRouter()
@@ -131,6 +133,7 @@ func NewHubRouter(meta domain.AppMeta, hub *hubapp.Hub, options HubOptions) http
 	router.Get("/api/v1/access/users", withHubAuth(hub, options, "admin", listHubUsersHandler(hub)))
 	router.Post("/api/v1/access/users", createHubUserHandler(hub, options))
 	router.Patch("/api/v1/access/users/{id}", withHubAuth(hub, options, "admin", updateHubUserHandler(hub)))
+	router.Delete("/api/v1/access/users/{id}", withHubAuth(hub, options, "admin", deleteHubUserHandler(hub)))
 	router.Post("/api/v1/access/users/{id}/totp/start", withHubAuth(hub, options, "admin", startHubUserTOTPHandler(hub)))
 	router.Post("/api/v1/access/users/{id}/totp/verify", withHubAuth(hub, options, "admin", verifyHubUserTOTPHandler(hub, options)))
 	router.Delete("/api/v1/access/users/{id}/totp", withHubAuth(hub, options, "admin", disableHubUserTOTPHandler(hub)))
@@ -654,13 +657,13 @@ func ingestEventsHandler(hub *hubapp.Hub, options HubOptions) http.HandlerFunc {
 		}
 		input, err := request.toInput(signature)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 
 		result, err := hub.IngestEvents(r.Context(), input)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusAccepted, map[string]any{
@@ -707,7 +710,7 @@ func listFindingsHandler(hub *hubapp.Hub) http.HandlerFunc {
 		}
 		limit, err := parseQueryLimit(r, 100)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		findings, err := hub.ListHubFindings(r.Context(), hubapp.ListHubFindingsInput{
@@ -718,7 +721,7 @@ func listFindingsHandler(hub *hubapp.Hub) http.HandlerFunc {
 			Limit:            limit,
 		})
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		records := make([]hubFindingResponse, 0, len(findings))
@@ -746,7 +749,7 @@ func getFindingHandler(hub *hubapp.Hub) http.HandlerFunc {
 			FindingID:        chi.URLParam(r, "id"),
 		})
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -769,12 +772,12 @@ func listModelAnalysisReportsForFindingHandler(hub *hubapp.Hub) http.HandlerFunc
 			FindingID:        chi.URLParam(r, "id"),
 		})
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		limit, err := parseQueryLimit(r, 50)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 
@@ -787,7 +790,7 @@ func listModelAnalysisReportsForFindingHandler(hub *hubapp.Hub) http.HandlerFunc
 			Limit:            limit,
 		})
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 
@@ -828,7 +831,7 @@ func updateFindingStatusHandler(hub *hubapp.Hub) http.HandlerFunc {
 			Actor:            request.Actor,
 		})
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -858,7 +861,7 @@ func acceptFindingsBaselineHandler(hub *hubapp.Hub) http.HandlerFunc {
 			Actor:            request.Actor,
 		})
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -893,7 +896,7 @@ func ignoreFilePathFromFindingHandler(hub *hubapp.Hub) http.HandlerFunc {
 			Actor:            request.Actor,
 		})
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, map[string]any{
@@ -929,7 +932,7 @@ func allowBrowserScriptFromFindingHandler(hub *hubapp.Hub) http.HandlerFunc {
 			ApprovedBy:       request.ApprovedBy,
 		})
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, map[string]any{
@@ -947,7 +950,7 @@ func findingReviewReportHandler(meta domain.AppMeta, hub *hubapp.Hub) http.Handl
 		}
 		limit, err := parseQueryLimit(r, 100)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		findings, err := hub.ListHubFindings(r.Context(), hubapp.ListHubFindingsInput{
@@ -958,7 +961,7 @@ func findingReviewReportHandler(meta domain.AppMeta, hub *hubapp.Hub) http.Handl
 			Limit:            limit,
 		})
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		modelReports, err := hub.ListModelAnalysisReports(r.Context(), hubapp.ListModelAnalysisReportsInput{
@@ -969,7 +972,7 @@ func findingReviewReportHandler(meta domain.AppMeta, hub *hubapp.Hub) http.Handl
 			Limit:            limit,
 		})
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		report := reports.BuildFindingReviewReport(meta, reports.HubFindingsScope{
@@ -1008,7 +1011,7 @@ func generateModelAnalysisFromFindingHandler(hub *hubapp.Hub) http.HandlerFunc {
 			MaxCollectionEntries: request.MaxCollectionEntries,
 		})
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, map[string]any{
@@ -1025,7 +1028,7 @@ func listModelAnalysisReportsHandler(hub *hubapp.Hub) http.HandlerFunc {
 		}
 		limit, err := parseQueryLimit(r, 50)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		reports, err := hub.ListModelAnalysisReports(r.Context(), hubapp.ListModelAnalysisReportsInput{
@@ -1036,7 +1039,7 @@ func listModelAnalysisReportsHandler(hub *hubapp.Hub) http.HandlerFunc {
 			Limit:            limit,
 		})
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		records := make([]modelAnalysisReportResponse, 0, len(reports))
@@ -1064,7 +1067,7 @@ func getModelAnalysisReportHandler(hub *hubapp.Hub) http.HandlerFunc {
 			ReportID:         chi.URLParam(r, "id"),
 		})
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -1081,12 +1084,12 @@ func listTimelineHandler(hub *hubapp.Hub) http.HandlerFunc {
 		}
 		limit, err := parseQueryLimit(r, 500)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		since, err := parseQueryTime(r.URL.Query().Get("since"), "since")
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		events, err := hub.ListTimelineEvents(r.Context(), hubapp.ListTimelineEventsInput{
@@ -1098,7 +1101,7 @@ func listTimelineHandler(hub *hubapp.Hub) http.HandlerFunc {
 			Limit:            limit,
 		})
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		records := make([]timelineEventResponse, 0, len(events))
@@ -1120,12 +1123,12 @@ func listCoverageHandler(hub *hubapp.Hub) http.HandlerFunc {
 		}
 		limit, err := parseQueryLimit(r, 5000)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		since, err := parseQueryTime(r.URL.Query().Get("since"), "since")
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		coverage, err := hub.ListConfigCoverage(r.Context(), hubapp.ListConfigCoverageInput{
@@ -1137,7 +1140,7 @@ func listCoverageHandler(hub *hubapp.Hub) http.HandlerFunc {
 			Limit:            limit,
 		})
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		records := make([]configCoverageResponse, 0, len(coverage))
@@ -1159,7 +1162,7 @@ func listDeploymentsHandler(hub *hubapp.Hub) http.HandlerFunc {
 		}
 		deployments, err := hub.ListDeploymentMarkers(r.Context(), r.URL.Query().Get("org"), r.URL.Query().Get("project"), r.URL.Query().Get("environment"), r.URL.Query().Get("app"))
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		records := make([]deploymentResponse, 0, len(deployments))
@@ -1205,7 +1208,7 @@ func createDeploymentHandler(hub *hubapp.Hub) http.HandlerFunc {
 			FinishedAt:       finishedAt,
 		})
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, map[string]any{
@@ -1222,12 +1225,12 @@ func listBrowserScriptsHandler(hub *hubapp.Hub) http.HandlerFunc {
 		}
 		limit, err := parseQueryLimit(r, 1000)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		since, err := parseQueryTime(r.URL.Query().Get("since"), "since")
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		observations, err := hub.ListBrowserScriptObservations(r.Context(), hubapp.ListBrowserScriptObservationsInput{
@@ -1241,7 +1244,7 @@ func listBrowserScriptsHandler(hub *hubapp.Hub) http.HandlerFunc {
 			Limit:            limit,
 		})
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		records := make([]browserScriptObservationResponse, 0, len(observations))
@@ -1271,7 +1274,7 @@ func listBrowserScriptAllowlistHandler(hub *hubapp.Hub) http.HandlerFunc {
 			Status:           r.URL.Query().Get("status"),
 		})
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		records := make([]browserScriptAllowlistEntryResponse, 0, len(entries))
@@ -1308,7 +1311,7 @@ func allowBrowserScriptHandler(hub *hubapp.Hub) http.HandlerFunc {
 			ApprovedBy:       request.ApprovedBy,
 		})
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, map[string]any{
@@ -1339,7 +1342,7 @@ func updateBrowserScriptAllowlistStatusHandler(hub *hubapp.Hub) http.HandlerFunc
 			ApprovedBy:       request.ApprovedBy,
 		})
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -1443,7 +1446,7 @@ func loginHubUserHandler(hub *hubapp.Hub, options HubOptions) http.HandlerFunc {
 			return
 		}
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		http.SetCookie(w, hubSessionCookie(result.Token, result.ExpiresAt, r, options))
@@ -1501,7 +1504,7 @@ func startCurrentHubUserTOTPHandler(hub *hubapp.Hub, options HubOptions) http.Ha
 			Issuer: request.Issuer,
 		})
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, map[string]any{
@@ -1544,7 +1547,7 @@ func verifyCurrentHubUserTOTPHandler(hub *hubapp.Hub, options HubOptions) http.H
 			Code:   request.Code,
 		})
 		if err != nil {
-			status := http.StatusBadRequest
+			status := hubErrorStatus(err)
 			if errors.Is(err, hubapp.ErrHubTOTPInvalidCode) || errors.Is(err, hubapp.ErrHubTOTPNoPending) {
 				status = http.StatusUnauthorized
 			}
@@ -1568,7 +1571,7 @@ func listHubUsersHandler(hub *hubapp.Hub) http.HandlerFunc {
 		}
 		users, err := hub.ListHubUsers(r.Context())
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		records := make([]hubUserResponse, 0, len(users))
@@ -1636,7 +1639,7 @@ func createHubUserHandler(hub *hubapp.Hub, options HubOptions) http.HandlerFunc 
 			user, err = hub.CreateHubUser(r.Context(), input)
 		}
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, map[string]any{
@@ -1664,12 +1667,35 @@ func updateHubUserHandler(hub *hubapp.Hub) http.HandlerFunc {
 			TwoFactorRequired: request.TwoFactorRequired,
 		})
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"user": hubUserRecord(user),
 		})
+	}
+}
+
+func deleteHubUserHandler(hub *hubapp.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		userID := strings.TrimSpace(chi.URLParam(r, "id"))
+		if userID == "" {
+			writeError(w, http.StatusBadRequest, "user id is required")
+			return
+		}
+		if actor, ok := currentHubUser(r); ok && actor.ID == domain.ID(userID) {
+			writeError(w, http.StatusForbidden, "users cannot delete their own account")
+			return
+		}
+		if err := hub.DeleteHubUser(r.Context(), hubapp.DeleteHubUserInput{UserID: userID}); err != nil {
+			writeHubError(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	}
 }
 
@@ -1691,7 +1717,7 @@ func startHubUserTOTPHandler(hub *hubapp.Hub) http.HandlerFunc {
 			Issuer: request.Issuer,
 		})
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, map[string]any{
@@ -1730,7 +1756,7 @@ func verifyHubUserTOTPHandler(hub *hubapp.Hub, options HubOptions) http.HandlerF
 			Code:   request.Code,
 		})
 		if err != nil {
-			status := http.StatusBadRequest
+			status := hubErrorStatus(err)
 			if errors.Is(err, hubapp.ErrHubTOTPInvalidCode) || errors.Is(err, hubapp.ErrHubTOTPNoPending) {
 				status = http.StatusUnauthorized
 			}
@@ -1756,7 +1782,7 @@ func disableHubUserTOTPHandler(hub *hubapp.Hub) http.HandlerFunc {
 			UserID: chi.URLParam(r, "id"),
 		})
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -1781,7 +1807,7 @@ func createInventoryCompanyHandler(hub *hubapp.Hub) http.HandlerFunc {
 			Name: request.Name,
 		})
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, map[string]any{"organization": organizationRecord(organization)})
@@ -1805,7 +1831,7 @@ func updateInventoryCompanyHandler(hub *hubapp.Hub) http.HandlerFunc {
 			Name: request.Name,
 		})
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"organization": organizationRecord(organization)})
@@ -1832,7 +1858,7 @@ func createInventorySiteHandler(hub *hubapp.Hub) http.HandlerFunc {
 			Name:             request.ProjectName,
 		})
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		environment, err := hub.SaveEnvironment(r.Context(), hubapp.SaveEnvironmentInput{
@@ -1842,7 +1868,7 @@ func createInventorySiteHandler(hub *hubapp.Hub) http.HandlerFunc {
 			Name:             defaultString(request.EnvironmentName, envSlug),
 		})
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		app, err := hub.SaveMonitoredApp(r.Context(), hubapp.SaveMonitoredAppInput{
@@ -1854,7 +1880,7 @@ func createInventorySiteHandler(hub *hubapp.Hub) http.HandlerFunc {
 			Kind:             request.Kind,
 		})
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		service, err := hub.SaveService(r.Context(), hubapp.SaveServiceInput{
@@ -1867,7 +1893,7 @@ func createInventorySiteHandler(hub *hubapp.Hub) http.HandlerFunc {
 			Role:             defaultString(request.ServiceRole, "web"),
 		})
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, map[string]any{
@@ -1896,7 +1922,7 @@ func updateInventoryProjectHandler(hub *hubapp.Hub) http.HandlerFunc {
 			Name: request.Name,
 		})
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"project": projectRecord(project)})
@@ -1920,7 +1946,7 @@ func updateInventoryEnvironmentHandler(hub *hubapp.Hub) http.HandlerFunc {
 			Name: request.Name,
 		})
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"environment": environmentRecord(environment)})
@@ -1945,7 +1971,7 @@ func updateInventoryAppHandler(hub *hubapp.Hub) http.HandlerFunc {
 			Kind: request.Kind,
 		})
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"app": monitoredAppRecord(app)})
@@ -1970,7 +1996,7 @@ func updateInventoryServiceHandler(hub *hubapp.Hub) http.HandlerFunc {
 			Role: request.Role,
 		})
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"service": serviceRecord(service)})
@@ -2011,7 +2037,7 @@ func createInventoryNodeHandler(hub *hubapp.Hub, options HubOptions) http.Handle
 			Labels:           request.Labels,
 		})
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		nodeSecret, nodePublicKey, err := wire.GenerateKeyPair()
@@ -2034,7 +2060,7 @@ func createInventoryNodeHandler(hub *hubapp.Hub, options HubOptions) http.Handle
 			NodePublicKey:    nodePublicKey,
 		})
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		sample := buildAgentSampleConfig(r, options, request, host, agent, hubPublicKey, nodeSecret)
@@ -2068,7 +2094,7 @@ func updateInventoryHostHandler(hub *hubapp.Hub) http.HandlerFunc {
 			Labels:   request.Labels,
 		})
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"host": hostRecord(host)})
@@ -2092,7 +2118,7 @@ func updateInventoryAgentHandler(hub *hubapp.Hub) http.HandlerFunc {
 			Version: request.Version,
 		})
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"agent": agentRecord(agent)})
@@ -2107,7 +2133,7 @@ func listInventoryScopesHandler(hub *hubapp.Hub) http.HandlerFunc {
 		}
 		tree, err := hub.ListInventoryScopeTree(r.Context())
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 
@@ -2169,7 +2195,7 @@ func listInventoryAppsHandler(hub *hubapp.Hub) http.HandlerFunc {
 		}
 		apps, err := hub.ListMonitoredApps(r.Context(), r.URL.Query().Get("org"), r.URL.Query().Get("project"), r.URL.Query().Get("environment"))
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		records := make([]monitoredAppResponse, 0, len(apps))
@@ -2191,7 +2217,7 @@ func listInventoryServicesHandler(hub *hubapp.Hub) http.HandlerFunc {
 		}
 		services, err := hub.ListServices(r.Context(), r.URL.Query().Get("org"), r.URL.Query().Get("project"), r.URL.Query().Get("environment"), r.URL.Query().Get("app"))
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		records := make([]serviceResponse, 0, len(services))
@@ -2213,7 +2239,7 @@ func listInventoryHostsHandler(hub *hubapp.Hub) http.HandlerFunc {
 		}
 		hosts, err := hub.ListHosts(r.Context(), r.URL.Query().Get("org"), r.URL.Query().Get("project"), r.URL.Query().Get("environment"))
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		records := make([]hostResponse, 0, len(hosts))
@@ -2235,7 +2261,7 @@ func listInventoryAgentsHandler(hub *hubapp.Hub) http.HandlerFunc {
 		}
 		agents, err := hub.ListAgents(r.Context(), r.URL.Query().Get("org"), r.URL.Query().Get("project"), r.URL.Query().Get("environment"), r.URL.Query().Get("host"))
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		records := make([]agentResponse, 0, len(agents))
@@ -2261,11 +2287,11 @@ func listInventoryTopologyHandler(hub *hubapp.Hub) http.HandlerFunc {
 
 		scope, ok, err := hub.GetInventoryScopeForEnvironment(r.Context(), org, project, environment)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeHubError(w, err)
 			return
 		}
 		if !ok {
-			writeError(w, http.StatusBadRequest, "inventory environment path does not exist")
+			writeError(w, http.StatusNotFound, "inventory environment path does not exist")
 			return
 		}
 
@@ -2415,7 +2441,7 @@ func allowHubAuthAttempt(r *http.Request, hub *hubapp.Hub, options HubOptions, r
 			return allowed, err
 		}
 	}
-	return hubAuthLimiter.allow(key, now), nil
+	return options.authRateLimiter.allow(key, now), nil
 }
 
 func (l *hubAuthRateLimiter) allow(key string, now time.Time) bool {
@@ -2832,6 +2858,11 @@ func withHubAuth(hub *hubapp.Hub, options HubOptions, minimumAccess string, next
 	}
 }
 
+func currentHubUser(r *http.Request) (domain.HubUser, bool) {
+	user, ok := r.Context().Value(hubUserContextKey{}).(domain.HubUser)
+	return user, ok
+}
+
 func requireHubUser(w http.ResponseWriter, r *http.Request, hub *hubapp.Hub, options HubOptions, minimumAccess string) (domain.HubUser, bool) {
 	if hub == nil {
 		writeError(w, http.StatusServiceUnavailable, "hub is not configured")
@@ -2924,7 +2955,7 @@ func dashboardCSRFToken(options HubOptions, sessionToken string) string {
 	}
 	secret := strings.TrimSpace(options.DashboardCSRFSecret)
 	if secret == "" {
-		secret = dashboardCSRFSecretFallback
+		return ""
 	}
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write([]byte(dashboardProtocol))
@@ -3179,4 +3210,25 @@ func writeError(w http.ResponseWriter, status int, message string) {
 		message = "internal server error"
 	}
 	writeJSON(w, status, map[string]string{"error": message})
+}
+
+func writeHubError(w http.ResponseWriter, err error) {
+	writeError(w, hubErrorStatus(err), err.Error())
+}
+
+func hubErrorStatus(err error) int {
+	if err == nil {
+		return http.StatusBadRequest
+	}
+	if errors.Is(err, hubapp.ErrHubNotFound) {
+		return http.StatusNotFound
+	}
+	message := strings.ToLower(err.Error())
+	if strings.Contains(message, " does not exist") ||
+		strings.Contains(message, " was not found") ||
+		strings.Contains(message, " not found") ||
+		strings.Contains(message, "no rows in result set") {
+		return http.StatusNotFound
+	}
+	return http.StatusBadRequest
 }

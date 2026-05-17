@@ -621,7 +621,7 @@ func isAbsoluteConfigPath(value string) bool {
 
 func isKnownSiteKind(kind string) bool {
 	switch kind {
-	case "wordpress", "wordpress-multisite", "prestashop", "generic-php", "mautic", "yii2-rbac", "laravel":
+	case "wordpress", "wordpress-multisite", "woocommerce", "prestashop", "generic-php", "mautic", "yii2-rbac", "laravel":
 		return true
 	default:
 		return false

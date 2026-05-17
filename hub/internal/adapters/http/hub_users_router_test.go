@@ -26,7 +26,7 @@ func TestHubRouterManagesUsersAndTOTPEnrollment(t *testing.T) {
 	router := NewHubRouter(
 		domain.AppMeta{Name: "Aegrail", Binary: "aegrail", Version: "test"},
 		hubapp.New(hubapp.Dependencies{Users: users, UserSecretKey: "local-test-secret"}),
-		HubOptions{},
+		HubOptions{DashboardCSRFSecret: "local-test-secret"},
 	)
 
 	createRequest := httptest.NewRequest(http.MethodPost, "/api/v1/access/users", bytes.NewBufferString(`{
@@ -214,6 +214,56 @@ func TestHubRouterManagesUsersAndTOTPEnrollment(t *testing.T) {
 		t.Fatalf("list body = %#v, want one user and no secret material", listBody)
 	}
 
+	createSecondRequest := httptest.NewRequest(http.MethodPost, "/api/v1/access/users", bytes.NewBufferString(`{
+		"email":"operator@example.test",
+		"display_name":"Operator",
+		"access_level":"operator",
+		"password":"correct horse battery staple",
+		"status":"active",
+		"two_factor_required":false
+	}`))
+	addDashboardAuth(createSecondRequest, cookies[0], loginBody.CSRFToken)
+	createSecondResponse := httptest.NewRecorder()
+	router.ServeHTTP(createSecondResponse, createSecondRequest)
+	if createSecondResponse.Code != http.StatusCreated {
+		t.Fatalf("create second status = %d body = %s", createSecondResponse.Code, createSecondResponse.Body.String())
+	}
+	var createSecondBody struct {
+		User struct {
+			ID string `json:"id"`
+		} `json:"user"`
+	}
+	if err := json.NewDecoder(createSecondResponse.Body).Decode(&createSecondBody); err != nil {
+		t.Fatalf("Decode create second returned error: %v", err)
+	}
+
+	selfDeleteRequest := httptest.NewRequest(http.MethodDelete, "/api/v1/access/users/"+createBody.User.ID, nil)
+	addDashboardAuth(selfDeleteRequest, cookies[0], loginBody.CSRFToken)
+	selfDeleteResponse := httptest.NewRecorder()
+	router.ServeHTTP(selfDeleteResponse, selfDeleteRequest)
+	if selfDeleteResponse.Code != http.StatusForbidden {
+		t.Fatalf("self delete status = %d body = %s", selfDeleteResponse.Code, selfDeleteResponse.Body.String())
+	}
+
+	deleteMissingRequest := httptest.NewRequest(http.MethodDelete, "/api/v1/access/users/missing-user", nil)
+	addDashboardAuth(deleteMissingRequest, cookies[0], loginBody.CSRFToken)
+	deleteMissingResponse := httptest.NewRecorder()
+	router.ServeHTTP(deleteMissingResponse, deleteMissingRequest)
+	if deleteMissingResponse.Code != http.StatusNotFound {
+		t.Fatalf("missing delete status = %d body = %s", deleteMissingResponse.Code, deleteMissingResponse.Body.String())
+	}
+
+	deleteSecondRequest := httptest.NewRequest(http.MethodDelete, "/api/v1/access/users/"+createSecondBody.User.ID, nil)
+	addDashboardAuth(deleteSecondRequest, cookies[0], loginBody.CSRFToken)
+	deleteSecondResponse := httptest.NewRecorder()
+	router.ServeHTTP(deleteSecondResponse, deleteSecondRequest)
+	if deleteSecondResponse.Code != http.StatusNoContent {
+		t.Fatalf("delete second status = %d body = %s", deleteSecondResponse.Code, deleteSecondResponse.Body.String())
+	}
+	if _, ok := users.users[domain.ID(createSecondBody.User.ID)]; ok {
+		t.Fatalf("deleted user %q is still present", createSecondBody.User.ID)
+	}
+
 	disableRequest := httptest.NewRequest(http.MethodDelete, "/api/v1/access/users/"+createBody.User.ID+"/totp", nil)
 	addDashboardAuth(disableRequest, cookies[0], loginBody.CSRFToken)
 	disableResponse := httptest.NewRecorder()
@@ -242,6 +292,26 @@ func TestHubRouterManagesUsersAndTOTPEnrollment(t *testing.T) {
 	}
 }
 
+func TestHubAuthRateLimiterIsScopedPerRouter(t *testing.T) {
+	routerOne := newRateLimitTestRouter(t)
+	for attempt := 0; attempt < defaultAuthRateLimit; attempt++ {
+		response := performBadLogin(routerOne)
+		if response.Code != http.StatusUnauthorized {
+			t.Fatalf("router one attempt %d status = %d body = %s", attempt+1, response.Code, response.Body.String())
+		}
+	}
+	blocked := performBadLogin(routerOne)
+	if blocked.Code != http.StatusTooManyRequests {
+		t.Fatalf("router one blocked status = %d body = %s", blocked.Code, blocked.Body.String())
+	}
+
+	routerTwo := newRateLimitTestRouter(t)
+	response := performBadLogin(routerTwo)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("router two first attempt status = %d body = %s, want independent limiter state", response.Code, response.Body.String())
+	}
+}
+
 func TestHubUserDashboardReadyDoesNotRequireOptional2FA(t *testing.T) {
 	if !hubUserDashboardReady(domain.HubUser{TwoFactorRequired: false}) {
 		t.Fatalf("optional 2FA user should be dashboard-ready without enrollment")
@@ -256,6 +326,40 @@ func TestHubUserDashboardReadyDoesNotRequireOptional2FA(t *testing.T) {
 	}) {
 		t.Fatalf("required 2FA user should be dashboard-ready after enrollment")
 	}
+}
+
+func newRateLimitTestRouter(t *testing.T) http.Handler {
+	t.Helper()
+	users := newHTTPTestHubUserRepository()
+	router := NewHubRouter(
+		domain.AppMeta{Name: "Aegrail", Binary: "aegrail", Version: "test"},
+		hubapp.New(hubapp.Dependencies{Users: users, UserSecretKey: "local-test-secret"}),
+		HubOptions{DashboardCSRFSecret: "local-test-secret"},
+	)
+	createRequest := httptest.NewRequest(http.MethodPost, "/api/v1/access/users", bytes.NewBufferString(`{
+		"email":"admin@example.test",
+		"display_name":"Admin",
+		"access_level":"owner",
+		"password":"correct horse battery staple",
+		"status":"active",
+		"two_factor_required":true
+	}`))
+	createResponse := httptest.NewRecorder()
+	router.ServeHTTP(createResponse, createRequest)
+	if createResponse.Code != http.StatusCreated {
+		t.Fatalf("bootstrap status = %d body = %s", createResponse.Code, createResponse.Body.String())
+	}
+	return router
+}
+
+func performBadLogin(router http.Handler) *httptest.ResponseRecorder {
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(`{
+		"email":"admin@example.test",
+		"password":"wrong wrong wrong"
+	}`))
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	return response
 }
 
 func addDashboardAuth(request *http.Request, cookie *http.Cookie, csrfToken string) {
@@ -364,6 +468,19 @@ func (r *httpTestHubUserRepository) UpdateHubUser(ctx context.Context, userID do
 	user.UpdatedAt = time.Date(2026, 5, 14, 12, 5, 0, 0, time.UTC)
 	r.users[userID] = user
 	return user, nil
+}
+
+func (r *httpTestHubUserRepository) DeleteHubUser(ctx context.Context, userID domain.ID) (int, error) {
+	if _, ok := r.users[userID]; !ok {
+		return 0, hubapp.ErrHubNotFound
+	}
+	delete(r.users, userID)
+	for tokenHash, session := range r.sessions {
+		if session.UserID == userID {
+			delete(r.sessions, tokenHash)
+		}
+	}
+	return len(r.users), nil
 }
 
 func (r *httpTestHubUserRepository) StartHubUserTOTP(ctx context.Context, userID domain.ID, start domain.HubUserTOTPStart) (domain.HubUser, error) {

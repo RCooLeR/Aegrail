@@ -92,6 +92,39 @@ func TestValidateServerConfigRejectsLiteralDSN(t *testing.T) {
 	}
 }
 
+func TestValidateServerConfigAcceptsWooCommerceKind(t *testing.T) {
+	root := t.TempDir()
+	config := NormalizeServerConfig(ServerConfig{
+		Schema: ServerConfigSchema,
+		Hub:    testWireHubConfig(t, "http://127.0.0.1:8787"),
+		Identity: ServerIdentityConfig{
+			Org:         "acme",
+			Project:     "storefront",
+			Environment: "production",
+			Host:        "web-01",
+			AgentID:     "agt_web_01",
+		},
+		Runtime: ServerRuntimeConfig{
+			QueueDir: filepath.Join(root, "queue"),
+			StateDir: filepath.Join(root, "state"),
+			Interval: "30s",
+		},
+		Sites: []ServerSiteConfig{
+			{
+				Slug: "store",
+				Kind: "woocommerce",
+				Root: filepath.Join(root, "site"),
+			},
+		},
+	})
+	if err := ValidateServerConfig(config); err != nil {
+		t.Fatalf("ValidateServerConfig returned error: %v", err)
+	}
+	if got := config.Sites[0].Files.Profiles; len(got) != 1 || got[0] != "wordpress" {
+		t.Fatalf("files profiles = %#v, want wordpress profile", got)
+	}
+}
+
 func TestNormalizeServerConfigExpandsPathEnvironmentVariables(t *testing.T) {
 	t.Setenv("AEGRAIL_TEST_ROOT", filepath.Join(t.TempDir(), "site"))
 	t.Setenv("AEGRAIL_TEST_STATE", filepath.Join(t.TempDir(), "state"))

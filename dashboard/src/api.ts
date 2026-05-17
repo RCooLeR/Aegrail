@@ -128,6 +128,9 @@ async function apiGet<T>(scope: ApiScope, path: string): Promise<T> {
     const message = await response.text();
     throw new Error(message || `${response.status} ${response.statusText}`);
   }
+  if (response.status === 204) {
+    return undefined as T;
+  }
   return (await response.json()) as T;
 }
 
@@ -785,6 +788,13 @@ export async function disableHubUserTOTP(scope: ApiScope, user: HubUser) {
     scope,
     `/api/v1/access/users/${encodeURIComponent(user.id)}/totp`
   ).then((body) => body.user);
+}
+
+export async function deleteHubUser(scope: ApiScope, user: HubUser) {
+  return apiDelete<void>(
+    scope,
+    `/api/v1/access/users/${encodeURIComponent(user.id)}`
+  );
 }
 
 export async function createDeployment(

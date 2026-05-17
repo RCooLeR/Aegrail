@@ -51,7 +51,7 @@ Optional reverse-proxy trust:
 AEGRAIL_TRUSTED_PROXY_CIDRS
 ```
 
-Hub parses trusted proxy CIDRs at startup and warns about invalid entries. It trusts `X-Forwarded-Proto` and `X-Forwarded-Host` only from loopback or from CIDRs listed in `AEGRAIL_TRUSTED_PROXY_CIDRS`, for example `10.0.0.0/8,172.16.0.0/12`. Leave it empty when Hub is not behind a trusted reverse proxy.
+Hub parses trusted proxy CIDRs at startup and refuses to serve when any entry is invalid. It trusts `X-Forwarded-Proto` and `X-Forwarded-Host` only from loopback or from CIDRs listed in `AEGRAIL_TRUSTED_PROXY_CIDRS`, for example `10.0.0.0/8,172.16.0.0/12`. Leave it empty when Hub is not behind a trusted reverse proxy.
 
 Generate and set the Hub wire key for encrypted Agent traffic:
 
@@ -138,3 +138,12 @@ cd hub
 go test ./...
 go run ./cmd/hub --help
 ```
+
+PostgreSQL adapter integration tests are opt-in because they need a disposable database:
+
+```powershell
+$env:AEGRAIL_TEST_POSTGRES_URL = "postgres://user:pass@localhost:5432/aegrail_test?sslmode=disable"
+go test ./internal/adapters/postgres
+```
+
+The integration tests create and drop their own temporary schema.

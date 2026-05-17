@@ -109,6 +109,8 @@ When Redis is configured, the automatic model-analysis worker takes a distribute
 The worker asks PostgreSQL for environments that currently have open findings
 without a completed model-analysis report. It does not walk every company,
 project, and environment on every tick when the PostgreSQL repository is in use.
+If a custom findings repository does not expose that scope query, Hub emits a
+one-time warning and uses a bounded fallback scan.
 
 The Hub also exposes a finding-review report. It places the deterministic Hub view beside the latest model-analysis report for the same finding, so an operator can compare rule evidence and model commentary in one view.
 

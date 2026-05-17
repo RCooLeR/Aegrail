@@ -62,6 +62,19 @@ func TestHubRouterListsInventoryTopology(t *testing.T) {
 	}
 }
 
+func TestHubRouterReturnsNotFoundForMissingInventoryTopology(t *testing.T) {
+	repo := newHTTPTestInventoryRepository()
+	router := NewHubRouter(domain.AppMeta{Name: "Aegrail", Binary: "aegrail", Version: "test"}, hubapp.New(hubapp.Dependencies{Inventory: repo}), HubOptions{})
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/inventory/topology?org=acme&project=customer-site&environment=missing", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("status = %d body = %s", response.Code, response.Body.String())
+	}
+}
+
 func TestHubRouterListsInventoryScopes(t *testing.T) {
 	repo := newHTTPTestInventoryRepository()
 	router := NewHubRouter(domain.AppMeta{Name: "Aegrail", Binary: "aegrail", Version: "test"}, hubapp.New(hubapp.Dependencies{Inventory: repo}), HubOptions{})

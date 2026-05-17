@@ -131,17 +131,23 @@ func (c *Client) Allow(ctx context.Context, key string, limit int, window time.D
 	if err != nil {
 		return false, err
 	}
-	count, err := c.client.Incr(ctx, rateKey).Result()
+	windowMS := window.Milliseconds()
+	if windowMS <= 0 {
+		windowMS = 1
+	}
+	count, err := c.client.Eval(ctx, rateLimitAllowScript, []string{rateKey}, windowMS).Int64()
 	if err != nil {
 		return false, err
 	}
-	if count == 1 {
-		if err := c.client.Expire(ctx, rateKey, window).Err(); err != nil {
-			return false, err
-		}
-	}
 	return count <= int64(limit), nil
 }
+
+const rateLimitAllowScript = `
+local count = redis.call("INCR", KEYS[1])
+if count == 1 then
+  redis.call("PEXPIRE", KEYS[1], ARGV[1])
+end
+return count`
 
 func (c *Client) queueKey(queue string) (string, error) {
 	name := strings.TrimSpace(queue)

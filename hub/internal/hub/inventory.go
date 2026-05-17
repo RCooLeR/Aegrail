@@ -14,26 +14,27 @@ import (
 )
 
 type Hub struct {
-	meta             domain.AppMeta
-	inventory        ports.InventoryRepository
-	ingest           ports.IngestRepository
-	findings         ports.HubFindingRepository
-	fileIgnoreRules  ports.HubFileIgnoreRuleRepository
-	browserAllowlist ports.BrowserScriptAllowlistRepository
-	modelReports     ports.ModelAnalysisReportRepository
-	model            ports.ModelGateway
-	jobs             ports.JobQueue
-	locks            ports.LockManager
-	rateLimiter      ports.RateLimiter
-	users            ports.HubUserRepository
-	notifications    ports.NotificationSink
-	userSecretKey    string
-	backgroundError  func(error)
-	usersExistMu     sync.RWMutex
-	usersExist       bool
-	totpReplayMu     sync.Mutex
-	totpReplay       map[totpReplayKey]time.Time
-	workersWG        sync.WaitGroup
+	meta                       domain.AppMeta
+	inventory                  ports.InventoryRepository
+	ingest                     ports.IngestRepository
+	findings                   ports.HubFindingRepository
+	fileIgnoreRules            ports.HubFileIgnoreRuleRepository
+	browserAllowlist           ports.BrowserScriptAllowlistRepository
+	modelReports               ports.ModelAnalysisReportRepository
+	model                      ports.ModelGateway
+	jobs                       ports.JobQueue
+	locks                      ports.LockManager
+	rateLimiter                ports.RateLimiter
+	users                      ports.HubUserRepository
+	notifications              ports.NotificationSink
+	userSecretKey              string
+	backgroundError            func(error)
+	usersExistMu               sync.RWMutex
+	usersExist                 bool
+	totpReplayMu               sync.Mutex
+	totpReplay                 map[totpReplayKey]time.Time
+	workersWG                  sync.WaitGroup
+	modelQueueFallbackWarnOnce sync.Once
 }
 
 type Dependencies struct {
@@ -728,7 +729,7 @@ func (h *Hub) resolveOrganization(ctx context.Context, organizationSlug string) 
 		return domain.Organization{}, err
 	}
 	if !ok {
-		return domain.Organization{}, fmt.Errorf("organization %q does not exist", slug)
+		return domain.Organization{}, fmt.Errorf("%w: organization %q does not exist", ErrHubNotFound, slug)
 	}
 	return org, nil
 }
@@ -747,7 +748,7 @@ func (h *Hub) resolveProjectPath(ctx context.Context, organizationSlug string, p
 		return domain.Project{}, err
 	}
 	if !ok {
-		return domain.Project{}, fmt.Errorf("project %q does not exist in organization %q", slug, org.Slug)
+		return domain.Project{}, fmt.Errorf("%w: project %q does not exist in organization %q", ErrHubNotFound, slug, org.Slug)
 	}
 	return project, nil
 }
@@ -774,7 +775,7 @@ func (h *Hub) resolveEnvironmentContext(ctx context.Context, organizationSlug st
 		return domain.Organization{}, domain.Project{}, domain.Environment{}, err
 	}
 	if !ok {
-		return domain.Organization{}, domain.Project{}, domain.Environment{}, fmt.Errorf("project %q does not exist in organization %q", projectSlug, org.Slug)
+		return domain.Organization{}, domain.Project{}, domain.Environment{}, fmt.Errorf("%w: project %q does not exist in organization %q", ErrHubNotFound, projectSlug, org.Slug)
 	}
 	slug, err := domain.NormalizeSlug("environment", environmentSlug)
 	if err != nil {
@@ -785,7 +786,7 @@ func (h *Hub) resolveEnvironmentContext(ctx context.Context, organizationSlug st
 		return domain.Organization{}, domain.Project{}, domain.Environment{}, err
 	}
 	if !ok {
-		return domain.Organization{}, domain.Project{}, domain.Environment{}, fmt.Errorf("environment %q does not exist in project %q", slug, project.Slug)
+		return domain.Organization{}, domain.Project{}, domain.Environment{}, fmt.Errorf("%w: environment %q does not exist in project %q", ErrHubNotFound, slug, project.Slug)
 	}
 	return org, project, environment, nil
 }
@@ -804,7 +805,7 @@ func (h *Hub) resolveAppPath(ctx context.Context, organizationSlug string, proje
 		return domain.MonitoredApp{}, err
 	}
 	if !ok {
-		return domain.MonitoredApp{}, fmt.Errorf("app %q does not exist in environment %q", slug, environment.Slug)
+		return domain.MonitoredApp{}, fmt.Errorf("%w: app %q does not exist in environment %q", ErrHubNotFound, slug, environment.Slug)
 	}
 	return app, nil
 }
@@ -823,7 +824,7 @@ func (h *Hub) resolveHostPath(ctx context.Context, organizationSlug string, proj
 		return domain.Host{}, err
 	}
 	if !ok {
-		return domain.Host{}, fmt.Errorf("host %q does not exist in environment %q", slug, environment.Slug)
+		return domain.Host{}, fmt.Errorf("%w: host %q does not exist in environment %q", ErrHubNotFound, slug, environment.Slug)
 	}
 	return host, nil
 }

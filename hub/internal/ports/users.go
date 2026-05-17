@@ -10,6 +10,8 @@ import (
 
 var ErrHubTOTPChanged = errors.New("pending 2FA enrolment changed; start setup again")
 
+var ErrHubNotFound = errors.New("resource not found")
+
 type HubUserRepository interface {
 	SaveHubUser(ctx context.Context, user domain.HubUser) (domain.HubUser, error)
 	ListHubUsers(ctx context.Context) ([]domain.HubUser, error)
@@ -28,4 +30,8 @@ type HubUserRepository interface {
 
 type BootstrapHubUserRepository interface {
 	CreateBootstrapHubUser(ctx context.Context, user domain.HubUser) (domain.HubUser, bool, error)
+}
+
+type DeleteHubUserRepository interface {
+	DeleteHubUser(ctx context.Context, userID domain.ID) (remaining int, err error)
 }

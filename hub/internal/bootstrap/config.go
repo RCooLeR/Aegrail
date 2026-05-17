@@ -131,6 +131,9 @@ func (c Config) ValidateServe() error {
 	if strings.TrimSpace(c.Hub.UserSecretKey) == "" {
 		return errors.New("AEGRAIL_HUB_USER_SECRET is required")
 	}
+	if len(c.Hub.TrustedProxyErrors) > 0 {
+		return fmt.Errorf("AEGRAIL_TRUSTED_PROXY_CIDRS contains invalid entries: %s", strings.Join(c.Hub.TrustedProxyErrors, "; "))
+	}
 	return nil
 }
 

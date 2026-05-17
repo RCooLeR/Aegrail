@@ -312,7 +312,7 @@ func (h *Hub) resolveServicePath(ctx context.Context, organizationSlug string, p
 		return domain.Service{}, err
 	}
 	if !ok {
-		return domain.Service{}, fmt.Errorf("service %q does not exist in app %q", slug, app.Slug)
+		return domain.Service{}, fmt.Errorf("%w: service %q does not exist in app %q", ErrHubNotFound, slug, app.Slug)
 	}
 	return service, nil
 }
@@ -327,7 +327,7 @@ func (h *Hub) resolveAgent(ctx context.Context, hostID domain.ID, agentID string
 		return domain.Agent{}, err
 	}
 	if !ok {
-		return domain.Agent{}, fmt.Errorf("agent %q does not exist", agentID)
+		return domain.Agent{}, fmt.Errorf("%w: agent %q does not exist", ErrHubNotFound, agentID)
 	}
 	if agent.HostID != hostID {
 		return domain.Agent{}, fmt.Errorf("agent %q is not registered to the selected host", agentID)

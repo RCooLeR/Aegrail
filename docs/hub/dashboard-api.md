@@ -103,6 +103,7 @@ limit
 | `GET` | `/api/v1/access/users` | admin | List Hub users. |
 | `POST` | `/api/v1/access/users` | bootstrap/admin path | Create a Hub user. |
 | `PATCH` | `/api/v1/access/users/{id}` | admin | Update user display/access/status settings. |
+| `DELETE` | `/api/v1/access/users/{id}` | admin | Delete a Hub user. A user cannot delete their own account. |
 | `POST` | `/api/v1/access/users/{id}/totp/start` | admin | Start pending TOTP enrollment and return QR/secret once. |
 | `POST` | `/api/v1/access/users/{id}/totp/verify` | admin | Verify current code and activate TOTP. |
 | `DELETE` | `/api/v1/access/users/{id}/totp` | admin | Disable TOTP. |

@@ -70,6 +70,10 @@ type DisableHubUserTOTPResult struct {
 	User domain.HubUser
 }
 
+type DeleteHubUserInput struct {
+	UserID string
+}
+
 var ErrHubTOTPNoPending = errors.New("no pending 2FA enrolment for this user")
 
 var ErrHubTOTPInvalidCode = errors.New("verification code is incorrect")
@@ -194,6 +198,28 @@ func (h *Hub) UpdateHubUser(ctx context.Context, input UpdateHubUserInput) (doma
 		Status:            status,
 		TwoFactorRequired: input.TwoFactorRequired,
 	})
+}
+
+func (h *Hub) DeleteHubUser(ctx context.Context, input DeleteHubUserInput) error {
+	if h.users == nil {
+		return errors.New("hub user repository is not configured")
+	}
+	userID := domain.ID(strings.TrimSpace(input.UserID))
+	if userID == "" {
+		return errors.New("user id is required")
+	}
+	deleteRepo, ok := h.users.(ports.DeleteHubUserRepository)
+	if !ok {
+		return errors.New("hub user repository does not support user deletion")
+	}
+	remaining, err := deleteRepo.DeleteHubUser(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if remaining == 0 {
+		h.markHubUsersUnknown()
+	}
+	return nil
 }
 
 func (h *Hub) StartHubUserTOTP(ctx context.Context, input StartHubUserTOTPInput) (StartHubUserTOTPResult, error) {
