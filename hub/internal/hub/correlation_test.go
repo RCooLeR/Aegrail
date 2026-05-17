@@ -535,6 +535,52 @@ func TestCorrelateEventsBuildsTrafficAndTorWebRequestChains(t *testing.T) {
 	}
 }
 
+func TestCorrelateEventsIgnoresAegrailCrawlerTraffic(t *testing.T) {
+	now := time.Date(2026, 5, 17, 15, 0, 0, 0, time.UTC)
+	var events []domain.TimelineEvent
+	for index := range 25 {
+		events = append(events, accessEvent(
+			fmt.Sprintf("evt-self-%02d", index),
+			now.Add(time.Duration(index)*10*time.Second),
+			"GET",
+			"/",
+			403,
+			"172.18.0.1",
+			map[string]any{"user_agent": "AegrailBot/0.1 (+https://aegrail.com/monitoring; Aegrail bot)"},
+		))
+	}
+
+	chains := correlateTimelineEvents(events, 30*time.Minute)
+	for _, chain := range chains {
+		if chain.RuleID == "web-request-volume-spike" {
+			t.Fatalf("chains = %#v, want no self-monitoring volume spike", chains)
+		}
+	}
+}
+
+func TestCorrelateEventsIgnoresPrivateRemoteVolumeSpike(t *testing.T) {
+	now := time.Date(2026, 5, 17, 15, 0, 0, 0, time.UTC)
+	var events []domain.TimelineEvent
+	for index := range 25 {
+		events = append(events, accessEvent(
+			fmt.Sprintf("evt-private-%02d", index),
+			now.Add(time.Duration(index)*10*time.Second),
+			"GET",
+			"/",
+			403,
+			"172.18.0.1",
+			map[string]any{"user_agent": "Mozilla/5.0 fallback browser"},
+		))
+	}
+
+	chains := correlateTimelineEvents(events, 30*time.Minute)
+	for _, chain := range chains {
+		if chain.RuleID == "web-request-volume-spike" {
+			t.Fatalf("chains = %#v, want no private-remote volume spike", chains)
+		}
+	}
+}
+
 func TestListTimelineEventsResolvesEnvironmentAndOptionalApp(t *testing.T) {
 	inventory := newMemoryInventoryRepository()
 	ingest := &memoryIngestRepository{}

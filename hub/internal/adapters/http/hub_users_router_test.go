@@ -235,6 +235,22 @@ func TestHubRouterManagesUsersAndTOTPEnrollment(t *testing.T) {
 	}
 }
 
+func TestHubUserDashboardReadyDoesNotRequireOptional2FA(t *testing.T) {
+	if !hubUserDashboardReady(domain.HubUser{TwoFactorRequired: false}) {
+		t.Fatalf("optional 2FA user should be dashboard-ready without enrollment")
+	}
+	if hubUserDashboardReady(domain.HubUser{TwoFactorRequired: true}) {
+		t.Fatalf("required 2FA user should not be dashboard-ready before enrollment")
+	}
+	if !hubUserDashboardReady(domain.HubUser{
+		TwoFactorRequired:    true,
+		TwoFactorEnabled:     true,
+		TOTPSecretCiphertext: "v1:nonce:ciphertext",
+	}) {
+		t.Fatalf("required 2FA user should be dashboard-ready after enrollment")
+	}
+}
+
 func addDashboardAuth(request *http.Request, cookie *http.Cookie, csrfToken string) {
 	request.AddCookie(cookie)
 	request.Header.Set(headerDashboardProto, dashboardProtocol)

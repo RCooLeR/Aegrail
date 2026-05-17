@@ -137,6 +137,21 @@ func (r *memoryInventoryRepository) SaveOrganization(ctx context.Context, organi
 	return organization, nil
 }
 
+func (r *memoryInventoryRepository) UpdateOrganization(ctx context.Context, organizationID domain.ID, update domain.OrganizationUpdate) (domain.Organization, error) {
+	for key, organization := range r.organizations {
+		if organization.ID != organizationID {
+			continue
+		}
+		delete(r.organizations, key)
+		organization.Slug = update.Slug
+		organization.Name = update.Name
+		organization.UpdatedAt = time.Now().UTC()
+		r.organizations[organization.Slug] = organization
+		return organization, nil
+	}
+	return domain.Organization{}, fmt.Errorf("organization %s not found", organizationID)
+}
+
 func (r *memoryInventoryRepository) ListOrganizations(ctx context.Context) ([]domain.Organization, error) {
 	items := make([]domain.Organization, 0, len(r.organizations))
 	for _, item := range r.organizations {
@@ -163,6 +178,21 @@ func (r *memoryInventoryRepository) SaveProject(ctx context.Context, project dom
 	project.UpdatedAt = now
 	r.projects[key] = project
 	return project, nil
+}
+
+func (r *memoryInventoryRepository) UpdateProject(ctx context.Context, projectID domain.ID, update domain.ProjectUpdate) (domain.Project, error) {
+	for key, project := range r.projects {
+		if project.ID != projectID {
+			continue
+		}
+		delete(r.projects, key)
+		project.Slug = update.Slug
+		project.Name = update.Name
+		project.UpdatedAt = time.Now().UTC()
+		r.projects[inventoryKey(string(project.OrganizationID), project.Slug)] = project
+		return project, nil
+	}
+	return domain.Project{}, fmt.Errorf("project %s not found", projectID)
 }
 
 func (r *memoryInventoryRepository) ListProjects(ctx context.Context, organizationID domain.ID) ([]domain.Project, error) {
@@ -195,6 +225,21 @@ func (r *memoryInventoryRepository) SaveEnvironment(ctx context.Context, environ
 	return environment, nil
 }
 
+func (r *memoryInventoryRepository) UpdateEnvironment(ctx context.Context, environmentID domain.ID, update domain.EnvironmentUpdate) (domain.Environment, error) {
+	for key, environment := range r.environments {
+		if environment.ID != environmentID {
+			continue
+		}
+		delete(r.environments, key)
+		environment.Slug = update.Slug
+		environment.Name = update.Name
+		environment.UpdatedAt = time.Now().UTC()
+		r.environments[inventoryKey(string(environment.ProjectID), environment.Slug)] = environment
+		return environment, nil
+	}
+	return domain.Environment{}, fmt.Errorf("environment %s not found", environmentID)
+}
+
 func (r *memoryInventoryRepository) ListEnvironments(ctx context.Context, projectID domain.ID) ([]domain.Environment, error) {
 	items := make([]domain.Environment, 0)
 	for _, item := range r.environments {
@@ -223,6 +268,22 @@ func (r *memoryInventoryRepository) SaveMonitoredApp(ctx context.Context, app do
 	app.UpdatedAt = now
 	r.apps[key] = app
 	return app, nil
+}
+
+func (r *memoryInventoryRepository) UpdateMonitoredApp(ctx context.Context, appID domain.ID, update domain.MonitoredAppUpdate) (domain.MonitoredApp, error) {
+	for key, app := range r.apps {
+		if app.ID != appID {
+			continue
+		}
+		delete(r.apps, key)
+		app.Slug = update.Slug
+		app.Name = update.Name
+		app.Kind = update.Kind
+		app.UpdatedAt = time.Now().UTC()
+		r.apps[inventoryKey(string(app.EnvironmentID), app.Slug)] = app
+		return app, nil
+	}
+	return domain.MonitoredApp{}, fmt.Errorf("app %s not found", appID)
 }
 
 func (r *memoryInventoryRepository) ListMonitoredApps(ctx context.Context, environmentID domain.ID) ([]domain.MonitoredApp, error) {
@@ -255,6 +316,22 @@ func (r *memoryInventoryRepository) SaveService(ctx context.Context, service dom
 	return service, nil
 }
 
+func (r *memoryInventoryRepository) UpdateService(ctx context.Context, serviceID domain.ID, update domain.ServiceUpdate) (domain.Service, error) {
+	for key, service := range r.services {
+		if service.ID != serviceID {
+			continue
+		}
+		delete(r.services, key)
+		service.Slug = update.Slug
+		service.Name = update.Name
+		service.Role = update.Role
+		service.UpdatedAt = time.Now().UTC()
+		r.services[inventoryKey(string(service.AppID), service.Slug)] = service
+		return service, nil
+	}
+	return domain.Service{}, fmt.Errorf("service %s not found", serviceID)
+}
+
 func (r *memoryInventoryRepository) ListServices(ctx context.Context, appID domain.ID) ([]domain.Service, error) {
 	items := make([]domain.Service, 0)
 	for _, item := range r.services {
@@ -285,6 +362,23 @@ func (r *memoryInventoryRepository) SaveHost(ctx context.Context, host domain.Ho
 	return host, nil
 }
 
+func (r *memoryInventoryRepository) UpdateHost(ctx context.Context, hostID domain.ID, update domain.HostUpdate) (domain.Host, error) {
+	for key, host := range r.hosts {
+		if host.ID != hostID {
+			continue
+		}
+		delete(r.hosts, key)
+		host.Slug = update.Slug
+		host.Hostname = update.Hostname
+		host.Region = update.Region
+		host.Labels = update.Labels
+		host.UpdatedAt = time.Now().UTC()
+		r.hosts[inventoryKey(string(host.EnvironmentID), host.Slug)] = host
+		return host, nil
+	}
+	return domain.Host{}, fmt.Errorf("host %s not found", hostID)
+}
+
 func (r *memoryInventoryRepository) ListHosts(ctx context.Context, environmentID domain.ID) ([]domain.Host, error) {
 	items := make([]domain.Host, 0)
 	for _, item := range r.hosts {
@@ -312,6 +406,21 @@ func (r *memoryInventoryRepository) SaveAgent(ctx context.Context, agent domain.
 	agent.UpdatedAt = now
 	r.agents[agent.AgentID] = agent
 	return agent, nil
+}
+
+func (r *memoryInventoryRepository) UpdateAgent(ctx context.Context, agentID domain.ID, update domain.AgentUpdate) (domain.Agent, error) {
+	for key, agent := range r.agents {
+		if agent.ID != agentID {
+			continue
+		}
+		delete(r.agents, key)
+		agent.AgentID = update.AgentID
+		agent.Version = update.Version
+		agent.UpdatedAt = time.Now().UTC()
+		r.agents[agent.AgentID] = agent
+		return agent, nil
+	}
+	return domain.Agent{}, fmt.Errorf("agent %s not found", agentID)
 }
 
 func (r *memoryInventoryRepository) ListAgents(ctx context.Context, hostID domain.ID) ([]domain.Agent, error) {

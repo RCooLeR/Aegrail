@@ -108,8 +108,15 @@ func NewHubRouter(meta domain.AppMeta, hub *hubapp.Hub, options HubOptions) http
 	router.Get("/api/v1/inventory/agents", withHubAuth(hub, options, "viewer", listInventoryAgentsHandler(hub)))
 	router.Get("/api/v1/inventory/topology", withHubAuth(hub, options, "viewer", listInventoryTopologyHandler(hub)))
 	router.Post("/api/v1/inventory/companies", withHubAuth(hub, options, "admin", createInventoryCompanyHandler(hub)))
+	router.Patch("/api/v1/inventory/companies/{id}", withHubAuth(hub, options, "admin", updateInventoryCompanyHandler(hub)))
 	router.Post("/api/v1/inventory/sites", withHubAuth(hub, options, "admin", createInventorySiteHandler(hub)))
+	router.Patch("/api/v1/inventory/projects/{id}", withHubAuth(hub, options, "admin", updateInventoryProjectHandler(hub)))
+	router.Patch("/api/v1/inventory/environments/{id}", withHubAuth(hub, options, "admin", updateInventoryEnvironmentHandler(hub)))
+	router.Patch("/api/v1/inventory/apps/{id}", withHubAuth(hub, options, "admin", updateInventoryAppHandler(hub)))
+	router.Patch("/api/v1/inventory/services/{id}", withHubAuth(hub, options, "admin", updateInventoryServiceHandler(hub)))
 	router.Post("/api/v1/inventory/nodes", withHubAuth(hub, options, "admin", createInventoryNodeHandler(hub, options)))
+	router.Patch("/api/v1/inventory/hosts/{id}", withHubAuth(hub, options, "admin", updateInventoryHostHandler(hub)))
+	router.Patch("/api/v1/inventory/agents/{id}", withHubAuth(hub, options, "admin", updateInventoryAgentHandler(hub)))
 	mountDashboard(router, options.DashboardDir)
 	return router
 }
@@ -205,17 +212,19 @@ type environmentResponse struct {
 	Slug      string                 `json:"slug"`
 	Name      string                 `json:"name"`
 	Apps      []monitoredAppResponse `json:"apps"`
+	Hosts     []hostResponse         `json:"hosts"`
 	CreatedAt time.Time              `json:"created_at"`
 	UpdatedAt time.Time              `json:"updated_at"`
 }
 
 type monitoredAppResponse struct {
-	ID        string    `json:"id"`
-	Slug      string    `json:"slug"`
-	Name      string    `json:"name"`
-	Kind      string    `json:"kind"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        string            `json:"id"`
+	Slug      string            `json:"slug"`
+	Name      string            `json:"name"`
+	Kind      string            `json:"kind"`
+	Services  []serviceResponse `json:"services"`
+	CreatedAt time.Time         `json:"created_at"`
+	UpdatedAt time.Time         `json:"updated_at"`
 }
 
 type serviceResponse struct {
@@ -234,6 +243,7 @@ type hostResponse struct {
 	Hostname  string            `json:"hostname"`
 	Region    string            `json:"region,omitempty"`
 	Labels    map[string]string `json:"labels"`
+	Agents    []agentResponse   `json:"agents"`
 	CreatedAt time.Time         `json:"created_at"`
 	UpdatedAt time.Time         `json:"updated_at"`
 }
@@ -497,6 +507,11 @@ type createInventoryCompanyRequest struct {
 	Name string `json:"name"`
 }
 
+type updateInventoryCompanyRequest struct {
+	Slug string `json:"slug"`
+	Name string `json:"name"`
+}
+
 type createInventorySiteRequest struct {
 	OrganizationSlug string `json:"org"`
 	ProjectSlug      string `json:"project"`
@@ -509,6 +524,28 @@ type createInventorySiteRequest struct {
 	ServiceSlug      string `json:"service"`
 	ServiceName      string `json:"service_name"`
 	ServiceRole      string `json:"service_role"`
+}
+
+type updateInventoryProjectRequest struct {
+	Slug string `json:"slug"`
+	Name string `json:"name"`
+}
+
+type updateInventoryEnvironmentRequest struct {
+	Slug string `json:"slug"`
+	Name string `json:"name"`
+}
+
+type updateInventoryAppRequest struct {
+	Slug string `json:"slug"`
+	Name string `json:"name"`
+	Kind string `json:"kind"`
+}
+
+type updateInventoryServiceRequest struct {
+	Slug string `json:"slug"`
+	Name string `json:"name"`
+	Role string `json:"role"`
 }
 
 type createInventoryNodeRequest struct {
@@ -526,6 +563,18 @@ type createInventoryNodeRequest struct {
 	QueueDir         string            `json:"queue_dir"`
 	StateDir         string            `json:"state_dir"`
 	Interval         string            `json:"interval"`
+}
+
+type updateInventoryHostRequest struct {
+	Slug     string            `json:"slug"`
+	Hostname string            `json:"hostname"`
+	Region   string            `json:"region"`
+	Labels   map[string]string `json:"labels"`
+}
+
+type updateInventoryAgentRequest struct {
+	AgentID string `json:"agent_id"`
+	Version string `json:"version"`
 }
 
 type loginHubUserRequest struct {
@@ -1657,6 +1706,30 @@ func createInventoryCompanyHandler(hub *hubapp.Hub) http.HandlerFunc {
 	}
 }
 
+func updateInventoryCompanyHandler(hub *hubapp.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		var request updateInventoryCompanyRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		organization, err := hub.UpdateOrganization(r.Context(), hubapp.UpdateOrganizationInput{
+			ID:   chi.URLParam(r, "id"),
+			Slug: request.Slug,
+			Name: request.Name,
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"organization": organizationRecord(organization)})
+	}
+}
+
 func createInventorySiteHandler(hub *hubapp.Hub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if hub == nil {
@@ -1721,6 +1794,104 @@ func createInventorySiteHandler(hub *hubapp.Hub) http.HandlerFunc {
 			"app":         monitoredAppRecord(app),
 			"service":     serviceRecord(service),
 		})
+	}
+}
+
+func updateInventoryProjectHandler(hub *hubapp.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		var request updateInventoryProjectRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		project, err := hub.UpdateProject(r.Context(), hubapp.UpdateProjectInput{
+			ID:   chi.URLParam(r, "id"),
+			Slug: request.Slug,
+			Name: request.Name,
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"project": projectRecord(project)})
+	}
+}
+
+func updateInventoryEnvironmentHandler(hub *hubapp.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		var request updateInventoryEnvironmentRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		environment, err := hub.UpdateEnvironment(r.Context(), hubapp.UpdateEnvironmentInput{
+			ID:   chi.URLParam(r, "id"),
+			Slug: request.Slug,
+			Name: request.Name,
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"environment": environmentRecord(environment)})
+	}
+}
+
+func updateInventoryAppHandler(hub *hubapp.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		var request updateInventoryAppRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		app, err := hub.UpdateMonitoredApp(r.Context(), hubapp.UpdateMonitoredAppInput{
+			ID:   chi.URLParam(r, "id"),
+			Slug: request.Slug,
+			Name: request.Name,
+			Kind: request.Kind,
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"app": monitoredAppRecord(app)})
+	}
+}
+
+func updateInventoryServiceHandler(hub *hubapp.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		var request updateInventoryServiceRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		service, err := hub.UpdateService(r.Context(), hubapp.UpdateServiceInput{
+			ID:   chi.URLParam(r, "id"),
+			Slug: request.Slug,
+			Name: request.Name,
+			Role: request.Role,
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"service": serviceRecord(service)})
 	}
 }
 
@@ -1792,6 +1963,56 @@ func createInventoryNodeHandler(hub *hubapp.Hub, options HubOptions) http.Handle
 	}
 }
 
+func updateInventoryHostHandler(hub *hubapp.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		var request updateInventoryHostRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		host, err := hub.UpdateHost(r.Context(), hubapp.UpdateHostInput{
+			ID:       chi.URLParam(r, "id"),
+			Slug:     request.Slug,
+			Hostname: request.Hostname,
+			Region:   request.Region,
+			Labels:   request.Labels,
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"host": hostRecord(host)})
+	}
+}
+
+func updateInventoryAgentHandler(hub *hubapp.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		var request updateInventoryAgentRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		agent, err := hub.UpdateAgent(r.Context(), hubapp.UpdateAgentInput{
+			ID:      chi.URLParam(r, "id"),
+			AgentID: request.AgentID,
+			Version: request.Version,
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"agent": agentRecord(agent)})
+	}
+}
+
 func listInventoryScopesHandler(hub *hubapp.Hub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if hub == nil {
@@ -1836,7 +2057,36 @@ func listInventoryScopesHandler(hub *hubapp.Hub) http.HandlerFunc {
 					environmentRecord.Apps = make([]monitoredAppResponse, 0, len(apps))
 					appCount += len(apps)
 					for _, app := range apps {
-						environmentRecord.Apps = append(environmentRecord.Apps, monitoredAppRecord(app))
+						appRecord := monitoredAppRecord(app)
+						services, err := hub.ListServices(r.Context(), organization.Slug, project.Slug, environment.Slug, app.Slug)
+						if err != nil {
+							writeError(w, http.StatusBadRequest, err.Error())
+							return
+						}
+						appRecord.Services = make([]serviceResponse, 0, len(services))
+						for _, service := range services {
+							appRecord.Services = append(appRecord.Services, serviceRecord(service))
+						}
+						environmentRecord.Apps = append(environmentRecord.Apps, appRecord)
+					}
+					hosts, err := hub.ListHosts(r.Context(), organization.Slug, project.Slug, environment.Slug)
+					if err != nil {
+						writeError(w, http.StatusBadRequest, err.Error())
+						return
+					}
+					environmentRecord.Hosts = make([]hostResponse, 0, len(hosts))
+					for _, host := range hosts {
+						hostResponse := hostRecord(host)
+						agents, err := hub.ListAgents(r.Context(), organization.Slug, project.Slug, environment.Slug, host.Slug)
+						if err != nil {
+							writeError(w, http.StatusBadRequest, err.Error())
+							return
+						}
+						hostResponse.Agents = make([]agentResponse, 0, len(agents))
+						for _, agent := range agents {
+							hostResponse.Agents = append(hostResponse.Agents, agentRecord(agent))
+						}
+						environmentRecord.Hosts = append(environmentRecord.Hosts, hostResponse)
 					}
 					projectRecord.Environments = append(projectRecord.Environments, environmentRecord)
 				}
@@ -2522,6 +2772,9 @@ func authenticatedHubUser(r *http.Request, hub *hubapp.Hub, options HubOptions) 
 }
 
 func hubUserDashboardReady(user domain.HubUser) bool {
+	if !user.TwoFactorRequired {
+		return true
+	}
 	return user.TwoFactorEnabled && strings.TrimSpace(user.TOTPSecretCiphertext) != ""
 }
 
@@ -2674,6 +2927,7 @@ runtime:
   queue_dir: %q
   state_dir: %q
   interval: %q
+  sent_retention: "0s"
   timezone: UTC
 
 sites:

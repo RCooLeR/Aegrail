@@ -192,6 +192,22 @@ func (r *IngestRepository) SaveIngestBatch(ctx context.Context, batch domain.Ing
 		savedEvents = append(savedEvents, savedEvent)
 	}
 
+	const updateAgentLastSeen = `
+		UPDATE agents
+		SET last_seen_at = CASE
+				WHEN last_seen_at IS NULL OR last_seen_at < $2 THEN $2
+				ELSE last_seen_at
+			END,
+			updated_at = CASE
+				WHEN updated_at < $2 THEN $2
+				ELSE updated_at
+			END
+		WHERE id = $1
+	`
+	if _, err := tx.Exec(ctx, updateAgentLastSeen, savedBatch.AgentID, savedBatch.ReceivedAt); err != nil {
+		return domain.IngestBatch{}, nil, false, err
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return domain.IngestBatch{}, nil, false, err
 	}

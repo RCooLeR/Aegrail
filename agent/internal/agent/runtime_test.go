@@ -17,7 +17,7 @@ import (
 	"github.com/rcooler/aegrail/agent/internal/wire"
 )
 
-func TestAgentQueueSendMovesBatchToSent(t *testing.T) {
+func TestAgentQueueSendDeletesBatchByDefault(t *testing.T) {
 	root := t.TempDir()
 	fixedNow := time.Date(2026, 5, 12, 2, 10, 0, 0, time.UTC)
 	nodeSecret, _, err := wire.GenerateKeyPair()
@@ -98,8 +98,72 @@ func TestAgentQueueSendMovesBatchToSent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Status returned error after send: %v", err)
 	}
+	if status.Pending != 0 || status.Sent != 0 {
+		t.Fatalf("status = %+v, want zero pending and zero sent archives", status)
+	}
+}
+
+func TestAgentQueueSendCanRetainSentBatch(t *testing.T) {
+	root := t.TempDir()
+	fixedNow := time.Date(2026, 5, 12, 2, 10, 0, 0, time.UTC)
+	nodeSecret, _, err := wire.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("GenerateKeyPair node returned error: %v", err)
+	}
+	_, hubPublic, err := wire.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("GenerateKeyPair hub returned error: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+
+	runtime := NewRuntime(Config{
+		ConfigPath:    filepath.Join(root, "agent.json"),
+		QueueDir:      filepath.Join(root, "queue"),
+		SentRetention: time.Hour,
+	})
+	runtime.now = func() time.Time { return fixedNow }
+
+	_, err = runtime.Install(context.Background(), Identity{
+		HubURL:       server.URL,
+		HubProtocol:  "aegrail-wire-v1",
+		HubPublicKey: hubPublic,
+		NodeSecret:   nodeSecret,
+		QueueDir:     filepath.Join(root, "queue"),
+		Org:          "acme",
+		Project:      "customer-site",
+		Environment:  "production",
+		App:          "main-web",
+		Service:      "frontend",
+		Host:         "web-01",
+		AgentID:      "agt_web_01",
+	})
+	if err != nil {
+		t.Fatalf("Install returned error: %v", err)
+	}
+	if _, _, err := runtime.EnqueueEvent(context.Background(), EnqueueEventInput{
+		BatchID: "batch-1",
+		Type:    "file.created",
+	}); err != nil {
+		t.Fatalf("EnqueueEvent returned error: %v", err)
+	}
+
+	result, err := runtime.SendQueued(context.Background(), 0)
+	if err != nil {
+		t.Fatalf("SendQueued returned error: %v", err)
+	}
+	if result.Sent != 1 || result.PendingAfter != 0 {
+		t.Fatalf("result = %+v, want one sent and zero pending", result)
+	}
+	status, err := runtime.Status(context.Background())
+	if err != nil {
+		t.Fatalf("Status returned error after send: %v", err)
+	}
 	if status.Pending != 0 || status.Sent != 1 {
-		t.Fatalf("status = %+v, want zero pending and one sent", status)
+		t.Fatalf("status = %+v, want retained sent archive", status)
 	}
 }
 

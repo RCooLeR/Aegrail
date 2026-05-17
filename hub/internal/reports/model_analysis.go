@@ -20,7 +20,7 @@ import (
 const (
 	ModelAnalysisReportSchema          = "aegrail.model_analysis_report.v1"
 	ModelAnalysisPromptTemplateID      = "aegrail.incident_analysis"
-	ModelAnalysisPromptTemplateVersion = "2026-05-16.1"
+	ModelAnalysisPromptTemplateVersion = "2026-05-17.1"
 	ModelAnalysisStatusCompleted       = "completed"
 	ModelAnalysisStatusOffline         = "offline"
 	ModelAnalysisStatusFailed          = "failed"
@@ -110,6 +110,7 @@ Rules:
 - If the finding looks like a deployment/module/plugin/theme update, say what evidence would justify marking the timeframe as deployment instead of suppressing the issue silently.
 - If the finding looks like ignore-rule noise, state the narrow ignore scope that would be safe and why broad ignores would be risky.
 - For common WordPress, WordPress multisite, PrestaShop, and Mautic behavior, explicitly say what could be normal and what would make it suspicious.
+- For web findings, recognize Aegrail self-monitoring signatures such as AegrailBot user agents, local Docker bridge remotes, and repeated fallback browser user agents around crawler schedules; treat them as likely monitoring noise unless other evidence shows impact.
 - If evidence is insufficient for a chain, say so.
 - For every schema field under "incident_assessment" and "issue_judgment", provide the best available answer, even if uncertain.
 - Use "platform_behavior_likely" and "is_false_positive_risk" to help indicate normal/platform-expected behavior.
@@ -881,6 +882,7 @@ func modelAnalysisIssuePromptProfile(issueType string, appKind string, ruleID st
 		return `Web/access-log perspective:
 - Access logs show request behavior, not by themselves successful compromise.
 - For admin probes, login POST bursts, success-after-failures, Tor-marked traffic, or request/error spikes, explain whether the pattern looks like scanning, brute force, app instability, or a real admin session risk.
+- Treat AegrailBot, local Docker bridge traffic, and clustered fallback browser user agents on public health/crawl URLs as self-monitoring noise when no admin/auth/file/database follow-up evidence exists.
 - Use remote fingerprints and path families from evidence; do not ask for raw IPs if Aegrail only supplied hashes.
 - Recommend checking the same timeframe for successful admin sessions, file writes, database role/config changes, PHP errors, WAF/CDN logs, and planned load tests.`
 	case "platform_configuration_change":

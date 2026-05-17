@@ -19,7 +19,10 @@ import type {
   RequestState,
   RuleDefinition,
   TimelineEvent,
-  Topology
+  Topology,
+  Host,
+  Agent,
+  Service
 } from "./types";
 
 type ApiEnvelope<T> = Record<string, unknown> & T;
@@ -488,6 +491,21 @@ export async function createInventoryCompany(
   ).then((body) => body.organization);
 }
 
+export async function updateInventoryCompany(
+  scope: ApiScope,
+  organization: InventoryOrganization,
+  input: {
+    name: string;
+    slug: string;
+  }
+) {
+  return apiPatch<ApiEnvelope<{ organization: InventoryOrganization }>>(
+    scope,
+    `/api/v1/inventory/companies/${encodeURIComponent(organization.id)}`,
+    input
+  ).then((body) => body.organization);
+}
+
 export async function createInventorySite(
   scope: ApiScope,
   input: {
@@ -513,6 +531,68 @@ export async function createInventorySite(
   >(scope, "/api/v1/inventory/sites", input);
 }
 
+export async function updateInventoryProject(
+  scope: ApiScope,
+  project: InventoryProject,
+  input: {
+    name: string;
+    slug: string;
+  }
+) {
+  return apiPatch<ApiEnvelope<{ project: InventoryProject }>>(
+    scope,
+    `/api/v1/inventory/projects/${encodeURIComponent(project.id)}`,
+    input
+  ).then((body) => body.project);
+}
+
+export async function updateInventoryEnvironment(
+  scope: ApiScope,
+  environment: InventoryEnvironment,
+  input: {
+    name: string;
+    slug: string;
+  }
+) {
+  return apiPatch<ApiEnvelope<{ environment: InventoryEnvironment }>>(
+    scope,
+    `/api/v1/inventory/environments/${encodeURIComponent(environment.id)}`,
+    input
+  ).then((body) => body.environment);
+}
+
+export async function updateInventoryApp(
+  scope: ApiScope,
+  app: MonitoredApp,
+  input: {
+    kind: string;
+    name: string;
+    slug: string;
+  }
+) {
+  return apiPatch<ApiEnvelope<{ app: MonitoredApp }>>(
+    scope,
+    `/api/v1/inventory/apps/${encodeURIComponent(app.id)}`,
+    input
+  ).then((body) => body.app);
+}
+
+export async function updateInventoryService(
+  scope: ApiScope,
+  service: Service,
+  input: {
+    name: string;
+    role: string;
+    slug: string;
+  }
+) {
+  return apiPatch<ApiEnvelope<{ service: Service }>>(
+    scope,
+    `/api/v1/inventory/services/${encodeURIComponent(service.id)}`,
+    input
+  ).then((body) => body.service);
+}
+
 export async function createInventoryNode(
   scope: ApiScope,
   input: {
@@ -533,6 +613,38 @@ export async function createInventoryNode(
   }
 ) {
   return apiPost<NodeProvisioning>(scope, "/api/v1/inventory/nodes", input);
+}
+
+export async function updateInventoryHost(
+  scope: ApiScope,
+  host: Host,
+  input: {
+    hostname: string;
+    labels?: Record<string, string>;
+    region?: string;
+    slug: string;
+  }
+) {
+  return apiPatch<ApiEnvelope<{ host: Host }>>(
+    scope,
+    `/api/v1/inventory/hosts/${encodeURIComponent(host.id)}`,
+    input
+  ).then((body) => body.host);
+}
+
+export async function updateInventoryAgent(
+  scope: ApiScope,
+  agent: Agent,
+  input: {
+    agent_id: string;
+    version?: string;
+  }
+) {
+  return apiPatch<ApiEnvelope<{ agent: Agent }>>(
+    scope,
+    `/api/v1/inventory/agents/${encodeURIComponent(agent.id)}`,
+    input
+  ).then((body) => body.agent);
 }
 
 export async function updateHubUser(

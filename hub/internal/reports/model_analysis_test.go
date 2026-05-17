@@ -206,6 +206,8 @@ func TestBuildModelAnalysisPromptProfilesWebAccessLogs(t *testing.T) {
 	requireContains(t, prompt.User, "Web/access-log perspective")
 	requireContains(t, prompt.User, "Access logs show request behavior")
 	requireContains(t, prompt.User, "successful admin sessions")
+	requireContains(t, prompt.User, "AegrailBot")
+	requireContains(t, prompt.User, "self-monitoring noise")
 }
 
 func TestBuildModelAnalysisPromptProfilesPrestaShopModuleFiles(t *testing.T) {

@@ -166,14 +166,14 @@ export function AuthGate({
               }}
             />
           </label>
-          {(mfaRequired || !requiresBootstrap) && (
+          {mfaRequired && (
             <label>
               2FA code
               <input
                 autoComplete="one-time-code"
                 inputMode="numeric"
                 maxLength={8}
-                placeholder={mfaRequired ? "123456" : "Optional until enabled"}
+                placeholder="123456"
                 value={totpCode}
                 onChange={(event) => setTotpCode(event.target.value)}
               />

@@ -1,6 +1,6 @@
 # Agent
 
-The Agent runs near a monitored site or hosting account. It reads a YAML config, collects local evidence, stores queue/state files on disk, and sends encrypted wire batches to the Hub.
+The Agent runs near a monitored site or hosting account. It reads a YAML config, collects local evidence, stores retry queue/state files on disk, and sends encrypted wire batches to the Hub. Successfully sent queue JSON is deleted by default.
 
 ## Under The Hood
 

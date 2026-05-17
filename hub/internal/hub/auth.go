@@ -81,7 +81,7 @@ func (h *Hub) LoginHubUser(ctx context.Context, input LoginHubUserInput) (LoginH
 	if !ok || user.Status != "active" || !verifyHubPassword(input.Password, user.PasswordHash) {
 		return LoginHubUserResult{}, ErrHubInvalidCredentials
 	}
-	if user.TwoFactorEnabled {
+	if user.TwoFactorEnabled && strings.TrimSpace(user.TOTPSecretCiphertext) != "" {
 		valid, err := h.verifyHubUserTOTP(user, input.TOTPCode, input.Now)
 		if err != nil {
 			return LoginHubUserResult{}, err

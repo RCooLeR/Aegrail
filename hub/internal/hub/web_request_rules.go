@@ -2,6 +2,7 @@ package hub
 
 import (
 	"fmt"
+	"net/netip"
 	"slices"
 	"strings"
 	"time"
@@ -21,6 +22,7 @@ type webRequestObservation struct {
 	Event             domain.TimelineEvent
 	Key               string
 	RemoteFingerprint string
+	RemoteAddress     string
 	RemoteKnown       bool
 	Method            string
 	Path              string
@@ -77,23 +79,61 @@ func webRequestObservations(events []domain.TimelineEvent, coveredWebEvents map[
 }
 
 func webRequestObservationFromEvent(event domain.TimelineEvent) (webRequestObservation, bool) {
+	if isAegrailSelfMonitoringRequest(event.Payload) {
+		return webRequestObservation{}, false
+	}
 	path := normalizedRequestPath(payloadStringAny(event.Payload, "path", event.Target))
 	if path == "" {
 		return webRequestObservation{}, false
 	}
 	method := strings.ToUpper(payloadStringAny(event.Payload, "method", ""))
 	remoteFingerprint, remoteKnown := remoteAddressFingerprint(event.Payload)
+	remoteAddress := webRequestRemoteAddress(event.Payload)
 	status := payloadInt(event.Payload, "status_code")
 	return webRequestObservation{
 		Event:             event,
 		Key:               correlationEventKey(event),
 		RemoteFingerprint: remoteFingerprint,
+		RemoteAddress:     remoteAddress,
 		RemoteKnown:       remoteKnown,
 		Method:            method,
 		Path:              path,
 		PathFamily:        webRequestPathFamily(path),
 		Status:            status,
 	}, true
+}
+
+func isAegrailSelfMonitoringRequest(payload map[string]any) bool {
+	userAgent := strings.ToLower(payloadStringAny(payload, "user_agent", ""))
+	return strings.Contains(userAgent, "aegrailbot/") ||
+		strings.Contains(userAgent, "aegrail bot")
+}
+
+func webRequestRemoteAddress(payload map[string]any) string {
+	remote := payloadStringAny(payload, "remote_addr", "")
+	if remote == "" {
+		remote = payloadStringAny(payload, "client_ip", "")
+	}
+	if remote == "" {
+		remote = payloadStringAny(payload, "real_ip", "")
+	}
+	return strings.TrimSpace(remote)
+}
+
+func isPrivateWebRequestRemote(remote string) bool {
+	addr, err := netip.ParseAddr(strings.TrimSpace(remote))
+	if err != nil {
+		addrPort, portErr := netip.ParseAddrPort(strings.TrimSpace(remote))
+		if portErr != nil {
+			return false
+		}
+		addr = addrPort.Addr()
+	}
+	return addr.IsLoopback() ||
+		addr.IsPrivate() ||
+		addr.IsLinkLocalUnicast() ||
+		addr.IsLinkLocalMulticast() ||
+		addr.IsUnspecified()
 }
 
 func webRequestVolumeSpikeChains(observations []webRequestObservation, covered map[string]struct{}) []CorrelationChain {
@@ -104,7 +144,9 @@ func webRequestVolumeSpikeChains(observations []webRequestObservation, covered m
 		severity:   domain.SeverityMedium,
 		confidence: domain.ConfidenceMedium,
 		match: func(observation webRequestObservation) bool {
-			return observation.RemoteKnown && !isAdminRequestPath(observation.Path)
+			return observation.RemoteKnown &&
+				!isPrivateWebRequestRemote(observation.RemoteAddress) &&
+				!isAdminRequestPath(observation.Path)
 		},
 		groupKey: func(observation webRequestObservation) string {
 			return observation.RemoteFingerprint + ":" + observation.PathFamily

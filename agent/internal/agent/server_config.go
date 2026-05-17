@@ -43,10 +43,11 @@ type ServerIdentityConfig struct {
 }
 
 type ServerRuntimeConfig struct {
-	QueueDir string `yaml:"queue_dir"`
-	StateDir string `yaml:"state_dir"`
-	Interval string `yaml:"interval"`
-	Timezone string `yaml:"timezone"`
+	QueueDir      string `yaml:"queue_dir"`
+	StateDir      string `yaml:"state_dir"`
+	Interval      string `yaml:"interval"`
+	SentRetention string `yaml:"sent_retention"`
+	Timezone      string `yaml:"timezone"`
 }
 
 type ServerSiteConfig struct {
@@ -190,6 +191,7 @@ func NormalizeServerConfig(config ServerConfig) ServerConfig {
 	if config.Runtime.Interval == "" {
 		config.Runtime.Interval = "30s"
 	}
+	config.Runtime.SentRetention = strings.TrimSpace(config.Runtime.SentRetention)
 	config.Runtime.Timezone = strings.TrimSpace(config.Runtime.Timezone)
 	for index := range config.Sites {
 		site := &config.Sites[index]
@@ -293,6 +295,9 @@ func ValidateServerConfig(config ServerConfig) error {
 	}
 	if _, err := config.RuntimeInterval(); err != nil {
 		issues = append(issues, "runtime.interval must be a valid duration")
+	}
+	if _, err := config.RuntimeSentRetention(); err != nil {
+		issues = append(issues, "runtime.sent_retention must be a valid duration")
 	}
 	if len(config.Sites) == 0 {
 		issues = append(issues, "at least one site is required")
@@ -404,6 +409,13 @@ func (config ServerConfig) RuntimeInterval() (time.Duration, error) {
 	return time.ParseDuration(config.Runtime.Interval)
 }
 
+func (config ServerConfig) RuntimeSentRetention() (time.Duration, error) {
+	if strings.TrimSpace(config.Runtime.SentRetention) == "" {
+		return 0, nil
+	}
+	return time.ParseDuration(config.Runtime.SentRetention)
+}
+
 func (config ServerConfig) AgentIdentity() Identity {
 	return Identity{
 		Schema:       ConfigSchema,
@@ -440,6 +452,11 @@ func (r *Runtime) RunServerConfigOnce(ctx context.Context, config ServerConfig, 
 	identity := config.AgentIdentity()
 	r.Config.Identity = &identity
 	r.Config.QueueDir = identity.QueueDir
+	sentRetention, err := config.RuntimeSentRetention()
+	if err != nil {
+		return ServerRunResult{}, err
+	}
+	r.Config.SentRetention = sentRetention
 	if err := ensureQueueDirs(identity.QueueDir); err != nil {
 		return ServerRunResult{}, err
 	}

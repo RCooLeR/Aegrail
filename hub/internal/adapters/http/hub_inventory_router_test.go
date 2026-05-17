@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -86,9 +87,18 @@ func TestHubRouterListsInventoryScopes(t *testing.T) {
 				Environments []struct {
 					Slug string `json:"slug"`
 					Apps []struct {
-						Slug string `json:"slug"`
-						Kind string `json:"kind"`
+						Slug     string `json:"slug"`
+						Kind     string `json:"kind"`
+						Services []struct {
+							Slug string `json:"slug"`
+						} `json:"services"`
 					} `json:"apps"`
+					Hosts []struct {
+						Slug   string `json:"slug"`
+						Agents []struct {
+							AgentID string `json:"agent_id"`
+						} `json:"agents"`
+					} `json:"hosts"`
 				} `json:"environments"`
 			} `json:"projects"`
 		} `json:"organizations"`
@@ -105,6 +115,47 @@ func TestHubRouterListsInventoryScopes(t *testing.T) {
 	environment := body.Organizations[0].Projects[0].Environments[0]
 	if environment.Slug != "production" || environment.Apps[0].Slug != "main-web" || environment.Apps[0].Kind != "wordpress" {
 		t.Fatalf("environment = %#v", environment)
+	}
+	if len(environment.Apps[0].Services) != 1 || environment.Apps[0].Services[0].Slug != "frontend" {
+		t.Fatalf("services = %#v", environment.Apps[0].Services)
+	}
+	if len(environment.Hosts) != 1 || environment.Hosts[0].Slug != "web-01" || len(environment.Hosts[0].Agents) != 1 {
+		t.Fatalf("hosts = %#v", environment.Hosts)
+	}
+}
+
+func TestHubRouterUpdatesInventoryRecords(t *testing.T) {
+	repo := newHTTPTestInventoryRepository()
+	router := NewHubRouter(domain.AppMeta{Name: "Aegrail", Binary: "aegrail", Version: "test"}, hubapp.New(hubapp.Dependencies{Inventory: repo}), HubOptions{})
+
+	tests := []struct {
+		method string
+		path   string
+		body   string
+		want   string
+	}{
+		{method: http.MethodPatch, path: "/api/v1/inventory/companies/org-1", body: `{"slug":"renamed","name":"Renamed Co"}`, want: `"slug":"renamed"`},
+		{method: http.MethodPatch, path: "/api/v1/inventory/projects/project-1", body: `{"slug":"renamed-site","name":"Renamed Site"}`, want: `"slug":"renamed-site"`},
+		{method: http.MethodPatch, path: "/api/v1/inventory/environments/env-1", body: `{"slug":"local","name":"Local"}`, want: `"slug":"local"`},
+		{method: http.MethodPatch, path: "/api/v1/inventory/apps/app-1", body: `{"slug":"admin-web","name":"Admin Web","kind":"prestashop"}`, want: `"kind":"prestashop"`},
+		{method: http.MethodPatch, path: "/api/v1/inventory/services/service-1", body: `{"slug":"backend","name":"Backend","role":"worker"}`, want: `"role":"worker"`},
+		{method: http.MethodPatch, path: "/api/v1/inventory/hosts/host-1", body: `{"slug":"node-a","hostname":"node-a.local","region":"local","labels":{"pool":"green"}}`, want: `"hostname":"node-a.local"`},
+		{method: http.MethodPatch, path: "/api/v1/inventory/agents/agent-1", body: `{"agent_id":"agt_node_a","version":"dev"}`, want: `"agent_id":"agt_node_a"`},
+	}
+
+	for _, test := range tests {
+		t.Run(test.path, func(t *testing.T) {
+			request := httptest.NewRequest(test.method, test.path, strings.NewReader(test.body))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != http.StatusOK {
+				t.Fatalf("status = %d body = %s", response.Code, response.Body.String())
+			}
+			if !strings.Contains(response.Body.String(), test.want) {
+				t.Fatalf("body = %s, want %s", response.Body.String(), test.want)
+			}
+		})
 	}
 }
 
@@ -205,6 +256,16 @@ func (r *httpTestInventoryRepository) SaveOrganization(ctx context.Context, orga
 	return organization, nil
 }
 
+func (r *httpTestInventoryRepository) UpdateOrganization(ctx context.Context, organizationID domain.ID, update domain.OrganizationUpdate) (domain.Organization, error) {
+	if organizationID != r.org.ID {
+		return domain.Organization{}, nil
+	}
+	r.org.Slug = update.Slug
+	r.org.Name = update.Name
+	r.org.UpdatedAt = time.Now().UTC()
+	return r.org, nil
+}
+
 func (r *httpTestInventoryRepository) ListOrganizations(ctx context.Context) ([]domain.Organization, error) {
 	return []domain.Organization{r.org}, nil
 }
@@ -215,6 +276,16 @@ func (r *httpTestInventoryRepository) FindOrganizationBySlug(ctx context.Context
 
 func (r *httpTestInventoryRepository) SaveProject(ctx context.Context, project domain.Project) (domain.Project, error) {
 	return project, nil
+}
+
+func (r *httpTestInventoryRepository) UpdateProject(ctx context.Context, projectID domain.ID, update domain.ProjectUpdate) (domain.Project, error) {
+	if projectID != r.project.ID {
+		return domain.Project{}, nil
+	}
+	r.project.Slug = update.Slug
+	r.project.Name = update.Name
+	r.project.UpdatedAt = time.Now().UTC()
+	return r.project, nil
 }
 
 func (r *httpTestInventoryRepository) ListProjects(ctx context.Context, organizationID domain.ID) ([]domain.Project, error) {
@@ -232,6 +303,16 @@ func (r *httpTestInventoryRepository) SaveEnvironment(ctx context.Context, envir
 	return environment, nil
 }
 
+func (r *httpTestInventoryRepository) UpdateEnvironment(ctx context.Context, environmentID domain.ID, update domain.EnvironmentUpdate) (domain.Environment, error) {
+	if environmentID != r.environment.ID {
+		return domain.Environment{}, nil
+	}
+	r.environment.Slug = update.Slug
+	r.environment.Name = update.Name
+	r.environment.UpdatedAt = time.Now().UTC()
+	return r.environment, nil
+}
+
 func (r *httpTestInventoryRepository) ListEnvironments(ctx context.Context, projectID domain.ID) ([]domain.Environment, error) {
 	if projectID != r.project.ID {
 		return nil, nil
@@ -245,6 +326,21 @@ func (r *httpTestInventoryRepository) FindEnvironmentBySlug(ctx context.Context,
 
 func (r *httpTestInventoryRepository) SaveMonitoredApp(ctx context.Context, app domain.MonitoredApp) (domain.MonitoredApp, error) {
 	return app, nil
+}
+
+func (r *httpTestInventoryRepository) UpdateMonitoredApp(ctx context.Context, appID domain.ID, update domain.MonitoredAppUpdate) (domain.MonitoredApp, error) {
+	for index, app := range r.apps {
+		if app.ID != appID {
+			continue
+		}
+		app.Slug = update.Slug
+		app.Name = update.Name
+		app.Kind = update.Kind
+		app.UpdatedAt = time.Now().UTC()
+		r.apps[index] = app
+		return app, nil
+	}
+	return domain.MonitoredApp{}, nil
 }
 
 func (r *httpTestInventoryRepository) ListMonitoredApps(ctx context.Context, environmentID domain.ID) ([]domain.MonitoredApp, error) {
@@ -267,6 +363,23 @@ func (r *httpTestInventoryRepository) SaveService(ctx context.Context, service d
 	return service, nil
 }
 
+func (r *httpTestInventoryRepository) UpdateService(ctx context.Context, serviceID domain.ID, update domain.ServiceUpdate) (domain.Service, error) {
+	for appID, services := range r.services {
+		for index, service := range services {
+			if service.ID != serviceID {
+				continue
+			}
+			service.Slug = update.Slug
+			service.Name = update.Name
+			service.Role = update.Role
+			service.UpdatedAt = time.Now().UTC()
+			r.services[appID][index] = service
+			return service, nil
+		}
+	}
+	return domain.Service{}, nil
+}
+
 func (r *httpTestInventoryRepository) ListServices(ctx context.Context, appID domain.ID) ([]domain.Service, error) {
 	return append([]domain.Service(nil), r.services[appID]...), nil
 }
@@ -282,6 +395,22 @@ func (r *httpTestInventoryRepository) FindServiceBySlug(ctx context.Context, app
 
 func (r *httpTestInventoryRepository) SaveHost(ctx context.Context, host domain.Host) (domain.Host, error) {
 	return host, nil
+}
+
+func (r *httpTestInventoryRepository) UpdateHost(ctx context.Context, hostID domain.ID, update domain.HostUpdate) (domain.Host, error) {
+	for index, host := range r.hosts {
+		if host.ID != hostID {
+			continue
+		}
+		host.Slug = update.Slug
+		host.Hostname = update.Hostname
+		host.Region = update.Region
+		host.Labels = update.Labels
+		host.UpdatedAt = time.Now().UTC()
+		r.hosts[index] = host
+		return host, nil
+	}
+	return domain.Host{}, nil
 }
 
 func (r *httpTestInventoryRepository) ListHosts(ctx context.Context, environmentID domain.ID) ([]domain.Host, error) {
@@ -302,6 +431,22 @@ func (r *httpTestInventoryRepository) FindHostBySlug(ctx context.Context, enviro
 
 func (r *httpTestInventoryRepository) SaveAgent(ctx context.Context, agent domain.Agent) (domain.Agent, error) {
 	return agent, nil
+}
+
+func (r *httpTestInventoryRepository) UpdateAgent(ctx context.Context, agentID domain.ID, update domain.AgentUpdate) (domain.Agent, error) {
+	for hostID, agents := range r.agents {
+		for index, agent := range agents {
+			if agent.ID != agentID {
+				continue
+			}
+			agent.AgentID = update.AgentID
+			agent.Version = update.Version
+			agent.UpdatedAt = time.Now().UTC()
+			r.agents[hostID][index] = agent
+			return agent, nil
+		}
+	}
+	return domain.Agent{}, nil
 }
 
 func (r *httpTestInventoryRepository) ListAgents(ctx context.Context, hostID domain.ID) ([]domain.Agent, error) {

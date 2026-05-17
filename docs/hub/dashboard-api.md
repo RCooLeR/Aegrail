@@ -109,5 +109,12 @@ limit
 | `GET` | `/api/v1/inventory/agents` | viewer | List agents for a host. |
 | `GET` | `/api/v1/inventory/topology` | viewer | Load dashboard topology. |
 | `POST` | `/api/v1/inventory/companies` | admin | Create/update a company. |
+| `PATCH` | `/api/v1/inventory/companies/{id}` | admin | Edit a company display name and slug. |
 | `POST` | `/api/v1/inventory/sites` | admin | Create/update a site project, environment, app, and service. |
+| `PATCH` | `/api/v1/inventory/projects/{id}` | admin | Edit a site/project display name and slug. |
+| `PATCH` | `/api/v1/inventory/environments/{id}` | admin | Edit an environment display name and slug. |
+| `PATCH` | `/api/v1/inventory/apps/{id}` | admin | Edit an app display name, slug, and platform kind. |
+| `PATCH` | `/api/v1/inventory/services/{id}` | admin | Edit a service display name, slug, and role. |
 | `POST` | `/api/v1/inventory/nodes` | admin | Create/update a node and return the generated wire config sample. |
+| `PATCH` | `/api/v1/inventory/hosts/{id}` | admin | Edit a node/host slug, hostname, region, and visible labels. |
+| `PATCH` | `/api/v1/inventory/agents/{id}` | admin | Edit an attached agent node id and version label. |

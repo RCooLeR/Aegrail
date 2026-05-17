@@ -76,6 +76,7 @@ export type MonitoredApp = {
   slug: string;
   name: string;
   kind: string;
+  services?: Service[];
   created_at: string;
   updated_at: string;
 };
@@ -86,6 +87,7 @@ export type InventoryEnvironment = {
   slug: string;
   name: string;
   apps: MonitoredApp[];
+  hosts?: Host[];
   created_at: string;
   updated_at: string;
 };
@@ -125,6 +127,7 @@ export type Host = {
   hostname: string;
   region?: string;
   labels: Record<string, string>;
+  agents?: Agent[];
   created_at: string;
   updated_at: string;
 };

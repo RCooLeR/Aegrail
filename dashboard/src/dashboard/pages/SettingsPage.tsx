@@ -25,11 +25,18 @@ import {
   disableHubUserTOTP,
   loadHubUsers,
   startHubUserTOTP,
+  updateInventoryAgent,
+  updateInventoryApp,
+  updateInventoryCompany,
+  updateInventoryEnvironment,
+  updateInventoryHost,
+  updateInventoryProject,
+  updateInventoryService,
   updateHubUser,
   verifyHubUserTOTP
 } from "../../api";
 import type { InstanceModel } from "../../estate";
-import type { ApiScope, HubUser, HubUserTOTPEnrollment, InventoryOrganization, NodeProvisioning } from "../../types";
+import type { Agent, ApiScope, Host, HubUser, HubUserTOTPEnrollment, InventoryEnvironment, InventoryOrganization, InventoryProject, MonitoredApp, NodeProvisioning, Service } from "../../types";
 import { autoModelValue, modelPresets } from "../config/modelPresets";
 import type { ActionState, SiteRow } from "../types";
 import { formatDate, formatRelative } from "../utils/time";
@@ -139,8 +146,8 @@ export function SettingsPage({
         </Panel>
       )}
       {activeTab === "companies" && <CompaniesSettings instances={allInstances} inventory={inventory} onRefresh={onRefresh} scope={scope} />}
-      {activeTab === "sites" && <SitesSettings onRefresh={onRefresh} scope={scope} sites={allSites} />}
-      {activeTab === "nodes" && <NodesSettings instances={allInstances} onRefresh={onRefresh} scope={scope} />}
+      {activeTab === "sites" && <SitesSettings inventory={inventory} onRefresh={onRefresh} scope={scope} sites={allSites} />}
+      {activeTab === "nodes" && <NodesSettings instances={allInstances} inventory={inventory} onRefresh={onRefresh} scope={scope} />}
       {activeTab === "users" && <UserAccessManager currentUser={user} scope={scope} />}
       {activeTab === "inventory" && (
         <Panel title="Inventory" icon={DatabaseZap}>
@@ -176,24 +183,25 @@ function CompaniesSettings({ instances, inventory, onRefresh, scope }: { instanc
   return (
     <div className="page-stack">
       <CompanyProvisioner onRefresh={onRefresh} scope={scope} />
-      <CompaniesOverview instances={instances} inventory={inventory} />
+      <CompaniesOverview instances={instances} inventory={inventory} onRefresh={onRefresh} scope={scope} />
     </div>
   );
 }
 
-function SitesSettings({ onRefresh, scope, sites }: { onRefresh: () => void; scope: ApiScope; sites: SiteRow[] }) {
+function SitesSettings({ inventory, onRefresh, scope, sites }: { inventory: InventoryOrganization[]; onRefresh: () => void; scope: ApiScope; sites: SiteRow[] }) {
   return (
     <div className="page-stack">
       <SiteProvisioner onRefresh={onRefresh} scope={scope} />
-      <SitesOverview sites={sites} />
+      <SitesOverview inventory={inventory} onRefresh={onRefresh} scope={scope} sites={sites} />
     </div>
   );
 }
 
-function NodesSettings({ instances, onRefresh, scope }: { instances: InstanceModel[]; onRefresh: () => void; scope: ApiScope }) {
+function NodesSettings({ instances, inventory, onRefresh, scope }: { instances: InstanceModel[]; inventory: InventoryOrganization[]; onRefresh: () => void; scope: ApiScope }) {
   return (
     <div className="page-stack">
       <NodeProvisioner onRefresh={onRefresh} scope={scope} />
+      <NodesInventoryEditor inventory={inventory} onRefresh={onRefresh} scope={scope} />
       <NodesOverview instances={instances} />
     </div>
   );
@@ -371,7 +379,7 @@ function NodeProvisioner({ onRefresh, scope }: { onRefresh: () => void; scope: A
   );
 }
 
-function CompaniesOverview({ instances, inventory }: { instances: InstanceModel[]; inventory: InventoryOrganization[] }) {
+function CompaniesOverview({ instances, inventory, onRefresh, scope }: { instances: InstanceModel[]; inventory: InventoryOrganization[]; onRefresh: () => void; scope: ApiScope }) {
   const groups = inventory.map((organization) => {
     const companyInstances = instances.filter((instance) => instance.companySlug === organization.slug);
     return {
@@ -405,15 +413,7 @@ function CompaniesOverview({ instances, inventory }: { instances: InstanceModel[
         </thead>
         <tbody>
           {groups.map((row) => (
-            <tr key={row.organization.id}>
-              <td><strong>{row.organization.name}</strong><small>{row.organization.slug}</small></td>
-              <td><StatusPill value={row.status} /></td>
-              <td>{row.sites}</td>
-              <td>{row.nodes}</td>
-              <td>{row.activeAgents}/{row.agents}</td>
-              <td>{row.issues}</td>
-              <td>{formatRelative(row.organization.updated_at)}</td>
-            </tr>
+            <EditableCompanyRow key={row.organization.id} onRefresh={onRefresh} row={row} scope={scope} />
           ))}
           {groups.length === 0 && (
             <tr><td colSpan={7}><EmptyState title="No companies registered" /></td></tr>
@@ -424,39 +424,373 @@ function CompaniesOverview({ instances, inventory }: { instances: InstanceModel[
   );
 }
 
-function SitesOverview({ sites }: { sites: SiteRow[] }) {
+function EditableCompanyRow({
+  onRefresh,
+  row,
+  scope
+}: {
+  onRefresh: () => void;
+  row: {
+    activeAgents: number;
+    agents: number;
+    issues: number;
+    nodes: number;
+    organization: InventoryOrganization;
+    sites: number;
+    status: string;
+  };
+  scope: ApiScope;
+}) {
+  const [form, setForm] = useState({ name: row.organization.name, slug: row.organization.slug });
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setForm({ name: row.organization.name, slug: row.organization.slug });
+  }, [row.organization.name, row.organization.slug]);
+
+  async function save() {
+    setSaving(true);
+    setError("");
+    try {
+      await updateInventoryCompany(scope, row.organization, form);
+      onRefresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <tr>
+      <td>
+        <div className="table-edit-stack">
+          <TextInput label="Display name" value={form.name} onChange={(name) => setForm((current) => ({ ...current, name }))} />
+          <TextInput label="Slug" value={form.slug} onChange={(slug) => setForm((current) => ({ ...current, slug }))} />
+          {error && <InlineAlert message={error} />}
+        </div>
+      </td>
+      <td><StatusPill value={row.status} /></td>
+      <td>{row.sites}</td>
+      <td>{row.nodes}</td>
+      <td>{row.activeAgents}/{row.agents}</td>
+      <td>{row.issues}</td>
+      <td>
+        <div className="inline-row-actions">
+          <small>{formatRelative(row.organization.updated_at)}</small>
+          <button className="ghost-button compact" type="button" disabled={saving} onClick={() => void save()}>
+            {saving ? <Loader2 size={14} className="spin" /> : <Save size={14} />}
+            Save
+          </button>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+function SitesOverview({ inventory, onRefresh, scope, sites }: { inventory: InventoryOrganization[]; onRefresh: () => void; scope: ApiScope; sites: SiteRow[] }) {
+  const rows = inventory.flatMap((organization) =>
+    organization.projects.flatMap((project) =>
+      project.environments.flatMap((environment) =>
+        environment.apps.map((app) => ({
+          app,
+          environment,
+          organization,
+          project,
+          services: app.services ?? []
+        }))
+      )
+    )
+  );
+
   return (
     <Panel title="Sites" icon={Building2}>
       <ResponsiveTable>
         <thead>
           <tr>
             <th>Company / Site</th>
-            <th>Status</th>
-            <th>Open issues</th>
-            <th>Critical</th>
-            <th>Nodes</th>
-            <th>Agents</th>
-            <th>Last signal</th>
+            <th>Environment</th>
+            <th>App</th>
+            <th>Service</th>
+            <th>State</th>
+            <th />
           </tr>
         </thead>
         <tbody>
-          {sites.map((site) => (
-            <tr key={site.key}>
-              <td><strong>{site.companyName}</strong><small>{site.projectName}</small></td>
-              <td><StatusPill value={site.status} /></td>
-              <td>{site.openIssues}</td>
-              <td>{site.criticalIssues}</td>
-              <td>{site.instances.length}</td>
-              <td>{site.agentActive}/{site.agentCount}</td>
-              <td>{formatRelative(site.lastSignalAt)}</td>
-            </tr>
+          {rows.map((row) => (
+            <EditableSiteRow
+              key={`${row.organization.id}:${row.project.id}:${row.environment.id}:${row.app.id}`}
+              onRefresh={onRefresh}
+              row={row}
+              scope={scope}
+              state={sites.find((site) => site.companySlug === row.organization.slug && site.projectSlug === row.project.slug)}
+            />
           ))}
-          {sites.length === 0 && (
-            <tr><td colSpan={7}><EmptyState title="No sites registered" /></td></tr>
+          {rows.length === 0 && (
+            <tr><td colSpan={6}><EmptyState title="No sites registered" /></td></tr>
           )}
         </tbody>
       </ResponsiveTable>
     </Panel>
+  );
+}
+
+function EditableSiteRow({
+  onRefresh,
+  row,
+  scope,
+  state
+}: {
+  onRefresh: () => void;
+  row: {
+    app: MonitoredApp;
+    environment: InventoryEnvironment;
+    organization: InventoryOrganization;
+    project: InventoryProject;
+    services: Service[];
+  };
+  scope: ApiScope;
+  state?: SiteRow;
+}) {
+  const firstService = row.services[0];
+  const [projectForm, setProjectForm] = useState({ name: row.project.name, slug: row.project.slug });
+  const [environmentForm, setEnvironmentForm] = useState({ name: row.environment.name, slug: row.environment.slug });
+  const [appForm, setAppForm] = useState({ kind: row.app.kind, name: row.app.name, slug: row.app.slug });
+  const [serviceForm, setServiceForm] = useState({
+    name: firstService?.name ?? "",
+    role: firstService?.role ?? "",
+    slug: firstService?.slug ?? ""
+  });
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setProjectForm({ name: row.project.name, slug: row.project.slug });
+    setEnvironmentForm({ name: row.environment.name, slug: row.environment.slug });
+    setAppForm({ kind: row.app.kind, name: row.app.name, slug: row.app.slug });
+    setServiceForm({
+      name: firstService?.name ?? "",
+      role: firstService?.role ?? "",
+      slug: firstService?.slug ?? ""
+    });
+  }, [firstService?.name, firstService?.role, firstService?.slug, row.app.kind, row.app.name, row.app.slug, row.environment.name, row.environment.slug, row.project.name, row.project.slug]);
+
+  async function save() {
+    setSaving(true);
+    setError("");
+    try {
+      await updateInventoryProject(scope, row.project, projectForm);
+      await updateInventoryEnvironment(scope, row.environment, environmentForm);
+      await updateInventoryApp(scope, row.app, appForm);
+      if (firstService) {
+        await updateInventoryService(scope, firstService, serviceForm);
+      }
+      onRefresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <tr>
+      <td>
+        <strong>{row.organization.name}</strong>
+        <small>{row.organization.slug}</small>
+        <div className="table-edit-stack">
+          <TextInput label="Site name" value={projectForm.name} onChange={(name) => setProjectForm((current) => ({ ...current, name }))} />
+          <TextInput label="Site slug" value={projectForm.slug} onChange={(slug) => setProjectForm((current) => ({ ...current, slug }))} />
+        </div>
+      </td>
+      <td>
+        <div className="table-edit-stack">
+          <TextInput label="Environment name" value={environmentForm.name} onChange={(name) => setEnvironmentForm((current) => ({ ...current, name }))} />
+          <TextInput label="Environment slug" value={environmentForm.slug} onChange={(slug) => setEnvironmentForm((current) => ({ ...current, slug }))} />
+        </div>
+      </td>
+      <td>
+        <div className="table-edit-stack">
+          <TextInput label="App name" value={appForm.name} onChange={(name) => setAppForm((current) => ({ ...current, name }))} />
+          <TextInput label="App slug" value={appForm.slug} onChange={(slug) => setAppForm((current) => ({ ...current, slug }))} />
+          <label>Kind<select value={appForm.kind} onChange={(event) => setAppForm((current) => ({ ...current, kind: event.target.value }))}>
+            <option value="wordpress">WordPress</option>
+            <option value="wordpress-multisite">WordPress network</option>
+            <option value="prestashop">PrestaShop</option>
+            <option value="mautic">Mautic</option>
+            <option value="yii2-rbac">Yii2 RBAC</option>
+            <option value="laravel">Laravel</option>
+            <option value="generic-php">Generic PHP</option>
+          </select></label>
+        </div>
+      </td>
+      <td>
+        {firstService ? (
+          <div className="table-edit-stack">
+            <TextInput label="Service name" value={serviceForm.name} onChange={(name) => setServiceForm((current) => ({ ...current, name }))} />
+            <TextInput label="Service slug" value={serviceForm.slug} onChange={(slug) => setServiceForm((current) => ({ ...current, slug }))} />
+            <TextInput label="Role" value={serviceForm.role} onChange={(role) => setServiceForm((current) => ({ ...current, role }))} />
+          </div>
+        ) : (
+          <small>No service registered</small>
+        )}
+      </td>
+      <td>
+        {state ? (
+          <>
+            <StatusPill value={state.status} />
+            <small>{state.openIssues} open / {state.instances.length} nodes</small>
+            <small>Last signal {formatRelative(state.lastSignalAt)}</small>
+          </>
+        ) : (
+          <StatusPill value="no signals" tone="neutral" />
+        )}
+        {error && <InlineAlert message={error} />}
+      </td>
+      <td>
+        <button className="ghost-button compact" type="button" disabled={saving} onClick={() => void save()}>
+          {saving ? <Loader2 size={14} className="spin" /> : <Save size={14} />}
+          Save
+        </button>
+      </td>
+    </tr>
+  );
+}
+
+function NodesInventoryEditor({ inventory, onRefresh, scope }: { inventory: InventoryOrganization[]; onRefresh: () => void; scope: ApiScope }) {
+  const rows = inventory.flatMap((organization) =>
+    organization.projects.flatMap((project) =>
+      project.environments.flatMap((environment) =>
+        (environment.hosts ?? []).map((host) => ({
+          environment,
+          host,
+          organization,
+          project
+        }))
+      )
+    )
+  );
+
+  return (
+    <Panel title="Editable nodes" icon={MonitorCog}>
+      <ResponsiveTable>
+        <thead>
+          <tr>
+            <th>Company / Site</th>
+            <th>Node</th>
+            <th>Agent</th>
+            <th>Updated</th>
+            <th />
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <EditableNodeRow key={row.host.id} onRefresh={onRefresh} row={row} scope={scope} />
+          ))}
+          {rows.length === 0 && (
+            <tr><td colSpan={5}><EmptyState title="No nodes registered" /></td></tr>
+          )}
+        </tbody>
+      </ResponsiveTable>
+    </Panel>
+  );
+}
+
+function EditableNodeRow({
+  onRefresh,
+  row,
+  scope
+}: {
+  onRefresh: () => void;
+  row: {
+    environment: InventoryEnvironment;
+    host: Host;
+    organization: InventoryOrganization;
+    project: InventoryProject;
+  };
+  scope: ApiScope;
+}) {
+  const firstAgent = row.host.agents?.[0];
+  const [hostForm, setHostForm] = useState({
+    hostname: row.host.hostname,
+    region: row.host.region ?? "",
+    slug: row.host.slug
+  });
+  const [agentForm, setAgentForm] = useState({
+    agent_id: firstAgent?.agent_id ?? "",
+    version: firstAgent?.version ?? ""
+  });
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setHostForm({
+      hostname: row.host.hostname,
+      region: row.host.region ?? "",
+      slug: row.host.slug
+    });
+    setAgentForm({
+      agent_id: firstAgent?.agent_id ?? "",
+      version: firstAgent?.version ?? ""
+    });
+  }, [firstAgent?.agent_id, firstAgent?.version, row.host.hostname, row.host.region, row.host.slug]);
+
+  async function save() {
+    setSaving(true);
+    setError("");
+    try {
+      await updateInventoryHost(scope, row.host, {
+        ...hostForm,
+        labels: row.host.labels ?? {}
+      });
+      if (firstAgent) {
+        await updateInventoryAgent(scope, firstAgent, agentForm);
+      }
+      onRefresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <tr>
+      <td>
+        <strong>{row.organization.name}</strong>
+        <small>{row.project.name} / {row.environment.slug}</small>
+      </td>
+      <td>
+        <div className="table-edit-stack">
+          <TextInput label="Node slug" value={hostForm.slug} onChange={(slug) => setHostForm((current) => ({ ...current, slug }))} />
+          <TextInput label="Hostname" value={hostForm.hostname} onChange={(hostname) => setHostForm((current) => ({ ...current, hostname }))} />
+          <TextInput label="Region" value={hostForm.region} onChange={(region) => setHostForm((current) => ({ ...current, region }))} />
+          {row.host.labels && Object.keys(row.host.labels).length > 0 && <small>Labels: {Object.entries(row.host.labels).map(([key, value]) => `${key}=${value}`).join(", ")}</small>}
+        </div>
+      </td>
+      <td>
+        {firstAgent ? (
+          <div className="table-edit-stack">
+            <TextInput label="Node ID" value={agentForm.agent_id} onChange={(agent_id) => setAgentForm((current) => ({ ...current, agent_id }))} />
+            <TextInput label="Version" value={agentForm.version} onChange={(version) => setAgentForm((current) => ({ ...current, version }))} />
+            <small>{firstAgent.fingerprint}</small>
+          </div>
+        ) : (
+          <small>No agent attached</small>
+        )}
+      </td>
+      <td><small>{formatRelative(row.host.updated_at)}</small></td>
+      <td>
+        <div className="inline-row-actions">
+          {error && <InlineAlert message={error} />}
+          <button className="ghost-button compact" type="button" disabled={saving} onClick={() => void save()}>
+            {saving ? <Loader2 size={14} className="spin" /> : <Save size={14} />}
+            Save
+          </button>
+        </div>
+      </td>
+    </tr>
   );
 }
 

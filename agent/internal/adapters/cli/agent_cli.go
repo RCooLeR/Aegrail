@@ -558,7 +558,7 @@ func runConfiguredDatabaseCollectors(ctx context.Context, runtime *agent.Runtime
 			if _, _, err := runtime.EnqueueEvents(ctx, agent.EnqueueEventsInput{
 				BatchID: dbQueueBatchID(site, snapshot),
 				App:     site.App,
-				Service: "database",
+				Service: site.Service,
 				Source:  "agent.database",
 				Region:  config.Identity.Region,
 				Labels:  labels,

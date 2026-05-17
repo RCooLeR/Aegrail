@@ -30,7 +30,7 @@ Data handling rules:
 - Wire v1 protects the JSON payload, but transfer confidentiality still matters for HTTP metadata, cookies, and dashboard sessions. Use `https://` or a trusted private tunnel/VPN outside localhost.
 - Hub user TOTP secrets are encrypted at rest with AES-GCM using a key derived from `AEGRAIL_HUB_USER_SECRET`. If that secret is lost, existing TOTP secrets cannot be verified and users must be re-enrolled.
 - Dashboard mutating requests use `aegrail.dashboard.v1` with an HttpOnly session cookie and a session-bound CSRF token in `X-Aegrail-CSRF`.
-- Local agent queue/state files are JSON on disk, created with restrictive file permissions where the OS supports them. Treat `queue_dir` and `state_dir` as sensitive runtime data.
+- Local agent queue/state files are JSON on disk, created with restrictive file permissions where the OS supports them. Treat `queue_dir` and `state_dir` as sensitive runtime data. Successfully sent queue batches are deleted by default; set `runtime.sent_retention` only for short debugging windows.
 - Hub stores accepted events, payloads, findings, reports, users, and audit-relevant metadata in PostgreSQL. Protect the database with normal database access controls, disk encryption/backup policy, and network restrictions.
 
 ## Secret Roles

@@ -33,6 +33,22 @@ func (r *InventoryRepository) SaveOrganization(ctx context.Context, organization
 	return saved, err
 }
 
+func (r *InventoryRepository) UpdateOrganization(ctx context.Context, organizationID domain.ID, update domain.OrganizationUpdate) (domain.Organization, error) {
+	const query = `
+		UPDATE organizations
+		SET slug = $2,
+			name = $3,
+			updated_at = now()
+		WHERE id = $1
+		RETURNING id::text, slug::text, name, created_at, updated_at
+	`
+	var saved domain.Organization
+	err := r.pool.QueryRow(ctx, query, organizationID, update.Slug, update.Name).Scan(
+		&saved.ID, &saved.Slug, &saved.Name, &saved.CreatedAt, &saved.UpdatedAt,
+	)
+	return saved, err
+}
+
 func (r *InventoryRepository) ListOrganizations(ctx context.Context) ([]domain.Organization, error) {
 	rows, err := r.pool.Query(ctx, `SELECT id::text, slug::text, name, created_at, updated_at FROM organizations ORDER BY slug`)
 	if err != nil {
@@ -75,6 +91,22 @@ func (r *InventoryRepository) SaveProject(ctx context.Context, project domain.Pr
 	return saved, err
 }
 
+func (r *InventoryRepository) UpdateProject(ctx context.Context, projectID domain.ID, update domain.ProjectUpdate) (domain.Project, error) {
+	const query = `
+		UPDATE projects
+		SET slug = $2,
+			name = $3,
+			updated_at = now()
+		WHERE id = $1
+		RETURNING id::text, organization_id::text, slug::text, name, created_at, updated_at
+	`
+	var saved domain.Project
+	err := r.pool.QueryRow(ctx, query, projectID, update.Slug, update.Name).Scan(
+		&saved.ID, &saved.OrganizationID, &saved.Slug, &saved.Name, &saved.CreatedAt, &saved.UpdatedAt,
+	)
+	return saved, err
+}
+
 func (r *InventoryRepository) ListProjects(ctx context.Context, organizationID domain.ID) ([]domain.Project, error) {
 	rows, err := r.pool.Query(ctx, `SELECT id::text, organization_id::text, slug::text, name, created_at, updated_at FROM projects WHERE organization_id = $1 ORDER BY slug`, organizationID)
 	if err != nil {
@@ -112,6 +144,22 @@ func (r *InventoryRepository) SaveEnvironment(ctx context.Context, environment d
 	`
 	var saved domain.Environment
 	err := r.pool.QueryRow(ctx, query, environment.ProjectID, environment.Slug, environment.Name).Scan(
+		&saved.ID, &saved.ProjectID, &saved.Slug, &saved.Name, &saved.CreatedAt, &saved.UpdatedAt,
+	)
+	return saved, err
+}
+
+func (r *InventoryRepository) UpdateEnvironment(ctx context.Context, environmentID domain.ID, update domain.EnvironmentUpdate) (domain.Environment, error) {
+	const query = `
+		UPDATE environments
+		SET slug = $2,
+			name = $3,
+			updated_at = now()
+		WHERE id = $1
+		RETURNING id::text, project_id::text, slug::text, name, created_at, updated_at
+	`
+	var saved domain.Environment
+	err := r.pool.QueryRow(ctx, query, environmentID, update.Slug, update.Name).Scan(
 		&saved.ID, &saved.ProjectID, &saved.Slug, &saved.Name, &saved.CreatedAt, &saved.UpdatedAt,
 	)
 	return saved, err
@@ -160,6 +208,23 @@ func (r *InventoryRepository) SaveMonitoredApp(ctx context.Context, app domain.M
 	return saved, err
 }
 
+func (r *InventoryRepository) UpdateMonitoredApp(ctx context.Context, appID domain.ID, update domain.MonitoredAppUpdate) (domain.MonitoredApp, error) {
+	const query = `
+		UPDATE monitored_apps
+		SET slug = $2,
+			name = $3,
+			kind = $4,
+			updated_at = now()
+		WHERE id = $1
+		RETURNING id::text, environment_id::text, slug::text, name, kind, created_at, updated_at
+	`
+	var saved domain.MonitoredApp
+	err := r.pool.QueryRow(ctx, query, appID, update.Slug, update.Name, update.Kind).Scan(
+		&saved.ID, &saved.EnvironmentID, &saved.Slug, &saved.Name, &saved.Kind, &saved.CreatedAt, &saved.UpdatedAt,
+	)
+	return saved, err
+}
+
 func (r *InventoryRepository) ListMonitoredApps(ctx context.Context, environmentID domain.ID) ([]domain.MonitoredApp, error) {
 	rows, err := r.pool.Query(ctx, `SELECT id::text, environment_id::text, slug::text, name, kind, created_at, updated_at FROM monitored_apps WHERE environment_id = $1 ORDER BY slug`, environmentID)
 	if err != nil {
@@ -198,6 +263,23 @@ func (r *InventoryRepository) SaveService(ctx context.Context, service domain.Se
 	`
 	var saved domain.Service
 	err := r.pool.QueryRow(ctx, query, service.AppID, service.Slug, service.Name, service.Role).Scan(
+		&saved.ID, &saved.AppID, &saved.Slug, &saved.Name, &saved.Role, &saved.CreatedAt, &saved.UpdatedAt,
+	)
+	return saved, err
+}
+
+func (r *InventoryRepository) UpdateService(ctx context.Context, serviceID domain.ID, update domain.ServiceUpdate) (domain.Service, error) {
+	const query = `
+		UPDATE services
+		SET slug = $2,
+			name = $3,
+			role = $4,
+			updated_at = now()
+		WHERE id = $1
+		RETURNING id::text, app_id::text, slug::text, name, role, created_at, updated_at
+	`
+	var saved domain.Service
+	err := r.pool.QueryRow(ctx, query, serviceID, update.Slug, update.Name, update.Role).Scan(
 		&saved.ID, &saved.AppID, &saved.Slug, &saved.Name, &saved.Role, &saved.CreatedAt, &saved.UpdatedAt,
 	)
 	return saved, err
@@ -251,6 +333,28 @@ func (r *InventoryRepository) SaveHost(ctx context.Context, host domain.Host) (d
 	return saved, err
 }
 
+func (r *InventoryRepository) UpdateHost(ctx context.Context, hostID domain.ID, update domain.HostUpdate) (domain.Host, error) {
+	const query = `
+		UPDATE hosts
+		SET slug = $2,
+			hostname = $3,
+			region = $4,
+			labels = $5,
+			updated_at = now()
+		WHERE id = $1
+		RETURNING id::text, environment_id::text, slug::text, hostname, region, labels, created_at, updated_at
+	`
+	labels := update.Labels
+	if labels == nil {
+		labels = map[string]string{}
+	}
+	var saved domain.Host
+	err := r.pool.QueryRow(ctx, query, hostID, update.Slug, update.Hostname, update.Region, labels).Scan(
+		&saved.ID, &saved.EnvironmentID, &saved.Slug, &saved.Hostname, &saved.Region, &saved.Labels, &saved.CreatedAt, &saved.UpdatedAt,
+	)
+	return saved, err
+}
+
 func (r *InventoryRepository) ListHosts(ctx context.Context, environmentID domain.ID) ([]domain.Host, error) {
 	rows, err := r.pool.Query(ctx, `SELECT id::text, environment_id::text, slug::text, hostname, region, labels, created_at, updated_at FROM hosts WHERE environment_id = $1 ORDER BY slug`, environmentID)
 	if err != nil {
@@ -293,6 +397,22 @@ func (r *InventoryRepository) SaveAgent(ctx context.Context, agent domain.Agent)
 	`
 	var saved domain.Agent
 	err := r.pool.QueryRow(ctx, query, agent.HostID, agent.AgentID, agent.Fingerprint, agent.Version, agent.LastSeenAt, agent.WireProtocol, agent.NodePublicKey).Scan(
+		&saved.ID, &saved.HostID, &saved.AgentID, &saved.Fingerprint, &saved.Version, &saved.LastSeenAt, &saved.WireProtocol, &saved.NodePublicKey, &saved.CreatedAt, &saved.UpdatedAt,
+	)
+	return saved, err
+}
+
+func (r *InventoryRepository) UpdateAgent(ctx context.Context, agentID domain.ID, update domain.AgentUpdate) (domain.Agent, error) {
+	const query = `
+		UPDATE agents
+		SET agent_id = $2,
+			version = $3,
+			updated_at = now()
+		WHERE id = $1
+		RETURNING id::text, host_id::text, agent_id::text, fingerprint, version, last_seen_at, wire_protocol, node_public_key, created_at, updated_at
+	`
+	var saved domain.Agent
+	err := r.pool.QueryRow(ctx, query, agentID, update.AgentID, update.Version).Scan(
 		&saved.ID, &saved.HostID, &saved.AgentID, &saved.Fingerprint, &saved.Version, &saved.LastSeenAt, &saved.WireProtocol, &saved.NodePublicKey, &saved.CreatedAt, &saved.UpdatedAt,
 	)
 	return saved, err

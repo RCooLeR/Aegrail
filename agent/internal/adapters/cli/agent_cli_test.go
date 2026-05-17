@@ -229,8 +229,8 @@ sites:
 	}
 	batches := readQueuedBatches(t, filepath.Join(root, "queue", "pending"))
 	batch := queuedBatchBySource(t, batches, "agent.database")
-	if batch.Source != "agent.database" || batch.Service != "database" {
-		t.Fatalf("batch source/service = %s/%s, want agent.database/database", batch.Source, batch.Service)
+	if batch.Source != "agent.database" || batch.Service != "frontend" {
+		t.Fatalf("batch source/service = %s/%s, want agent.database/frontend", batch.Source, batch.Service)
 	}
 	if batch.Labels["db_name"] != "main" || batch.Labels["site_slug"] != "example-com" {
 		t.Fatalf("batch labels = %#v, want database and site context", batch.Labels)

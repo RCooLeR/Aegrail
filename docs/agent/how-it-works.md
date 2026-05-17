@@ -611,6 +611,12 @@ Events are grouped into local batch JSON files in:
 <queue_dir>/discarded
 ```
 
+`pending` is the retry spool. After the Hub accepts a batch, the Agent deletes
+the local JSON by default. `sent` is only used when
+`runtime.sent_retention` is set to a positive duration such as `1h` for
+transport debugging. Do not use sent retention on production nodes unless you
+intentionally want a short local audit cache.
+
 A queued batch has this shape:
 
 ```json

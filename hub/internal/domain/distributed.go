@@ -10,6 +10,11 @@ type Organization struct {
 	UpdatedAt time.Time
 }
 
+type OrganizationUpdate struct {
+	Slug string
+	Name string
+}
+
 type Project struct {
 	ID             ID
 	OrganizationID ID
@@ -19,6 +24,11 @@ type Project struct {
 	UpdatedAt      time.Time
 }
 
+type ProjectUpdate struct {
+	Slug string
+	Name string
+}
+
 type Environment struct {
 	ID        ID
 	ProjectID ID
@@ -26,6 +36,11 @@ type Environment struct {
 	Name      string
 	CreatedAt time.Time
 	UpdatedAt time.Time
+}
+
+type EnvironmentUpdate struct {
+	Slug string
+	Name string
 }
 
 type MonitoredApp struct {
@@ -38,6 +53,12 @@ type MonitoredApp struct {
 	UpdatedAt     time.Time
 }
 
+type MonitoredAppUpdate struct {
+	Slug string
+	Name string
+	Kind string
+}
+
 type Service struct {
 	ID        ID
 	AppID     ID
@@ -46,6 +67,12 @@ type Service struct {
 	Role      string
 	CreatedAt time.Time
 	UpdatedAt time.Time
+}
+
+type ServiceUpdate struct {
+	Slug string
+	Name string
+	Role string
 }
 
 type Host struct {
@@ -59,6 +86,13 @@ type Host struct {
 	UpdatedAt     time.Time
 }
 
+type HostUpdate struct {
+	Slug     string
+	Hostname string
+	Region   string
+	Labels   map[string]string
+}
+
 type Agent struct {
 	ID            ID
 	HostID        ID
@@ -70,6 +104,11 @@ type Agent struct {
 	NodePublicKey string
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
+}
+
+type AgentUpdate struct {
+	AgentID string
+	Version string
 }
 
 type DistributedEventContext struct {

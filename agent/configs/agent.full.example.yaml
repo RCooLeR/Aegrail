@@ -64,6 +64,11 @@ runtime:
   # Queue files are JSON runtime data. Treat this directory as sensitive.
   queue_dir: /var/lib/aegrail/queue
 
+  # How long to keep successfully sent JSON batches on disk.
+  # Default/empty/0s deletes a batch immediately after Hub accepts it.
+  # Set a short value such as 1h only while debugging agent transport.
+  sent_retention: 0s
+
   # Local directory for collector state and baselines.
   # State files are JSON runtime data. Treat this directory as sensitive.
   state_dir: /var/lib/aegrail/state

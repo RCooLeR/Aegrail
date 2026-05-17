@@ -806,6 +806,28 @@ td small {
   overflow-wrap: anywhere;
 }
 
+.table-edit-stack {
+  display: grid;
+  gap: 7px;
+  min-width: 180px;
+}
+
+.table-edit-stack label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 820;
+}
+
+.table-edit-stack input:not([type="checkbox"]),
+.table-edit-stack select {
+  min-height: 32px;
+  padding: 0 8px;
+  font-size: 0.84rem;
+}
+
 .signal-row {
   border-left: 4px solid transparent;
 }

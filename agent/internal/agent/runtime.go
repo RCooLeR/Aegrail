@@ -33,9 +33,10 @@ type Runtime struct {
 }
 
 type Config struct {
-	ConfigPath string
-	QueueDir   string
-	Identity   *Identity
+	ConfigPath    string
+	QueueDir      string
+	SentRetention time.Duration
+	Identity      *Identity
 }
 
 type Identity struct {
@@ -392,8 +393,7 @@ func (r *Runtime) SendQueued(ctx context.Context, limit int) (SendResult, error)
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", filepath.Base(path), err))
 			continue
 		}
-		destination := filepath.Join(sentDir, filepath.Base(path))
-		if err := os.Rename(path, uniquePath(destination)); err != nil {
+		if err := r.archiveOrDeleteSentBatch(path, sentDir); err != nil {
 			result.Failed++
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", filepath.Base(path), err))
 			continue
@@ -406,6 +406,17 @@ func (r *Runtime) SendQueued(ctx context.Context, limit int) (SendResult, error)
 	}
 	result.PendingAfter = status.Pending
 	return result, nil
+}
+
+func (r *Runtime) archiveOrDeleteSentBatch(path string, sentDir string) error {
+	if r.Config.SentRetention <= 0 {
+		return os.Remove(path)
+	}
+	destination := filepath.Join(sentDir, filepath.Base(path))
+	if err := os.Rename(path, uniquePath(destination)); err != nil {
+		return err
+	}
+	return cleanupQueueDir(sentDir, r.Config.SentRetention, r.now())
 }
 
 func (r *Runtime) DiscardPending(ctx context.Context, limit int) (DiscardPendingResult, error) {
@@ -525,6 +536,37 @@ func queueFiles(dir string) ([]string, error) {
 	}
 	sort.Strings(files)
 	return files, nil
+}
+
+func cleanupQueueDir(dir string, retention time.Duration, now time.Time) error {
+	if retention <= 0 {
+		return nil
+	}
+	files, err := queueFiles(dir)
+	if err != nil {
+		return err
+	}
+	cutoff := now.UTC().Add(-retention)
+	var errs []string
+	for _, path := range files {
+		info, err := os.Stat(path)
+		if err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				errs = append(errs, fmt.Sprintf("%s: %v", filepath.Base(path), err))
+			}
+			continue
+		}
+		if info.ModTime().After(cutoff) {
+			continue
+		}
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			errs = append(errs, fmt.Sprintf("%s: %v", filepath.Base(path), err))
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("cleanup queue dir %s: %s", dir, strings.Join(errs, "; "))
+	}
+	return nil
 }
 
 func newBatchID(now func() time.Time) string {

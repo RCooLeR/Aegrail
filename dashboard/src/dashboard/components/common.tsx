@@ -1,5 +1,5 @@
 import { AlertTriangle, CheckCircle2, Loader2, ShieldCheck, type LucideIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import { severityTone, statusTone } from "../model/viewModels";
 
 export function Panel({ action, children, icon: Icon, title }: { action?: ReactNode; children: ReactNode; icon: LucideIcon; title: string }) {
@@ -80,6 +80,6 @@ export function LoadingBlock({ title = "Loading" }: { title?: string }) {
 }
 
 export function TextInput({ label, onChange, placeholder, value }: { label: string; onChange: (value: string) => void; placeholder?: string; value: string }) {
-  const id = `field-${label.toLowerCase().replaceAll(" ", "-")}`;
+  const id = `${useId()}-${label.toLowerCase().replaceAll(" ", "-")}`;
   return <label htmlFor={id}>{label}<input id={id} placeholder={placeholder} value={value} onChange={(event) => onChange(event.target.value)} /></label>;
 }

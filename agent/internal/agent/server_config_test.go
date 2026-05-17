@@ -162,9 +162,10 @@ func TestRunServerConfigOnceUsesPerSiteContextAndState(t *testing.T) {
 			Region:      "eu-central",
 		},
 		Runtime: ServerRuntimeConfig{
-			QueueDir: filepath.Join(root, "queue"),
-			StateDir: filepath.Join(root, "state"),
-			Interval: "30s",
+			QueueDir:      filepath.Join(root, "queue"),
+			StateDir:      filepath.Join(root, "state"),
+			Interval:      "30s",
+			SentRetention: "1h",
 		},
 		Sites: []ServerSiteConfig{
 			{

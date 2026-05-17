@@ -67,10 +67,22 @@ type SaveOrganizationInput struct {
 	Name string
 }
 
+type UpdateOrganizationInput struct {
+	ID   string
+	Slug string
+	Name string
+}
+
 type SaveProjectInput struct {
 	OrganizationSlug string
 	Slug             string
 	Name             string
+}
+
+type UpdateProjectInput struct {
+	ID   string
+	Slug string
+	Name string
 }
 
 type SaveEnvironmentInput struct {
@@ -80,6 +92,12 @@ type SaveEnvironmentInput struct {
 	Name             string
 }
 
+type UpdateEnvironmentInput struct {
+	ID   string
+	Slug string
+	Name string
+}
+
 type SaveMonitoredAppInput struct {
 	OrganizationSlug string
 	ProjectSlug      string
@@ -87,6 +105,13 @@ type SaveMonitoredAppInput struct {
 	Slug             string
 	Name             string
 	Kind             string
+}
+
+type UpdateMonitoredAppInput struct {
+	ID   string
+	Slug string
+	Name string
+	Kind string
 }
 
 type SaveServiceInput struct {
@@ -99,6 +124,13 @@ type SaveServiceInput struct {
 	Role             string
 }
 
+type UpdateServiceInput struct {
+	ID   string
+	Slug string
+	Name string
+	Role string
+}
+
 type SaveHostInput struct {
 	OrganizationSlug string
 	ProjectSlug      string
@@ -107,6 +139,14 @@ type SaveHostInput struct {
 	Hostname         string
 	Region           string
 	Labels           map[string]string
+}
+
+type UpdateHostInput struct {
+	ID       string
+	Slug     string
+	Hostname string
+	Region   string
+	Labels   map[string]string
 }
 
 type SaveAgentInput struct {
@@ -119,6 +159,12 @@ type SaveAgentInput struct {
 	Version          string
 	WireProtocol     string
 	NodePublicKey    string
+}
+
+type UpdateAgentInput struct {
+	ID      string
+	AgentID string
+	Version string
 }
 
 type SaveDeploymentMarkerInput struct {
@@ -154,6 +200,24 @@ func (h *Hub) ListOrganizations(ctx context.Context) ([]domain.Organization, err
 	return h.inventory.ListOrganizations(ctx)
 }
 
+func (h *Hub) UpdateOrganization(ctx context.Context, input UpdateOrganizationInput) (domain.Organization, error) {
+	if err := h.requireInventory(); err != nil {
+		return domain.Organization{}, err
+	}
+	id := domain.ID(strings.TrimSpace(input.ID))
+	if id == "" {
+		return domain.Organization{}, errors.New("organization id is required")
+	}
+	slug, err := domain.NormalizeSlug("organization", input.Slug)
+	if err != nil {
+		return domain.Organization{}, err
+	}
+	return h.inventory.UpdateOrganization(ctx, id, domain.OrganizationUpdate{
+		Slug: slug,
+		Name: defaultName(input.Name, slug),
+	})
+}
+
 func (h *Hub) SaveProject(ctx context.Context, input SaveProjectInput) (domain.Project, error) {
 	if err := h.requireInventory(); err != nil {
 		return domain.Project{}, err
@@ -184,6 +248,24 @@ func (h *Hub) ListProjects(ctx context.Context, organizationSlug string) ([]doma
 	return h.inventory.ListProjects(ctx, org.ID)
 }
 
+func (h *Hub) UpdateProject(ctx context.Context, input UpdateProjectInput) (domain.Project, error) {
+	if err := h.requireInventory(); err != nil {
+		return domain.Project{}, err
+	}
+	id := domain.ID(strings.TrimSpace(input.ID))
+	if id == "" {
+		return domain.Project{}, errors.New("project id is required")
+	}
+	slug, err := domain.NormalizeSlug("project", input.Slug)
+	if err != nil {
+		return domain.Project{}, err
+	}
+	return h.inventory.UpdateProject(ctx, id, domain.ProjectUpdate{
+		Slug: slug,
+		Name: defaultName(input.Name, slug),
+	})
+}
+
 func (h *Hub) SaveEnvironment(ctx context.Context, input SaveEnvironmentInput) (domain.Environment, error) {
 	project, err := h.resolveProjectPath(ctx, input.OrganizationSlug, input.ProjectSlug)
 	if err != nil {
@@ -206,6 +288,24 @@ func (h *Hub) ListEnvironments(ctx context.Context, organizationSlug string, pro
 		return nil, err
 	}
 	return h.inventory.ListEnvironments(ctx, project.ID)
+}
+
+func (h *Hub) UpdateEnvironment(ctx context.Context, input UpdateEnvironmentInput) (domain.Environment, error) {
+	if err := h.requireInventory(); err != nil {
+		return domain.Environment{}, err
+	}
+	id := domain.ID(strings.TrimSpace(input.ID))
+	if id == "" {
+		return domain.Environment{}, errors.New("environment id is required")
+	}
+	slug, err := domain.NormalizeSlug("environment", input.Slug)
+	if err != nil {
+		return domain.Environment{}, err
+	}
+	return h.inventory.UpdateEnvironment(ctx, id, domain.EnvironmentUpdate{
+		Slug: slug,
+		Name: defaultName(input.Name, slug),
+	})
 }
 
 func (h *Hub) SaveMonitoredApp(ctx context.Context, input SaveMonitoredAppInput) (domain.MonitoredApp, error) {
@@ -233,6 +333,25 @@ func (h *Hub) ListMonitoredApps(ctx context.Context, organizationSlug string, pr
 	return h.inventory.ListMonitoredApps(ctx, environment.ID)
 }
 
+func (h *Hub) UpdateMonitoredApp(ctx context.Context, input UpdateMonitoredAppInput) (domain.MonitoredApp, error) {
+	if err := h.requireInventory(); err != nil {
+		return domain.MonitoredApp{}, err
+	}
+	id := domain.ID(strings.TrimSpace(input.ID))
+	if id == "" {
+		return domain.MonitoredApp{}, errors.New("app id is required")
+	}
+	slug, err := domain.NormalizeSlug("app", input.Slug)
+	if err != nil {
+		return domain.MonitoredApp{}, err
+	}
+	return h.inventory.UpdateMonitoredApp(ctx, id, domain.MonitoredAppUpdate{
+		Slug: slug,
+		Name: defaultName(input.Name, slug),
+		Kind: strings.TrimSpace(input.Kind),
+	})
+}
+
 func (h *Hub) SaveService(ctx context.Context, input SaveServiceInput) (domain.Service, error) {
 	app, err := h.resolveAppPath(ctx, input.OrganizationSlug, input.ProjectSlug, input.EnvironmentSlug, input.AppSlug)
 	if err != nil {
@@ -256,6 +375,25 @@ func (h *Hub) ListServices(ctx context.Context, organizationSlug string, project
 		return nil, err
 	}
 	return h.inventory.ListServices(ctx, app.ID)
+}
+
+func (h *Hub) UpdateService(ctx context.Context, input UpdateServiceInput) (domain.Service, error) {
+	if err := h.requireInventory(); err != nil {
+		return domain.Service{}, err
+	}
+	id := domain.ID(strings.TrimSpace(input.ID))
+	if id == "" {
+		return domain.Service{}, errors.New("service id is required")
+	}
+	slug, err := domain.NormalizeSlug("service", input.Slug)
+	if err != nil {
+		return domain.Service{}, err
+	}
+	return h.inventory.UpdateService(ctx, id, domain.ServiceUpdate{
+		Slug: slug,
+		Name: defaultName(input.Name, slug),
+		Role: strings.TrimSpace(input.Role),
+	})
 }
 
 func (h *Hub) SaveHost(ctx context.Context, input SaveHostInput) (domain.Host, error) {
@@ -286,6 +424,30 @@ func (h *Hub) ListHosts(ctx context.Context, organizationSlug string, projectSlu
 		return nil, err
 	}
 	return h.inventory.ListHosts(ctx, environment.ID)
+}
+
+func (h *Hub) UpdateHost(ctx context.Context, input UpdateHostInput) (domain.Host, error) {
+	if err := h.requireInventory(); err != nil {
+		return domain.Host{}, err
+	}
+	id := domain.ID(strings.TrimSpace(input.ID))
+	if id == "" {
+		return domain.Host{}, errors.New("host id is required")
+	}
+	slug, err := domain.NormalizeSlug("host", input.Slug)
+	if err != nil {
+		return domain.Host{}, err
+	}
+	hostname := strings.TrimSpace(input.Hostname)
+	if hostname == "" {
+		hostname = slug
+	}
+	return h.inventory.UpdateHost(ctx, id, domain.HostUpdate{
+		Slug:     slug,
+		Hostname: hostname,
+		Region:   strings.TrimSpace(input.Region),
+		Labels:   input.Labels,
+	})
 }
 
 func (h *Hub) SaveAgent(ctx context.Context, input SaveAgentInput) (domain.Agent, error) {
@@ -331,6 +493,24 @@ func (h *Hub) ListAgents(ctx context.Context, organizationSlug string, projectSl
 		return nil, err
 	}
 	return h.inventory.ListAgents(ctx, host.ID)
+}
+
+func (h *Hub) UpdateAgent(ctx context.Context, input UpdateAgentInput) (domain.Agent, error) {
+	if err := h.requireInventory(); err != nil {
+		return domain.Agent{}, err
+	}
+	id := domain.ID(strings.TrimSpace(input.ID))
+	if id == "" {
+		return domain.Agent{}, errors.New("agent id is required")
+	}
+	agentID := strings.TrimSpace(input.AgentID)
+	if agentID == "" {
+		return domain.Agent{}, errors.New("node id is required")
+	}
+	return h.inventory.UpdateAgent(ctx, id, domain.AgentUpdate{
+		AgentID: agentID,
+		Version: strings.TrimSpace(input.Version),
+	})
 }
 
 func (h *Hub) FindAgentByAgentID(ctx context.Context, agentID string) (domain.Agent, bool, error) {
