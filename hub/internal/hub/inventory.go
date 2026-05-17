@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rcooler/aegrail/hub/internal/domain"
@@ -26,6 +27,9 @@ type Hub struct {
 	users            ports.HubUserRepository
 	notifications    ports.NotificationSink
 	userSecretKey    string
+	totpReplayMu     sync.Mutex
+	totpReplay       map[totpReplayKey]time.Time
+	workersWG        sync.WaitGroup
 }
 
 type Dependencies struct {
@@ -59,6 +63,7 @@ func New(deps Dependencies) *Hub {
 		users:            deps.Users,
 		notifications:    deps.Notifications,
 		userSecretKey:    strings.TrimSpace(deps.UserSecretKey),
+		totpReplay:       map[totpReplayKey]time.Time{},
 	}
 }
 

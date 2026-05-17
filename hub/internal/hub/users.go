@@ -98,7 +98,7 @@ func (h *Hub) CreateHubUser(ctx context.Context, input CreateHubUserInput) (doma
 		Status:            status,
 		PasswordHash:      passwordHash,
 		PasswordSetAt:     passwordSetAt,
-		TwoFactorRequired: true,
+		TwoFactorRequired: input.TwoFactorRequired,
 	})
 }
 
@@ -129,7 +129,7 @@ func (h *Hub) UpdateHubUser(ctx context.Context, input UpdateHubUserInput) (doma
 		DisplayName:       strings.TrimSpace(input.DisplayName),
 		AccessLevel:       accessLevel,
 		Status:            status,
-		TwoFactorRequired: true,
+		TwoFactorRequired: input.TwoFactorRequired,
 	})
 }
 
@@ -200,7 +200,7 @@ func (h *Hub) VerifyHubUserTOTP(ctx context.Context, input VerifyHubUserTOTPInpu
 	if err != nil {
 		return VerifyHubUserTOTPResult{}, err
 	}
-	if !verifyTOTPCode(secret, code, time.Now().UTC()) {
+	if !h.verifyAndConsumeTOTPCode(userID, secret, code, time.Now().UTC()) {
 		return VerifyHubUserTOTPResult{}, ErrHubTOTPInvalidCode
 	}
 	activated, err := h.users.ActivateHubUserTOTP(ctx, userID, domain.HubUserTOTPActivation{

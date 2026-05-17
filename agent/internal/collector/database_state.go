@@ -157,7 +157,7 @@ func SaveDatabaseSnapshotState(path string, state DatabaseSnapshotState) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(content, '\n'), 0o600)
+	return writeFileAtomicSync(path, append(content, '\n'), 0o600)
 }
 
 func DiffDatabaseSnapshotState(previous DatabaseSnapshotState, found bool, current DatabaseSnapshotState) DatabaseSnapshotDiffResult {

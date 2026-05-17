@@ -241,7 +241,7 @@ func saveTorExitCacheFile(path string, matcher *torExitSet) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(content, '\n'), 0o600)
+	return writeFileAtomicSync(path, append(content, '\n'), 0o600)
 }
 
 func parseTorExitList(reader interface{ Read([]byte) (int, error) }) (map[string]struct{}, error) {

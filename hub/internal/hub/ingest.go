@@ -283,9 +283,6 @@ func (h *Hub) buildIngestEvent(input IngestEventInput, batchLabels map[string]st
 		payload = map[string]any{}
 	}
 	region := strings.TrimSpace(input.Region)
-	if region == "" {
-		region = ""
-	}
 	return domain.IngestEvent{
 		EventTime:  eventTime.UTC(),
 		ReceivedAt: receivedAt,

@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"errors"
 	"os"
 	"strconv"
 	"strings"
@@ -111,6 +112,16 @@ func LoadConfig() Config {
 			Format: envString("AEGRAIL_LOG_FORMAT", "console"),
 		},
 	}
+}
+
+func (c Config) ValidateServe() error {
+	if strings.TrimSpace(c.Hub.WirePrivateKey) == "" {
+		return errors.New("AEGRAIL_HUB_WIRE_PRIVATE_KEY is required")
+	}
+	if strings.TrimSpace(c.Hub.UserSecretKey) == "" {
+		return errors.New("AEGRAIL_HUB_USER_SECRET is required")
+	}
+	return nil
 }
 
 func defaultInvestigationModels() []string {

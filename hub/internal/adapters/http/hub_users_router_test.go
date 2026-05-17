@@ -182,8 +182,8 @@ func TestHubRouterManagesUsersAndTOTPEnrollment(t *testing.T) {
 	if err := json.NewDecoder(patchResponse.Body).Decode(&patchBody); err != nil {
 		t.Fatalf("Decode patch returned error: %v", err)
 	}
-	if !patchBody.User.TwoFactorRequired {
-		t.Fatalf("patch allowed disabling 2FA requirement")
+	if patchBody.User.TwoFactorRequired {
+		t.Fatalf("patch ignored disabling 2FA requirement")
 	}
 
 	listRequest := httptest.NewRequest(http.MethodGet, "/api/v1/access/users", nil)
@@ -230,7 +230,7 @@ func TestHubRouterManagesUsersAndTOTPEnrollment(t *testing.T) {
 	postDisableListRequest.AddCookie(cookies[0])
 	postDisableListResponse := httptest.NewRecorder()
 	router.ServeHTTP(postDisableListResponse, postDisableListRequest)
-	if postDisableListResponse.Code != http.StatusForbidden {
+	if postDisableListResponse.Code != http.StatusOK {
 		t.Fatalf("post-disable list status = %d body = %s", postDisableListResponse.Code, postDisableListResponse.Body.String())
 	}
 }

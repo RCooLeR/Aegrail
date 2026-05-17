@@ -125,6 +125,44 @@ func (r *ModelAnalysisReportRepository) ListModelAnalysisReports(ctx context.Con
 	return reports, rows.Err()
 }
 
+func (r *ModelAnalysisReportRepository) ListModelAnalysisReportsForFinding(ctx context.Context, environmentID domain.ID, appID domain.ID, findingID domain.ID, limit int) ([]domain.ModelAnalysisReport, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	const query = `
+		SELECT id::text, organization_id::text, project_id::text, environment_id::text,
+			coalesce(app_id::text, ''), report_schema, status, model_provider, model_name,
+			prompt_template_id, prompt_template_version, prompt_template_sha256, prompt_sha256,
+			evidence_bundle_schema, evidence_bundle_sha256, evidence_bundle_redaction_version,
+			evidence_bundle_generated_at, source_finding_ids, analysis, error, total_duration_millis,
+			prompt_eval_count, eval_count, generated_at, metadata, created_at
+		FROM hub_model_analysis_reports
+		WHERE environment_id = $1
+			AND ($2::text = '' OR app_id = nullif($2::text, '')::uuid)
+			AND source_finding_ids @> ARRAY[$3]::text[]
+		ORDER BY generated_at DESC, created_at DESC
+		LIMIT $4
+	`
+	rows, err := r.pool.Query(ctx, query, environmentID, string(appID), string(findingID), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var reports []domain.ModelAnalysisReport
+	for rows.Next() {
+		report, err := r.scanModelAnalysisReport(rows)
+		if err != nil {
+			return nil, err
+		}
+		reports = append(reports, report)
+	}
+	return reports, rows.Err()
+}
+
 func (r *ModelAnalysisReportRepository) GetModelAnalysisReport(ctx context.Context, reportID domain.ID, environmentID domain.ID, appID domain.ID) (domain.ModelAnalysisReport, error) {
 	const query = `
 		SELECT id::text, organization_id::text, project_id::text, environment_id::text,

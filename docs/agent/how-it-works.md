@@ -617,6 +617,12 @@ the local JSON by default. `sent` is only used when
 transport debugging. Do not use sent retention on production nodes unless you
 intentionally want a short local audit cache.
 
+Queue and state files are written defensively. The Agent writes JSON state to a
+temporary file in the same directory, flushes it, renames it into place, and
+best-effort flushes the parent directory. Pending queue batches are also flushed
+before they are eligible to be sent. This keeps crash or power-loss failures from
+silently producing half-written state or disappearing pending batches.
+
 A queued batch has this shape:
 
 ```json

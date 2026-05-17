@@ -49,9 +49,20 @@ func (h *Hub) StartCorrelationWorker(ctx context.Context, options CorrelationWor
 		timeout = defaultCorrelationQueueTimeout
 	}
 	for range workers {
-		go h.runCorrelationWorker(ctx, timeout, options.OnError)
+		h.workersWG.Add(1)
+		go func() {
+			defer h.workersWG.Done()
+			h.runCorrelationWorker(ctx, timeout, options.OnError)
+		}()
 	}
 	return true
+}
+
+func (h *Hub) WaitForWorkers() {
+	if h == nil {
+		return
+	}
+	h.workersWG.Wait()
 }
 
 func (h *Hub) runCorrelationWorker(ctx context.Context, timeout time.Duration, onError func(error)) {

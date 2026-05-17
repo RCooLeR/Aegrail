@@ -190,7 +190,7 @@ func (r *Runtime) Install(_ context.Context, identity Identity) (Identity, error
 	if err != nil {
 		return Identity{}, err
 	}
-	if err := os.WriteFile(r.Config.ConfigPath, append(content, '\n'), 0o600); err != nil {
+	if err := writeFileAtomicSync(r.Config.ConfigPath, append(content, '\n'), 0o600); err != nil {
 		return Identity{}, err
 	}
 	return identity, nil
@@ -350,10 +350,18 @@ func (r *Runtime) EnqueueEvents(ctx context.Context, input EnqueueEventsInput) (
 		}
 		return QueuedBatch{}, "", err
 	}
-	defer file.Close()
 	if _, err := file.Write(append(content, '\n')); err != nil {
+		_ = file.Close()
 		return QueuedBatch{}, "", err
 	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return QueuedBatch{}, "", err
+	}
+	if err := file.Close(); err != nil {
+		return QueuedBatch{}, "", err
+	}
+	syncParentDir(path)
 	return batch, path, nil
 }
 

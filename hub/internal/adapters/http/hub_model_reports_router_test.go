@@ -244,6 +244,33 @@ func (r *httpTestModelAnalysisReportRepository) ListModelAnalysisReports(ctx con
 	return reports, nil
 }
 
+func (r *httpTestModelAnalysisReportRepository) ListModelAnalysisReportsForFinding(ctx context.Context, environmentID domain.ID, appID domain.ID, findingID domain.ID, limit int) ([]domain.ModelAnalysisReport, error) {
+	var reports []domain.ModelAnalysisReport
+	for _, report := range r.reports {
+		if report.EnvironmentID != environmentID {
+			continue
+		}
+		if appID != "" && report.AppID != appID {
+			continue
+		}
+		hasFinding := false
+		for _, sourceFindingID := range report.SourceFindingIDs {
+			if sourceFindingID == findingID {
+				hasFinding = true
+				break
+			}
+		}
+		if !hasFinding {
+			continue
+		}
+		reports = append(reports, report)
+		if limit > 0 && len(reports) >= limit {
+			break
+		}
+	}
+	return reports, nil
+}
+
 func (r *httpTestModelAnalysisReportRepository) GetModelAnalysisReport(ctx context.Context, reportID domain.ID, environmentID domain.ID, appID domain.ID) (domain.ModelAnalysisReport, error) {
 	report, ok := r.reports[reportID]
 	if !ok || report.EnvironmentID != environmentID {

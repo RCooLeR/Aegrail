@@ -14,6 +14,11 @@ hub_public_key
 
 `node_secret` is the node X25519 private key. Hub stores only the node public key and fingerprint. Hub decrypts with `AEGRAIL_HUB_WIRE_PRIVATE_KEY`.
 
+Because `node_secret` is private key material, Hub returns it only for HTTPS or
+loopback node-provisioning requests. In real deployments, create nodes through
+the HTTPS dashboard/API endpoint or a private tunnel, then place the generated
+secret into the Agent config or secret manager.
+
 Agent request body:
 
 ```json
@@ -102,3 +107,6 @@ Dashboard Settings uses these Hub routes:
 | `POST` | `/api/v1/inventory/nodes` | admin | Create/update a node, generate node keys, store the node public key, and return a sample Agent config. |
 
 `POST /api/v1/inventory/nodes` requires `AEGRAIL_HUB_WIRE_PRIVATE_KEY` so Hub can derive and show the matching Hub public key.
+
+This route also refuses non-HTTPS, non-loopback requests because the response
+contains the one-time node secret.

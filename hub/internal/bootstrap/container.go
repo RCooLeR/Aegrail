@@ -2,6 +2,8 @@ package bootstrap
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rcooler/aegrail/hub/internal/adapters/ollama"
@@ -78,6 +80,10 @@ func (c *Container) ConnectDatabase(ctx context.Context) error {
 	})
 	if err != nil {
 		pool.Close()
+		if c.redis != nil {
+			_ = c.redis.Close()
+			c.redis = nil
+		}
 		c.db = nil
 		return err
 	}
@@ -98,6 +104,42 @@ func (c *Container) ConnectDatabase(ctx context.Context) error {
 		UserSecretKey:    c.Config.Hub.UserSecretKey,
 	})
 	return nil
+}
+
+func (c *Container) HealthCheck(ctx context.Context) map[string]string {
+	checks := map[string]string{}
+	if c.db == nil {
+		checks["database"] = "missing"
+	} else if err := c.db.Ping(ctx); err != nil {
+		checks["database"] = "error"
+	} else {
+		checks["database"] = "ok"
+	}
+	if c.Config.Cache.RedisURL != "" {
+		if c.redis == nil {
+			checks["redis"] = "missing"
+		} else if err := c.redis.Ping(ctx); err != nil {
+			checks["redis"] = "error"
+		} else {
+			checks["redis"] = "ok"
+		}
+	}
+	if c.Model != nil {
+		modelCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		health, err := c.Model.Health(modelCtx)
+		switch {
+		case err != nil:
+			checks["ollama"] = "error"
+		case health.Offline:
+			checks["ollama"] = "offline"
+		case !health.Available:
+			checks["ollama"] = "unavailable"
+		default:
+			checks["ollama"] = fmt.Sprintf("ok: %s", health.InvestigationModel)
+		}
+	}
+	return checks
 }
 
 func (c *Container) MigrateDatabase(ctx context.Context) error {

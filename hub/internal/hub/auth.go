@@ -41,6 +41,11 @@ var (
 	ErrHubMFARequired         = errors.New("mfa required")
 )
 
+type totpReplayKey struct {
+	UserID  domain.ID
+	Counter int64
+}
+
 type LoginHubUserInput struct {
 	Email    string
 	Password string
@@ -258,25 +263,64 @@ func (h *Hub) verifyHubUserTOTP(user domain.HubUser, code string, at time.Time) 
 	if err != nil {
 		return false, err
 	}
-	return verifyTOTPCode(secret, code, at), nil
+	return h.verifyAndConsumeTOTPCode(user.ID, secret, code, at), nil
 }
 
 func verifyTOTPCode(secret string, code string, at time.Time) bool {
+	_, ok := verifyTOTPCodeCounter(secret, code, at)
+	return ok
+}
+
+func (h *Hub) verifyAndConsumeTOTPCode(userID domain.ID, secret string, code string, at time.Time) bool {
+	counter, ok := verifyTOTPCodeCounter(secret, code, at)
+	if !ok {
+		return false
+	}
+	return h.consumeTOTPCode(userID, counter, at)
+}
+
+func verifyTOTPCodeCounter(secret string, code string, at time.Time) (int64, bool) {
 	if at.IsZero() {
 		at = time.Now().UTC()
 	}
 	secret = strings.ToUpper(strings.TrimSpace(secret))
 	secretBytes, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(secret)
 	if err != nil {
-		return false
+		return 0, false
 	}
 	counter := at.UTC().Unix() / 30
 	for offset := int64(-1); offset <= 1; offset++ {
 		if generateTOTPCode(secretBytes, uint64(counter+offset)) == code {
-			return true
+			return counter + offset, true
 		}
 	}
-	return false
+	return 0, false
+}
+
+func (h *Hub) consumeTOTPCode(userID domain.ID, counter int64, at time.Time) bool {
+	if h == nil {
+		return true
+	}
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	now := at.UTC()
+	h.totpReplayMu.Lock()
+	defer h.totpReplayMu.Unlock()
+	if h.totpReplay == nil {
+		h.totpReplay = map[totpReplayKey]time.Time{}
+	}
+	for key, expiresAt := range h.totpReplay {
+		if !expiresAt.After(now) {
+			delete(h.totpReplay, key)
+		}
+	}
+	key := totpReplayKey{UserID: userID, Counter: counter}
+	if expiresAt, exists := h.totpReplay[key]; exists && expiresAt.After(now) {
+		return false
+	}
+	h.totpReplay[key] = now.Add(90 * time.Second)
+	return true
 }
 
 func generateTOTPCode(secret []byte, counter uint64) string {

@@ -54,6 +54,13 @@ func (c *Client) Close() error {
 	return c.client.Close()
 }
 
+func (c *Client) Ping(ctx context.Context) error {
+	if c == nil || c.client == nil {
+		return nil
+	}
+	return c.client.Ping(ctx).Err()
+}
+
 func (c *Client) Enqueue(ctx context.Context, queue string, payload []byte) error {
 	key, err := c.queueKey(queue)
 	if err != nil {

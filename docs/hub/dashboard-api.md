@@ -28,6 +28,10 @@ X-Aegrail-CSRF: <csrf_token from auth/me or auth/login>
 
 Hub rejects mutating requests with a missing/invalid protocol header or CSRF token. The CSRF token is bound to the HttpOnly session cookie. `/healthz` and Agent ingest are not part of the dashboard protocol.
 
+Login and TOTP verification endpoints are rate-limited per process. TOTP codes
+are consumed after a successful verification and cannot be replayed inside the
+accepted verification window.
+
 Access levels used by the router:
 
 - `viewer`: read-only dashboard access
@@ -38,7 +42,7 @@ Access levels used by the router:
 
 | Method | Route | Access | Purpose |
 | --- | --- | --- | --- |
-| `GET` | `/healthz` | public | Health check. |
+| `GET` | `/healthz` | public | Dependency-aware health check; returns `503` when required services are unhealthy. |
 | `GET` | `/api/v1/auth/me` | session-aware | Current auth/session state. |
 | `POST` | `/api/v1/auth/login` | public | Login with email/password and optional TOTP code. |
 | `POST` | `/api/v1/auth/logout` | session | Revoke the current session. |

@@ -545,7 +545,7 @@ func saveServerConfigCoverageState(path string, state serverConfigCoverageState)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(content, '\n'), 0o600)
+	return writeFileAtomicSync(path, append(content, '\n'), 0o600)
 }
 
 func serverConfigCoverageHeartbeatInterval() time.Duration {

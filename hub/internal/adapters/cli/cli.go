@@ -5,6 +5,7 @@ import (
 	"fmt"
 	nethttp "net/http"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -124,6 +125,13 @@ func hubServeCommand(meta domain.AppMeta) *urfavecli.Command {
 				return err
 			}
 			defer cleanup()
+			wirePrivateKey := strings.TrimSpace(c.String("wire-private-key"))
+			if wirePrivateKey != "" {
+				container.Config.Hub.WirePrivateKey = wirePrivateKey
+			}
+			if err := container.Config.ValidateServe(); err != nil {
+				return err
+			}
 
 			ctx, stop := signal.NotifyContext(c.Context, syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
@@ -149,11 +157,15 @@ func hubServeCommand(meta domain.AppMeta) *urfavecli.Command {
 			server := &nethttp.Server{
 				Addr: addr,
 				Handler: httpadapter.NewHubRouter(meta, container.Hub, httpadapter.HubOptions{
-					WirePrivateKey:    c.String("wire-private-key"),
+					WirePrivateKey:    container.Config.Hub.WirePrivateKey,
 					WireTimestampSkew: c.Duration("wire-timestamp-skew"),
 					DashboardDir:      c.String("dashboard-dir"),
+					HealthCheck:       container.HealthCheck,
 				}),
 				ReadHeaderTimeout: 5 * time.Second,
+				ReadTimeout:       15 * time.Second,
+				WriteTimeout:      60 * time.Second,
+				IdleTimeout:       60 * time.Second,
 			}
 
 			errCh := make(chan error, 1)
@@ -172,7 +184,18 @@ func hubServeCommand(meta domain.AppMeta) *urfavecli.Command {
 				shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 				container.Logger.Info().Msg("stopping aegrail hub api")
-				return server.Shutdown(shutdownCtx)
+				shutdownErr := server.Shutdown(shutdownCtx)
+				workersDone := make(chan struct{})
+				go func() {
+					container.Hub.WaitForWorkers()
+					close(workersDone)
+				}()
+				select {
+				case <-workersDone:
+				case <-time.After(5 * time.Second):
+					container.Logger.Warn().Msg("timed out waiting for background workers")
+				}
+				return shutdownErr
 			}
 		},
 	}

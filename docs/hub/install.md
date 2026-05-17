@@ -28,6 +28,10 @@ $env:AEGRAIL_CORRELATION_WORKERS = "2"
 $env:AEGRAIL_HUB_USER_SECRET = "replace-with-strong-user-secret"
 ```
 
+`go run ./cmd/hub serve` validates that both `AEGRAIL_HUB_USER_SECRET` and
+`AEGRAIL_HUB_WIRE_PRIVATE_KEY` are set. Local development can use generated
+throwaway values, but do not reuse local secrets for real projects.
+
 Redis is optional for very small local tests. For the normal 20+ site setup, configure it. Hub uses Redis for short-lived ingest correlation jobs and distributed worker locks, while PostgreSQL still stores durable evidence, findings, users, sessions, and reports.
 
 Optional finding notification webhook:
@@ -105,6 +109,16 @@ Default local API address is:
 ```text
 http://127.0.0.1:8787
 ```
+
+Health check:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8787/healthz
+```
+
+`/healthz` returns `200` when required dependencies are healthy and `503` when
+PostgreSQL, configured Redis, or the model gateway is unavailable. Ollama
+`offline` mode is reported but is not treated as unhealthy.
 
 ## Verification
 

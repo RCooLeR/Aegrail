@@ -278,7 +278,7 @@ func saveLogWatchState(path string, state logWatchState) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(content, '\n'), 0o600)
+	return writeFileAtomicSync(path, append(content, '\n'), 0o600)
 }
 
 func resolveLogTargets(paths []string, queueDir string) ([]logTarget, error) {

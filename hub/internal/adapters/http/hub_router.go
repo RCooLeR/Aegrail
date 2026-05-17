@@ -11,10 +11,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -29,15 +31,22 @@ const (
 	headerDashboardProto = "X-Aegrail-Dashboard-Protocol"
 	headerDashboardCSRF  = "X-Aegrail-CSRF"
 	hubSessionCookieName = "aegrail_session"
+	maxHTTPQueryLimit    = 5000
 )
 
 type hubUserContextKey struct{}
+
+var (
+	hubBootstrapUserMu sync.Mutex
+	hubAuthLimiter     = newHubAuthRateLimiter(10, time.Minute)
+)
 
 type HubOptions struct {
 	WirePrivateKey    string
 	WireTimestampSkew time.Duration
 	DashboardDir      string
 	Now               func() time.Time
+	HealthCheck       func(context.Context) map[string]string
 }
 
 func NewHubRouter(meta domain.AppMeta, hub *hubapp.Hub, options HubOptions) http.Handler {
@@ -62,10 +71,26 @@ func NewHubRouter(meta domain.AppMeta, hub *hubapp.Hub, options HubOptions) http
 		})
 	})
 	router.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{
-			"status":  "ok",
+		checks := map[string]string{}
+		statusCode := http.StatusOK
+		status := "ok"
+		if options.HealthCheck != nil {
+			ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+			defer cancel()
+			checks = options.HealthCheck(ctx)
+			for _, value := range checks {
+				if value != "ok" && !strings.HasPrefix(value, "ok: ") && value != "offline" {
+					status = "unhealthy"
+					statusCode = http.StatusServiceUnavailable
+					break
+				}
+			}
+		}
+		writeJSON(w, statusCode, map[string]any{
 			"service": meta.Binary,
 			"mode":    "hub",
+			"health":  checks,
+			"status":  status,
 		})
 	})
 	router.Post("/api/v1/ingest/events", ingestEventsHandler(hub, options))
@@ -99,7 +124,7 @@ func NewHubRouter(meta domain.AppMeta, hub *hubapp.Hub, options HubOptions) http
 	router.Post("/api/v1/access/users", createHubUserHandler(hub, options))
 	router.Patch("/api/v1/access/users/{id}", withHubAuth(hub, options, "admin", updateHubUserHandler(hub)))
 	router.Post("/api/v1/access/users/{id}/totp/start", withHubAuth(hub, options, "admin", startHubUserTOTPHandler(hub)))
-	router.Post("/api/v1/access/users/{id}/totp/verify", withHubAuth(hub, options, "admin", verifyHubUserTOTPHandler(hub)))
+	router.Post("/api/v1/access/users/{id}/totp/verify", withHubAuth(hub, options, "admin", verifyHubUserTOTPHandler(hub, options)))
 	router.Delete("/api/v1/access/users/{id}/totp", withHubAuth(hub, options, "admin", disableHubUserTOTPHandler(hub)))
 	router.Get("/api/v1/inventory/scopes", withHubAuth(hub, options, "viewer", listInventoryScopesHandler(hub)))
 	router.Get("/api/v1/inventory/apps", withHubAuth(hub, options, "viewer", listInventoryAppsHandler(hub)))
@@ -736,37 +761,30 @@ func listModelAnalysisReportsForFindingHandler(hub *hubapp.Hub) http.HandlerFunc
 			return
 		}
 
-		reports, err := hub.ListModelAnalysisReports(r.Context(), hubapp.ListModelAnalysisReportsInput{
+		reports, err := hub.ListModelAnalysisReportsForFinding(r.Context(), hubapp.ListModelAnalysisReportsForFindingInput{
 			OrganizationSlug: r.URL.Query().Get("org"),
 			ProjectSlug:      r.URL.Query().Get("project"),
 			EnvironmentSlug:  r.URL.Query().Get("environment"),
 			AppSlug:          r.URL.Query().Get("app"),
+			FindingID:        chi.URLParam(r, "id"),
+			Limit:            limit,
 		})
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 
-		findingID := chi.URLParam(r, "id")
-		reportsForFinding := make([]modelAnalysisReportResponse, 0, len(reports))
+		reportRecords := make([]modelAnalysisReportResponse, 0, len(reports))
 		for _, report := range reports {
-			for _, sourceFindingID := range report.SourceFindingIDs {
-				if string(sourceFindingID) == findingID {
-					reportsForFinding = append(reportsForFinding, modelAnalysisReportRecord(report))
-					break
-				}
-			}
+			reportRecords = append(reportRecords, modelAnalysisReportRecord(report))
 		}
-		sort.Slice(reportsForFinding, func(left int, right int) bool {
-			return reportsForFinding[left].GeneratedAt.After(reportsForFinding[right].GeneratedAt)
+		sort.Slice(reportRecords, func(left int, right int) bool {
+			return reportRecords[left].GeneratedAt.After(reportRecords[right].GeneratedAt)
 		})
-		if len(reportsForFinding) > limit {
-			reportsForFinding = reportsForFinding[:limit]
-		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"finding": hubFindingRecord(finding),
-			"count":   len(reportsForFinding),
-			"reports": reportsForFinding,
+			"count":   len(reportRecords),
+			"reports": reportRecords,
 		})
 	}
 }
@@ -1380,6 +1398,10 @@ func loginHubUserHandler(hub *hubapp.Hub, options HubOptions) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
+		if !allowHubAuthAttempt(r, options, "login:"+strings.ToLower(strings.TrimSpace(request.Email))) {
+			writeError(w, http.StatusTooManyRequests, "too many authentication attempts")
+			return
+		}
 		now := options.Now().UTC()
 		result, err := hub.LoginHubUser(r.Context(), hubapp.LoginHubUserInput{
 			Email:    request.Email,
@@ -1486,6 +1508,10 @@ func verifyCurrentHubUserTOTPHandler(hub *hubapp.Hub, options HubOptions) http.H
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
+		if !allowHubAuthAttempt(r, options, "totp-current:"+string(user.ID)) {
+			writeError(w, http.StatusTooManyRequests, "too many authentication attempts")
+			return
+		}
 		result, err := hub.VerifyHubUserTOTP(r.Context(), hubapp.VerifyHubUserTOTPInput{
 			UserID: string(user.ID),
 			Code:   request.Code,
@@ -1533,20 +1559,28 @@ func createHubUserHandler(hub *hubapp.Hub, options HubOptions) http.HandlerFunc 
 			return
 		}
 		bootstrap := false
+		bootstrapLockHeld := false
 		if hub.HubUsersConfigured() {
+			hubBootstrapUserMu.Lock()
 			count, err := hub.CountHubUsers(r.Context())
 			if err != nil {
+				hubBootstrapUserMu.Unlock()
 				writeError(w, http.StatusInternalServerError, "could not check hub users")
 				return
 			}
 			bootstrap = count == 0
+			bootstrapLockHeld = bootstrap
 			if !bootstrap {
+				hubBootstrapUserMu.Unlock()
 				user, ok := requireHubUser(w, r, hub, options, "admin")
 				if !ok {
 					return
 				}
 				_ = user
 			}
+		}
+		if bootstrapLockHeld {
+			defer hubBootstrapUserMu.Unlock()
 		}
 		var request createHubUserRequest
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
@@ -1556,6 +1590,7 @@ func createHubUserHandler(hub *hubapp.Hub, options HubOptions) http.HandlerFunc 
 		if bootstrap {
 			request.AccessLevel = "owner"
 			request.Status = "active"
+			request.TwoFactorRequired = true
 		}
 		user, err := hub.CreateHubUser(r.Context(), hubapp.CreateHubUserInput{
 			Email:             request.Email,
@@ -1635,7 +1670,7 @@ func startHubUserTOTPHandler(hub *hubapp.Hub) http.HandlerFunc {
 	}
 }
 
-func verifyHubUserTOTPHandler(hub *hubapp.Hub) http.HandlerFunc {
+func verifyHubUserTOTPHandler(hub *hubapp.Hub, options HubOptions) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if hub == nil {
 			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
@@ -1644,6 +1679,10 @@ func verifyHubUserTOTPHandler(hub *hubapp.Hub) http.HandlerFunc {
 		var request verifyHubUserTOTPRequest
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		if !allowHubAuthAttempt(r, options, "totp-admin:"+chi.URLParam(r, "id")) {
+			writeError(w, http.StatusTooManyRequests, "too many authentication attempts")
 			return
 		}
 		result, err := hub.VerifyHubUserTOTP(r.Context(), hubapp.VerifyHubUserTOTPInput{
@@ -1903,6 +1942,10 @@ func createInventoryNodeHandler(hub *hubapp.Hub, options HubOptions) http.Handle
 		}
 		if strings.TrimSpace(options.WirePrivateKey) == "" {
 			writeError(w, http.StatusServiceUnavailable, "Hub wire private key is not configured")
+			return
+		}
+		if !isSecureRequest(r) && !isLoopbackRequest(r) {
+			writeError(w, http.StatusBadRequest, "node secrets can only be created over HTTPS or loopback")
 			return
 		}
 		hubPublicKey, err := wire.PublicKeyFromPrivate(options.WirePrivateKey)
@@ -2332,7 +2375,66 @@ func parseQueryLimit(r *http.Request, fallback int) (int, error) {
 	if limit <= 0 {
 		return fallback, nil
 	}
+	if limit > maxHTTPQueryLimit {
+		return maxHTTPQueryLimit, nil
+	}
 	return limit, nil
+}
+
+type hubAuthRateLimiter struct {
+	mu       sync.Mutex
+	limit    int
+	window   time.Duration
+	attempts map[string][]time.Time
+}
+
+func newHubAuthRateLimiter(limit int, window time.Duration) *hubAuthRateLimiter {
+	return &hubAuthRateLimiter{
+		limit:    limit,
+		window:   window,
+		attempts: map[string][]time.Time{},
+	}
+}
+
+func allowHubAuthAttempt(r *http.Request, options HubOptions, routeKey string) bool {
+	now := time.Now().UTC()
+	if options.Now != nil {
+		now = options.Now().UTC()
+	}
+	ip := requestRemoteIP(r)
+	remote := "unknown"
+	if ip != nil {
+		remote = ip.String()
+	}
+	return hubAuthLimiter.allow(remote+"|"+routeKey, now)
+}
+
+func (l *hubAuthRateLimiter) allow(key string, now time.Time) bool {
+	if l == nil {
+		return true
+	}
+	if l.limit <= 0 {
+		l.limit = 10
+	}
+	if l.window <= 0 {
+		l.window = time.Minute
+	}
+	cutoff := now.Add(-l.window)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	items := l.attempts[key]
+	kept := items[:0]
+	for _, at := range items {
+		if at.After(cutoff) {
+			kept = append(kept, at)
+		}
+	}
+	if len(kept) >= l.limit {
+		l.attempts[key] = kept
+		return false
+	}
+	l.attempts[key] = append(kept, now)
+	return true
 }
 
 func hubFindingRecord(finding domain.HubFinding) hubFindingResponse {
@@ -2852,7 +2954,7 @@ func clearHubSessionCookie(r *http.Request) *http.Cookie {
 }
 
 func isSecureRequest(r *http.Request) bool {
-	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+	return r.TLS != nil || (trustedForwardedHeaders(r) && strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https"))
 }
 
 func decodeIngestBody(r *http.Request, body []byte, hub *hubapp.Hub, options HubOptions) ([]byte, string, error) {
@@ -2962,19 +3064,52 @@ sites:
 }
 
 func requestBaseURL(r *http.Request) string {
-	scheme := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto"))
-	if scheme == "" {
-		if r.TLS != nil {
-			scheme = "https"
-		} else {
-			scheme = "http"
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	host := r.Host
+	if trustedForwardedHeaders(r) {
+		if forwardedScheme := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); forwardedScheme != "" {
+			scheme = forwardedScheme
+		}
+		if forwardedHost := strings.TrimSpace(r.Header.Get("X-Forwarded-Host")); forwardedHost != "" {
+			host = forwardedHost
 		}
 	}
-	host := strings.TrimSpace(r.Header.Get("X-Forwarded-Host"))
-	if host == "" {
-		host = r.Host
-	}
 	return strings.TrimRight(scheme+"://"+host, "/")
+}
+
+func trustedForwardedHeaders(r *http.Request) bool {
+	ip := requestRemoteIP(r)
+	if ip == nil {
+		return false
+	}
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()
+}
+
+func isLoopbackRequest(r *http.Request) bool {
+	ip := requestRemoteIP(r)
+	if ip == nil {
+		host := strings.TrimSpace(r.Host)
+		if hostName, _, err := net.SplitHostPort(host); err == nil {
+			host = hostName
+		}
+		return strings.EqualFold(host, "localhost") || host == "127.0.0.1" || host == "::1"
+	}
+	return ip.IsLoopback()
+}
+
+func requestRemoteIP(r *http.Request) net.IP {
+	remote := strings.TrimSpace(r.RemoteAddr)
+	if remote == "" {
+		return nil
+	}
+	host, _, err := net.SplitHostPort(remote)
+	if err == nil {
+		remote = host
+	}
+	return net.ParseIP(strings.Trim(remote, "[]"))
 }
 
 func defaultString(value string, fallback string) string {
@@ -2994,5 +3129,8 @@ func randomToken(bytesLen int) string {
 }
 
 func writeError(w http.ResponseWriter, status int, message string) {
+	if status == http.StatusInternalServerError {
+		message = "internal server error"
+	}
 	writeJSON(w, status, map[string]string{"error": message})
 }

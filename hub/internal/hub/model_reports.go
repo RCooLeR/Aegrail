@@ -27,6 +27,15 @@ type ListModelAnalysisReportsInput struct {
 	Limit            int
 }
 
+type ListModelAnalysisReportsForFindingInput struct {
+	OrganizationSlug string
+	ProjectSlug      string
+	EnvironmentSlug  string
+	AppSlug          string
+	FindingID        string
+	Limit            int
+}
+
 type GetModelAnalysisReportInput struct {
 	OrganizationSlug string
 	ProjectSlug      string
@@ -129,6 +138,32 @@ func (h *Hub) ListModelAnalysisReports(ctx context.Context, input ListModelAnaly
 		appID = app.ID
 	}
 	return h.modelReports.ListModelAnalysisReports(ctx, environment.ID, appID, input.Limit)
+}
+
+func (h *Hub) ListModelAnalysisReportsForFinding(ctx context.Context, input ListModelAnalysisReportsForFindingInput) ([]domain.ModelAnalysisReport, error) {
+	if h.modelReports == nil {
+		return nil, errors.New("model analysis report repository is not configured")
+	}
+	if err := h.requireInventory(); err != nil {
+		return nil, err
+	}
+	environment, err := h.resolveEnvironmentPath(ctx, input.OrganizationSlug, input.ProjectSlug, input.EnvironmentSlug)
+	if err != nil {
+		return nil, err
+	}
+	var appID domain.ID
+	if strings.TrimSpace(input.AppSlug) != "" {
+		app, err := h.resolveAppPath(ctx, input.OrganizationSlug, input.ProjectSlug, input.EnvironmentSlug, input.AppSlug)
+		if err != nil {
+			return nil, err
+		}
+		appID = app.ID
+	}
+	findingID := domain.ID(strings.TrimSpace(input.FindingID))
+	if findingID == "" {
+		return nil, errors.New("finding id is required")
+	}
+	return h.modelReports.ListModelAnalysisReportsForFinding(ctx, environment.ID, appID, findingID, input.Limit)
 }
 
 func (h *Hub) GetModelAnalysisReport(ctx context.Context, input GetModelAnalysisReportInput) (domain.ModelAnalysisReport, error) {

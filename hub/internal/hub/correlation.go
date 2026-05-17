@@ -193,15 +193,24 @@ func correlateTimelineEvents(events []domain.TimelineEvent, window time.Duration
 		if severityRank(a.Severity) != severityRank(b.Severity) {
 			return severityRank(b.Severity) - severityRank(a.Severity)
 		}
-		if a.Events[0].EventTime.Equal(b.Events[0].EventTime) {
+		aTime := firstCorrelationEventTime(a)
+		bTime := firstCorrelationEventTime(b)
+		if aTime.Equal(bTime) {
 			return strings.Compare(a.ID, b.ID)
 		}
-		if a.Events[0].EventTime.Before(b.Events[0].EventTime) {
+		if aTime.Before(bTime) {
 			return -1
 		}
 		return 1
 	})
 	return chains
+}
+
+func firstCorrelationEventTime(chain CorrelationChain) time.Time {
+	if len(chain.Events) == 0 {
+		return time.Time{}
+	}
+	return chain.Events[0].EventTime
 }
 
 func correlationPairKey(a domain.TimelineEvent, b domain.TimelineEvent) string {

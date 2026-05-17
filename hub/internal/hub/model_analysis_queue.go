@@ -50,7 +50,9 @@ func (h *Hub) StartModelAnalysisWorker(ctx context.Context, options ModelAnalysi
 	if interval <= 0 {
 		interval = defaultModelAnalysisQueueInterval
 	}
+	h.workersWG.Add(1)
 	go func() {
+		defer h.workersWG.Done()
 		h.runModelAnalysisQueueOnce(ctx, options)
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()

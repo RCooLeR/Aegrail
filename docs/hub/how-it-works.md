@@ -32,6 +32,11 @@ PostgreSQL stores:
 
 Redis is optional but recommended when monitoring many sites. Hub uses it for short-lived ingest-correlation jobs and distributed worker locks. Durable evidence, findings, users, sessions, and reports stay in PostgreSQL.
 
+The Hub process validates required security secrets at startup in `serve` mode.
+`AEGRAIL_HUB_WIRE_PRIVATE_KEY` is required before Agent ingest can decrypt
+wire envelopes, and `AEGRAIL_HUB_USER_SECRET` is required before dashboard TOTP
+material can be used safely.
+
 ## Ingest
 
 Agents submit encrypted wire envelopes to `POST /api/v1/ingest/events`.
@@ -52,6 +57,10 @@ The Hub:
 Wire v1 encrypts the JSON payload and authenticates it through the node key. Raw JSON ingest is rejected. Use HTTPS or a trusted private network outside local development because HTTP metadata, cookies, and operator sessions still need transport protection.
 
 Redis is Hub-internal infrastructure. Agents do not connect to Redis and do not need a Redis proxy. If the Hub is not on the same private network as Agents, put an HTTPS reverse proxy in front of the Hub API and keep Redis private to the Hub service network.
+
+Node provisioning is intentionally more strict than normal read APIs. The Hub
+returns a one-time `node_secret` only over HTTPS or loopback requests, because
+that value is the Agent private key material for wire v1.
 
 ## Rules And Findings
 
@@ -86,6 +95,21 @@ The dashboard renders controlled Hub-generated HTML from structured report field
 When Redis is configured, the automatic model-analysis worker takes a distributed lock before each pass. That lets multiple Hub processes run safely without all of them generating the same reports.
 
 The Hub also exposes a finding-review report. It places the deterministic Hub view beside the latest model-analysis report for the same finding, so an operator can compare rule evidence and model commentary in one view.
+
+Finding-specific model-analysis lists are filtered in PostgreSQL by finding ID
+before results reach the HTTP handler. The dashboard should not ask the Hub to
+load all model reports and then filter them in memory.
+
+## Operations
+
+`GET /healthz` checks the dependencies available to the running process. It
+reports PostgreSQL status, Redis status when Redis is configured, and Ollama
+status when a model gateway is available. It returns `503` when a required
+dependency is missing or unhealthy.
+
+The HTTP server sets read-header, read, write, and idle timeouts. Background
+correlation and model-analysis workers are attached to the process context and
+the Hub waits briefly for them during graceful shutdown.
 
 ## Notifications
 

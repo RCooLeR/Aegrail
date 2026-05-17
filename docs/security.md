@@ -19,7 +19,8 @@ Data handling rules:
 - Dashboard-triggered LLM analysis is generated from persisted Hub findings, not raw site files. The Hub builds an evidence bundle, applies redaction and truncation, hashes the bundle and prompt, calls the configured model gateway, then saves the report and provenance in PostgreSQL.
 - Automatic issue-queue analysis uses the same path. It skips a finding when the Hub already has a model report for the current evidence bundle hash, so repeated scans do not resend unchanged evidence.
 - TOTP enrollment uses a pending flow. The Hub returns a QR/secret once, requires a valid current code, then promotes the encrypted pending secret to the active 2FA secret.
-- Dashboard access requires an authenticated Hub session and active 2FA. Password-only sessions can only enroll/verify their own TOTP setup.
+- Dashboard access requires an authenticated Hub session and active 2FA when the user has `two_factor_required` enabled. Password-only sessions for required-2FA users can only enroll/verify their own TOTP setup.
+- TOTP codes are single-use inside the accepted verification window, and login/TOTP endpoints have process-local rate limiting to reduce brute-force risk.
 
 ## Transport And Storage
 
@@ -28,9 +29,11 @@ Data handling rules:
 - The Hub stores the node public key, decrypts with `AEGRAIL_HUB_WIRE_PRIVATE_KEY`, and rejects invalid ciphertext or timestamps outside the configured skew window.
 - Raw JSON ingest is not accepted. Agent traffic must arrive as an encrypted wire envelope.
 - Wire v1 protects the JSON payload, but transfer confidentiality still matters for HTTP metadata, cookies, and dashboard sessions. Use `https://` or a trusted private tunnel/VPN outside localhost.
+- Hub only trusts `X-Forwarded-Proto` and `X-Forwarded-Host` from loopback/private/link-local proxy addresses. Public clients cannot make the Hub treat spoofed forwarded headers as transport truth.
+- Hub only returns newly generated `node_secret` material from node provisioning over HTTPS or loopback requests.
 - Hub user TOTP secrets are encrypted at rest with AES-GCM using a key derived from `AEGRAIL_HUB_USER_SECRET`. If that secret is lost, existing TOTP secrets cannot be verified and users must be re-enrolled.
 - Dashboard mutating requests use `aegrail.dashboard.v1` with an HttpOnly session cookie and a session-bound CSRF token in `X-Aegrail-CSRF`.
-- Local agent queue/state files are JSON on disk, created with restrictive file permissions where the OS supports them. Treat `queue_dir` and `state_dir` as sensitive runtime data. Successfully sent queue batches are deleted by default; set `runtime.sent_retention` only for short debugging windows.
+- Local agent queue/state files are JSON on disk, created with restrictive file permissions where the OS supports them. State writes use temp-file, flush, and rename semantics; pending queue batches are flushed before send eligibility. Treat `queue_dir` and `state_dir` as sensitive runtime data. Successfully sent queue batches are deleted by default; set `runtime.sent_retention` only for short debugging windows.
 - Hub stores accepted events, payloads, findings, reports, users, and audit-relevant metadata in PostgreSQL. Protect the database with normal database access controls, disk encryption/backup policy, and network restrictions.
 
 ## Secret Roles
@@ -44,6 +47,7 @@ Data handling rules:
 Before using Aegrail on real projects:
 
 - Generate and protect a strong `AEGRAIL_HUB_WIRE_PRIVATE_KEY`.
+- Generate and protect a strong `AEGRAIL_HUB_USER_SECRET`; Hub `serve` refuses to start without both Hub secrets.
 - Use a separate strong `AEGRAIL_PII_KEY`.
 - Use `https://` Hub URLs or a private tunnel/VPN for any agent outside the same local machine.
 - Keep Hub behind local network/VPN/reverse proxy authentication.

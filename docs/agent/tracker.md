@@ -6,6 +6,7 @@
 - Multi-site YAML config loading and validation.
 - Bootstrap mode for first safe baseline.
 - Local queue/state handling and Hub replay.
+- Atomic/synced state writes and flushed pending queue batches before send eligibility.
 - Encrypted Hub replay through `aegrail.agent.wire.v1`.
 - File monitoring with path metadata, size, mtime, SHA-256, delete detection, and reusable hashes for unchanged files.
 - Log tailing for access logs, PHP errors, generic logs, and Tor exit metadata when enabled.
