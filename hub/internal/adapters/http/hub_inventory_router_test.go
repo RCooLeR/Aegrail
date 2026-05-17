@@ -11,6 +11,7 @@ import (
 
 	"github.com/rcooler/aegrail/hub/internal/domain"
 	hubapp "github.com/rcooler/aegrail/hub/internal/hub"
+	"github.com/rcooler/aegrail/hub/internal/wire"
 )
 
 func TestHubRouterListsInventoryTopology(t *testing.T) {
@@ -72,6 +73,41 @@ func TestHubRouterReturnsNotFoundForMissingInventoryTopology(t *testing.T) {
 
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("status = %d body = %s", response.Code, response.Body.String())
+	}
+}
+
+func TestHubRouterDoesNotReplaceProvisionedNodeSecret(t *testing.T) {
+	hubPrivateKey, _, err := wire.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("GenerateKeyPair returned error: %v", err)
+	}
+	repo := newHTTPTestInventoryRepository()
+	router := NewHubRouter(domain.AppMeta{Name: "Aegrail", Binary: "aegrail", Version: "test"}, hubapp.New(hubapp.Dependencies{Inventory: repo}), HubOptions{
+		WirePrivateKey: hubPrivateKey,
+	})
+
+	body := `{"org":"acme","project":"customer-site","environment":"production","host":"web-01","agent_id":"agt_new","version":"test"}`
+	firstRequest := httptest.NewRequest(http.MethodPost, "/api/v1/inventory/nodes", strings.NewReader(body))
+	firstRequest.RemoteAddr = "127.0.0.1:12345"
+	firstRequest.Header.Set("Content-Type", "application/json")
+	firstResponse := httptest.NewRecorder()
+	router.ServeHTTP(firstResponse, firstRequest)
+
+	if firstResponse.Code != http.StatusCreated {
+		t.Fatalf("first status = %d body = %s", firstResponse.Code, firstResponse.Body.String())
+	}
+	if !strings.Contains(firstResponse.Body.String(), `"node_secret"`) {
+		t.Fatalf("first body did not contain node secret: %s", firstResponse.Body.String())
+	}
+
+	secondRequest := httptest.NewRequest(http.MethodPost, "/api/v1/inventory/nodes", strings.NewReader(body))
+	secondRequest.RemoteAddr = "127.0.0.1:12345"
+	secondRequest.Header.Set("Content-Type", "application/json")
+	secondResponse := httptest.NewRecorder()
+	router.ServeHTTP(secondResponse, secondRequest)
+
+	if secondResponse.Code != http.StatusConflict {
+		t.Fatalf("second status = %d body = %s", secondResponse.Code, secondResponse.Body.String())
 	}
 }
 
@@ -443,6 +479,34 @@ func (r *httpTestInventoryRepository) FindHostBySlug(ctx context.Context, enviro
 }
 
 func (r *httpTestInventoryRepository) SaveAgent(ctx context.Context, agent domain.Agent) (domain.Agent, error) {
+	now := time.Now().UTC()
+	for hostID, agents := range r.agents {
+		for index, existing := range agents {
+			if existing.AgentID != agent.AgentID {
+				continue
+			}
+			if existing.NodePublicKey != "" && agent.NodePublicKey != "" && existing.NodePublicKey != agent.NodePublicKey {
+				return domain.Agent{}, hubapp.ErrAgentAlreadyProvisioned
+			}
+			if agent.NodePublicKey == "" {
+				agent.NodePublicKey = existing.NodePublicKey
+			}
+			agent.ID = existing.ID
+			agent.CreatedAt = existing.CreatedAt
+			agent.UpdatedAt = now
+			if agent.HostID == "" {
+				agent.HostID = hostID
+			}
+			r.agents[hostID][index] = agent
+			return agent, nil
+		}
+	}
+	if agent.ID == "" {
+		agent.ID = domain.ID("agent-" + agent.AgentID)
+	}
+	agent.CreatedAt = now
+	agent.UpdatedAt = now
+	r.agents[agent.HostID] = append(r.agents[agent.HostID], agent)
 	return agent, nil
 }
 

@@ -101,9 +101,9 @@ limit
 | Method | Route | Access | Purpose |
 | --- | --- | --- | --- |
 | `GET` | `/api/v1/access/users` | admin | List Hub users. |
-| `POST` | `/api/v1/access/users` | bootstrap/admin path | Create a Hub user. |
+| `POST` | `/api/v1/access/users` | bootstrap/admin path | Create a Hub user. Duplicate normalized emails return `409` and do not update existing users. |
 | `PATCH` | `/api/v1/access/users/{id}` | admin | Update user display/access/status settings. |
-| `DELETE` | `/api/v1/access/users/{id}` | admin | Delete a Hub user. A user cannot delete their own account. |
+| `DELETE` | `/api/v1/access/users/{id}` | admin | Delete a Hub user. A user cannot delete their own account or the last active owner. |
 | `POST` | `/api/v1/access/users/{id}/totp/start` | admin | Start pending TOTP enrollment and return QR/secret once. |
 | `POST` | `/api/v1/access/users/{id}/totp/verify` | admin | Verify current code and activate TOTP. |
 | `DELETE` | `/api/v1/access/users/{id}/totp` | admin | Disable TOTP. |
@@ -120,6 +120,6 @@ limit
 | `PATCH` | `/api/v1/inventory/environments/{id}` | admin | Edit an environment display name and slug. |
 | `PATCH` | `/api/v1/inventory/apps/{id}` | admin | Edit an app display name, slug, and platform kind. |
 | `PATCH` | `/api/v1/inventory/services/{id}` | admin | Edit a service display name, slug, and role. |
-| `POST` | `/api/v1/inventory/nodes` | admin | Create/update a node and return the generated wire config sample. |
+| `POST` | `/api/v1/inventory/nodes` | admin | Create a node and return the generated wire config sample. Returns `409` if the agent id is already provisioned with a wire public key. |
 | `PATCH` | `/api/v1/inventory/hosts/{id}` | admin | Edit a node/host slug, hostname, region, and visible labels. |
 | `PATCH` | `/api/v1/inventory/agents/{id}` | admin | Edit an attached agent node id and version label. |

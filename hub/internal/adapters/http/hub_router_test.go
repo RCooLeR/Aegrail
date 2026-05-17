@@ -65,6 +65,26 @@ func TestDecodeIngestBodyRejectsRawJSON(t *testing.T) {
 	}
 }
 
+func TestIsLoopbackRequestDoesNotTrustHostFallback(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/inventory/nodes", nil)
+	request.RemoteAddr = "not-a-valid-remote-address"
+	request.Host = "127.0.0.1"
+
+	if isLoopbackRequest(request) {
+		t.Fatal("isLoopbackRequest trusted Host when RemoteAddr could not be parsed")
+	}
+}
+
+func TestIsLoopbackRequestTrustsSocketRemoteAddress(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/inventory/nodes", nil)
+	request.RemoteAddr = "127.0.0.1:12345"
+	request.Host = "example.com"
+
+	if !isLoopbackRequest(request) {
+		t.Fatal("isLoopbackRequest did not trust loopback RemoteAddr")
+	}
+}
+
 func TestHubRouterListsRuleDefinitions(t *testing.T) {
 	router := NewHubRouter(domain.AppMeta{Name: "Aegrail", Binary: "aegrail", Version: "test"}, hubapp.New(hubapp.Dependencies{}), HubOptions{})
 

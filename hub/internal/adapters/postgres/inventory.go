@@ -392,14 +392,23 @@ func (r *InventoryRepository) SaveAgent(ctx context.Context, agent domain.Agent)
 			version = EXCLUDED.version,
 			last_seen_at = EXCLUDED.last_seen_at,
 			wire_protocol = EXCLUDED.wire_protocol,
-			node_public_key = EXCLUDED.node_public_key,
+			node_public_key = CASE
+				WHEN EXCLUDED.node_public_key = '' THEN agents.node_public_key
+				ELSE EXCLUDED.node_public_key
+			END,
 			updated_at = now()
+		WHERE agents.node_public_key = ''
+			OR EXCLUDED.node_public_key = ''
+			OR agents.node_public_key = EXCLUDED.node_public_key
 		RETURNING id::text, host_id::text, agent_id::text, fingerprint, version, last_seen_at, wire_protocol, node_public_key, created_at, updated_at
 	`
 	var saved domain.Agent
 	err := r.pool.QueryRow(ctx, query, agent.HostID, agent.AgentID, agent.Fingerprint, agent.Version, agent.LastSeenAt, agent.WireProtocol, agent.NodePublicKey).Scan(
 		&saved.ID, &saved.HostID, &saved.AgentID, &saved.Fingerprint, &saved.Version, &saved.LastSeenAt, &saved.WireProtocol, &saved.NodePublicKey, &saved.CreatedAt, &saved.UpdatedAt,
 	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Agent{}, ports.ErrAgentAlreadyProvisioned
+	}
 	return saved, err
 }
 

@@ -169,28 +169,32 @@ func TestHubRouterManagesUsersAndTOTPEnrollment(t *testing.T) {
 		t.Fatalf("missing csrf status = %d body = %s", missingCSRFResponse.Code, missingCSRFResponse.Body.String())
 	}
 
-	patchRequest := httptest.NewRequest(http.MethodPatch, "/api/v1/access/users/"+createBody.User.ID, bytes.NewBufferString(`{
+	lastOwnerPatchRequest := httptest.NewRequest(http.MethodPatch, "/api/v1/access/users/"+createBody.User.ID, bytes.NewBufferString(`{
 		"display_name":"Security Admin",
 		"access_level":"admin",
 		"status":"active",
 		"two_factor_required":false
 	}`))
-	addDashboardAuth(patchRequest, cookies[0], loginBody.CSRFToken)
-	patchResponse := httptest.NewRecorder()
-	router.ServeHTTP(patchResponse, patchRequest)
-	if patchResponse.Code != http.StatusOK {
-		t.Fatalf("patch status = %d body = %s", patchResponse.Code, patchResponse.Body.String())
+	addDashboardAuth(lastOwnerPatchRequest, cookies[0], loginBody.CSRFToken)
+	lastOwnerPatchResponse := httptest.NewRecorder()
+	router.ServeHTTP(lastOwnerPatchResponse, lastOwnerPatchRequest)
+	if lastOwnerPatchResponse.Code != http.StatusConflict {
+		t.Fatalf("last owner patch status = %d body = %s", lastOwnerPatchResponse.Code, lastOwnerPatchResponse.Body.String())
 	}
-	var patchBody struct {
-		User struct {
-			TwoFactorRequired bool `json:"two_factor_required"`
-		} `json:"user"`
-	}
-	if err := json.NewDecoder(patchResponse.Body).Decode(&patchBody); err != nil {
-		t.Fatalf("Decode patch returned error: %v", err)
-	}
-	if patchBody.User.TwoFactorRequired {
-		t.Fatalf("patch ignored disabling 2FA requirement")
+
+	duplicateOwnerCreateRequest := httptest.NewRequest(http.MethodPost, "/api/v1/access/users", bytes.NewBufferString(`{
+		"email":"admin@example.test",
+		"display_name":"Duplicate Owner",
+		"access_level":"viewer",
+		"password":"new password should not win",
+		"status":"disabled",
+		"two_factor_required":false
+	}`))
+	addDashboardAuth(duplicateOwnerCreateRequest, cookies[0], loginBody.CSRFToken)
+	duplicateOwnerCreateResponse := httptest.NewRecorder()
+	router.ServeHTTP(duplicateOwnerCreateResponse, duplicateOwnerCreateRequest)
+	if duplicateOwnerCreateResponse.Code != http.StatusConflict {
+		t.Fatalf("duplicate owner create status = %d body = %s", duplicateOwnerCreateResponse.Code, duplicateOwnerCreateResponse.Body.String())
 	}
 
 	listRequest := httptest.NewRequest(http.MethodGet, "/api/v1/access/users", nil)
@@ -215,9 +219,9 @@ func TestHubRouterManagesUsersAndTOTPEnrollment(t *testing.T) {
 	}
 
 	createSecondRequest := httptest.NewRequest(http.MethodPost, "/api/v1/access/users", bytes.NewBufferString(`{
-		"email":"operator@example.test",
-		"display_name":"Operator",
-		"access_level":"operator",
+		"email":"owner2@example.test",
+		"display_name":"Second Owner",
+		"access_level":"owner",
 		"password":"correct horse battery staple",
 		"status":"active",
 		"two_factor_required":false
@@ -235,6 +239,68 @@ func TestHubRouterManagesUsersAndTOTPEnrollment(t *testing.T) {
 	}
 	if err := json.NewDecoder(createSecondResponse.Body).Decode(&createSecondBody); err != nil {
 		t.Fatalf("Decode create second returned error: %v", err)
+	}
+
+	patchRequest := httptest.NewRequest(http.MethodPatch, "/api/v1/access/users/"+createBody.User.ID, bytes.NewBufferString(`{
+		"display_name":"Security Admin",
+		"access_level":"admin",
+		"status":"active",
+		"two_factor_required":false
+	}`))
+	addDashboardAuth(patchRequest, cookies[0], loginBody.CSRFToken)
+	patchResponse := httptest.NewRecorder()
+	router.ServeHTTP(patchResponse, patchRequest)
+	if patchResponse.Code != http.StatusOK {
+		t.Fatalf("patch status = %d body = %s", patchResponse.Code, patchResponse.Body.String())
+	}
+	var patchBody struct {
+		User struct {
+			TwoFactorRequired bool `json:"two_factor_required"`
+		} `json:"user"`
+	}
+	if err := json.NewDecoder(patchResponse.Body).Decode(&patchBody); err != nil {
+		t.Fatalf("Decode patch returned error: %v", err)
+	}
+	if patchBody.User.TwoFactorRequired {
+		t.Fatalf("patch ignored disabling 2FA requirement")
+	}
+
+	createThirdRequest := httptest.NewRequest(http.MethodPost, "/api/v1/access/users", bytes.NewBufferString(`{
+		"email":"operator@example.test",
+		"display_name":"Operator",
+		"access_level":"operator",
+		"password":"correct horse battery staple",
+		"status":"active",
+		"two_factor_required":false
+	}`))
+	addDashboardAuth(createThirdRequest, cookies[0], loginBody.CSRFToken)
+	createThirdResponse := httptest.NewRecorder()
+	router.ServeHTTP(createThirdResponse, createThirdRequest)
+	if createThirdResponse.Code != http.StatusCreated {
+		t.Fatalf("create third status = %d body = %s", createThirdResponse.Code, createThirdResponse.Body.String())
+	}
+	var createThirdBody struct {
+		User struct {
+			ID string `json:"id"`
+		} `json:"user"`
+	}
+	if err := json.NewDecoder(createThirdResponse.Body).Decode(&createThirdBody); err != nil {
+		t.Fatalf("Decode create third returned error: %v", err)
+	}
+
+	duplicateOperatorCreateRequest := httptest.NewRequest(http.MethodPost, "/api/v1/access/users", bytes.NewBufferString(`{
+		"email":"operator@example.test",
+		"display_name":"Duplicate Operator",
+		"access_level":"owner",
+		"password":"new password should not win",
+		"status":"active",
+		"two_factor_required":true
+	}`))
+	addDashboardAuth(duplicateOperatorCreateRequest, cookies[0], loginBody.CSRFToken)
+	duplicateOperatorCreateResponse := httptest.NewRecorder()
+	router.ServeHTTP(duplicateOperatorCreateResponse, duplicateOperatorCreateRequest)
+	if duplicateOperatorCreateResponse.Code != http.StatusConflict {
+		t.Fatalf("duplicate operator create status = %d body = %s", duplicateOperatorCreateResponse.Code, duplicateOperatorCreateResponse.Body.String())
 	}
 
 	selfDeleteRequest := httptest.NewRequest(http.MethodDelete, "/api/v1/access/users/"+createBody.User.ID, nil)
@@ -257,11 +323,22 @@ func TestHubRouterManagesUsersAndTOTPEnrollment(t *testing.T) {
 	addDashboardAuth(deleteSecondRequest, cookies[0], loginBody.CSRFToken)
 	deleteSecondResponse := httptest.NewRecorder()
 	router.ServeHTTP(deleteSecondResponse, deleteSecondRequest)
-	if deleteSecondResponse.Code != http.StatusNoContent {
-		t.Fatalf("delete second status = %d body = %s", deleteSecondResponse.Code, deleteSecondResponse.Body.String())
+	if deleteSecondResponse.Code != http.StatusConflict {
+		t.Fatalf("delete last owner status = %d body = %s", deleteSecondResponse.Code, deleteSecondResponse.Body.String())
 	}
-	if _, ok := users.users[domain.ID(createSecondBody.User.ID)]; ok {
-		t.Fatalf("deleted user %q is still present", createSecondBody.User.ID)
+	if _, ok := users.users[domain.ID(createSecondBody.User.ID)]; !ok {
+		t.Fatalf("last owner %q should still be present", createSecondBody.User.ID)
+	}
+
+	deleteThirdRequest := httptest.NewRequest(http.MethodDelete, "/api/v1/access/users/"+createThirdBody.User.ID, nil)
+	addDashboardAuth(deleteThirdRequest, cookies[0], loginBody.CSRFToken)
+	deleteThirdResponse := httptest.NewRecorder()
+	router.ServeHTTP(deleteThirdResponse, deleteThirdRequest)
+	if deleteThirdResponse.Code != http.StatusNoContent {
+		t.Fatalf("delete third status = %d body = %s", deleteThirdResponse.Code, deleteThirdResponse.Body.String())
+	}
+	if _, ok := users.users[domain.ID(createThirdBody.User.ID)]; ok {
+		t.Fatalf("deleted user %q is still present", createThirdBody.User.ID)
 	}
 
 	disableRequest := httptest.NewRequest(http.MethodDelete, "/api/v1/access/users/"+createBody.User.ID+"/totp", nil)
@@ -322,7 +399,7 @@ func TestHubUserDashboardReadyDoesNotRequireOptional2FA(t *testing.T) {
 	if !hubUserDashboardReady(domain.HubUser{
 		TwoFactorRequired:    true,
 		TwoFactorEnabled:     true,
-		TOTPSecretCiphertext: "v1:nonce:ciphertext",
+		TOTPSecretCiphertext: "v2:nonce:ciphertext",
 	}) {
 		t.Fatalf("required 2FA user should be dashboard-ready after enrollment")
 	}
@@ -404,22 +481,9 @@ func newHTTPTestHubUserRepository() *httpTestHubUserRepository {
 
 func (r *httpTestHubUserRepository) SaveHubUser(ctx context.Context, user domain.HubUser) (domain.HubUser, error) {
 	now := time.Date(2026, 5, 14, 12, 0, 0, 0, time.UTC)
-	for id, existing := range r.users {
+	for _, existing := range r.users {
 		if existing.Email == user.Email {
-			user.ID = id
-			user.CreatedAt = existing.CreatedAt
-			user.UpdatedAt = now
-			if user.PasswordHash == "" {
-				user.PasswordHash = existing.PasswordHash
-				user.PasswordSetAt = existing.PasswordSetAt
-			}
-			user.TwoFactorEnabled = existing.TwoFactorEnabled
-			user.TOTPSecretCiphertext = existing.TOTPSecretCiphertext
-			user.TOTPEnrolledAt = existing.TOTPEnrolledAt
-			user.PendingTOTPSecretCiphertext = existing.PendingTOTPSecretCiphertext
-			user.PendingTOTPStartedAt = existing.PendingTOTPStartedAt
-			r.users[id] = user
-			return user, nil
+			return domain.HubUser{}, hubapp.ErrHubUserExists
 		}
 	}
 	r.next++

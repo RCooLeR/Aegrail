@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hkdf"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base32"
@@ -103,6 +104,11 @@ func (h *Hub) CreateHubUser(ctx context.Context, input CreateHubUserInput) (doma
 	if status == "active" && passwordHash == "" {
 		return domain.HubUser{}, errors.New("password is required for active users")
 	}
+	if _, exists, err := h.users.FindHubUserByEmail(ctx, email); err != nil {
+		return domain.HubUser{}, err
+	} else if exists {
+		return domain.HubUser{}, ErrHubUserExists
+	}
 	user, err := h.users.SaveHubUser(ctx, domain.HubUser{
 		Email:             email,
 		DisplayName:       strings.TrimSpace(input.DisplayName),
@@ -192,6 +198,9 @@ func (h *Hub) UpdateHubUser(ctx context.Context, input UpdateHubUserInput) (doma
 	if err != nil {
 		return domain.HubUser{}, err
 	}
+	if err := h.ensureHubUserUpdateKeepsOwner(ctx, userID, accessLevel, status); err != nil {
+		return domain.HubUser{}, err
+	}
 	return h.users.UpdateHubUser(ctx, userID, domain.HubUserUpdate{
 		DisplayName:       strings.TrimSpace(input.DisplayName),
 		AccessLevel:       accessLevel,
@@ -208,6 +217,9 @@ func (h *Hub) DeleteHubUser(ctx context.Context, input DeleteHubUserInput) error
 	if userID == "" {
 		return errors.New("user id is required")
 	}
+	if err := h.ensureHubUserDeleteKeepsOwner(ctx, userID); err != nil {
+		return err
+	}
 	deleteRepo, ok := h.users.(ports.DeleteHubUserRepository)
 	if !ok {
 		return errors.New("hub user repository does not support user deletion")
@@ -220,6 +232,57 @@ func (h *Hub) DeleteHubUser(ctx context.Context, input DeleteHubUserInput) error
 		h.markHubUsersUnknown()
 	}
 	return nil
+}
+
+func (h *Hub) ensureHubUserUpdateKeepsOwner(ctx context.Context, userID domain.ID, nextAccessLevel string, nextStatus string) error {
+	user, ok, err := h.users.FindHubUserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrHubNotFound
+	}
+	if !hubUserIsActiveOwner(user) || hubUserUpdateIsActiveOwner(nextAccessLevel, nextStatus) {
+		return nil
+	}
+	return h.ensureAnotherActiveOwner(ctx, userID)
+}
+
+func (h *Hub) ensureHubUserDeleteKeepsOwner(ctx context.Context, userID domain.ID) error {
+	user, ok, err := h.users.FindHubUserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrHubNotFound
+	}
+	if !hubUserIsActiveOwner(user) {
+		return nil
+	}
+	return h.ensureAnotherActiveOwner(ctx, userID)
+}
+
+func (h *Hub) ensureAnotherActiveOwner(ctx context.Context, excludedUserID domain.ID) error {
+	users, err := h.users.ListHubUsers(ctx)
+	if err != nil {
+		return err
+	}
+	for _, user := range users {
+		if user.ID != excludedUserID && hubUserIsActiveOwner(user) {
+			return nil
+		}
+	}
+	return ErrHubLastOwner
+}
+
+func hubUserIsActiveOwner(user domain.HubUser) bool {
+	return strings.EqualFold(strings.TrimSpace(user.AccessLevel), "owner") &&
+		strings.EqualFold(strings.TrimSpace(user.Status), "active")
+}
+
+func hubUserUpdateIsActiveOwner(accessLevel string, status string) bool {
+	return strings.EqualFold(strings.TrimSpace(accessLevel), "owner") &&
+		strings.EqualFold(strings.TrimSpace(status), "active")
 }
 
 func (h *Hub) StartHubUserTOTP(ctx context.Context, input StartHubUserTOTPInput) (StartHubUserTOTPResult, error) {
@@ -390,8 +453,11 @@ func encryptHubUserSecret(secretKey string, plaintext string) (string, error) {
 	if secretKey == "" {
 		return "", errors.New("AEGRAIL_HUB_USER_SECRET is required before enrolling 2FA")
 	}
-	key := sha256.Sum256([]byte(secretKey))
-	block, err := aes.NewCipher(key[:])
+	key, err := deriveHubUserSecretKey(secretKey)
+	if err != nil {
+		return "", err
+	}
+	block, err := aes.NewCipher(key)
 	if err != nil {
 		return "", err
 	}
@@ -404,5 +470,9 @@ func encryptHubUserSecret(secretKey string, plaintext string) (string, error) {
 		return "", err
 	}
 	ciphertext := gcm.Seal(nil, nonce, []byte(plaintext), nil)
-	return "v1:" + base64.RawURLEncoding.EncodeToString(nonce) + ":" + base64.RawURLEncoding.EncodeToString(ciphertext), nil
+	return "v2:" + base64.RawURLEncoding.EncodeToString(nonce) + ":" + base64.RawURLEncoding.EncodeToString(ciphertext), nil
+}
+
+func deriveHubUserSecretKey(secretKey string) ([]byte, error) {
+	return hkdf.Key(sha256.New, []byte(secretKey), nil, "aegrail.hub.user-security.v2", 32)
 }

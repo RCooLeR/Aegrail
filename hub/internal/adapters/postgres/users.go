@@ -3,9 +3,11 @@ package postgres
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rcooler/aegrail/hub/internal/domain"
 	"github.com/rcooler/aegrail/hub/internal/ports"
@@ -15,8 +17,15 @@ type HubUserRepository struct {
 	pool *pgxpool.Pool
 }
 
+const hubUsersOwnershipLockID = int64(6515147730019150002)
+
 func NewHubUserRepository(pool *pgxpool.Pool) *HubUserRepository {
 	return &HubUserRepository{pool: pool}
+}
+
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
 func (r *HubUserRepository) SaveHubUser(ctx context.Context, user domain.HubUser) (domain.HubUser, error) {
@@ -31,17 +40,9 @@ func (r *HubUserRepository) SaveHubUser(ctx context.Context, user domain.HubUser
 			two_factor_required
 		)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		ON CONFLICT ((lower(email))) DO UPDATE
-		SET display_name = EXCLUDED.display_name,
-			access_level = EXCLUDED.access_level,
-			status = EXCLUDED.status,
-			password_hash = CASE WHEN EXCLUDED.password_hash <> '' THEN EXCLUDED.password_hash ELSE hub_users.password_hash END,
-			password_set_at = CASE WHEN EXCLUDED.password_hash <> '' THEN EXCLUDED.password_set_at ELSE hub_users.password_set_at END,
-			two_factor_required = EXCLUDED.two_factor_required,
-			updated_at = now()
 		RETURNING ` + hubUserColumns + `
 	`
-	return scanHubUser(r.pool.QueryRow(
+	saved, err := scanHubUser(r.pool.QueryRow(
 		ctx,
 		query,
 		user.Email,
@@ -52,6 +53,10 @@ func (r *HubUserRepository) SaveHubUser(ctx context.Context, user domain.HubUser
 		user.PasswordSetAt,
 		user.TwoFactorRequired,
 	))
+	if isUniqueViolation(err) {
+		return domain.HubUser{}, ports.ErrHubUserExists
+	}
+	return saved, err
 }
 
 func (r *HubUserRepository) CreateBootstrapHubUser(ctx context.Context, user domain.HubUser) (domain.HubUser, bool, error) {
@@ -157,6 +162,32 @@ func (r *HubUserRepository) FindHubUserByID(ctx context.Context, userID domain.I
 }
 
 func (r *HubUserRepository) UpdateHubUser(ctx context.Context, userID domain.ID, update domain.HubUserUpdate) (domain.HubUser, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return domain.HubUser{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	if err := lockHubUsersOwnership(ctx, tx); err != nil {
+		return domain.HubUser{}, err
+	}
+	current, err := scanHubUser(tx.QueryRow(ctx, `SELECT `+hubUserColumns+` FROM hub_users WHERE id = $1 FOR UPDATE`, userID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.HubUser{}, ports.ErrHubNotFound
+	}
+	if err != nil {
+		return domain.HubUser{}, err
+	}
+	if hubUserIsActiveOwner(current) && !hubUserUpdateIsActiveOwner(update.AccessLevel, update.Status) {
+		ok, err := txHasAnotherActiveOwner(ctx, tx, userID)
+		if err != nil {
+			return domain.HubUser{}, err
+		}
+		if !ok {
+			return domain.HubUser{}, ports.ErrHubLastOwner
+		}
+	}
+
 	const query = `
 		UPDATE hub_users
 		SET display_name = $2,
@@ -167,7 +198,7 @@ func (r *HubUserRepository) UpdateHubUser(ctx context.Context, userID domain.ID,
 		WHERE id = $1
 		RETURNING ` + hubUserColumns + `
 	`
-	return scanHubUser(r.pool.QueryRow(
+	updated, err := scanHubUser(tx.QueryRow(
 		ctx,
 		query,
 		userID,
@@ -176,6 +207,16 @@ func (r *HubUserRepository) UpdateHubUser(ctx context.Context, userID domain.ID,
 		update.Status,
 		update.TwoFactorRequired,
 	))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.HubUser{}, ports.ErrHubNotFound
+	}
+	if err != nil {
+		return domain.HubUser{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.HubUser{}, err
+	}
+	return updated, nil
 }
 
 func (r *HubUserRepository) DeleteHubUser(ctx context.Context, userID domain.ID) (int, error) {
@@ -185,6 +226,25 @@ func (r *HubUserRepository) DeleteHubUser(ctx context.Context, userID domain.ID)
 	}
 	defer tx.Rollback(ctx)
 
+	if err := lockHubUsersOwnership(ctx, tx); err != nil {
+		return 0, err
+	}
+	current, err := scanHubUser(tx.QueryRow(ctx, `SELECT `+hubUserColumns+` FROM hub_users WHERE id = $1 FOR UPDATE`, userID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, ports.ErrHubNotFound
+	}
+	if err != nil {
+		return 0, err
+	}
+	if hubUserIsActiveOwner(current) {
+		ok, err := txHasAnotherActiveOwner(ctx, tx, userID)
+		if err != nil {
+			return 0, err
+		}
+		if !ok {
+			return 0, ports.ErrHubLastOwner
+		}
+	}
 	tag, err := tx.Exec(ctx, `DELETE FROM hub_users WHERE id = $1`, userID)
 	if err != nil {
 		return 0, err
@@ -202,6 +262,40 @@ func (r *HubUserRepository) DeleteHubUser(ctx context.Context, userID domain.ID)
 	return remaining, nil
 }
 
+type hubUsersTx interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+func lockHubUsersOwnership(ctx context.Context, tx hubUsersTx) error {
+	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, hubUsersOwnershipLockID)
+	return err
+}
+
+func txHasAnotherActiveOwner(ctx context.Context, tx hubUsersTx, excludedUserID domain.ID) (bool, error) {
+	var count int
+	if err := tx.QueryRow(ctx, `
+		SELECT count(*)
+		FROM hub_users
+		WHERE id <> $1
+			AND access_level = 'owner'
+			AND status = 'active'
+	`, excludedUserID).Scan(&count); err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+func hubUserIsActiveOwner(user domain.HubUser) bool {
+	return strings.EqualFold(strings.TrimSpace(user.AccessLevel), "owner") &&
+		strings.EqualFold(strings.TrimSpace(user.Status), "active")
+}
+
+func hubUserUpdateIsActiveOwner(accessLevel string, status string) bool {
+	return strings.EqualFold(strings.TrimSpace(accessLevel), "owner") &&
+		strings.EqualFold(strings.TrimSpace(status), "active")
+}
+
 func (r *HubUserRepository) StartHubUserTOTP(ctx context.Context, userID domain.ID, start domain.HubUserTOTPStart) (domain.HubUser, error) {
 	const query = `
 		UPDATE hub_users
@@ -211,7 +305,11 @@ func (r *HubUserRepository) StartHubUserTOTP(ctx context.Context, userID domain.
 		WHERE id = $1
 		RETURNING ` + hubUserColumns + `
 	`
-	return scanHubUser(r.pool.QueryRow(ctx, query, userID, start.PendingSecretCiphertext, start.StartedAt))
+	user, err := scanHubUser(r.pool.QueryRow(ctx, query, userID, start.PendingSecretCiphertext, start.StartedAt))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.HubUser{}, ports.ErrHubNotFound
+	}
+	return user, err
 }
 
 func (r *HubUserRepository) ActivateHubUserTOTP(ctx context.Context, userID domain.ID, activation domain.HubUserTOTPActivation) (domain.HubUser, error) {
@@ -247,7 +345,11 @@ func (r *HubUserRepository) DisableHubUserTOTP(ctx context.Context, userID domai
 		WHERE id = $1
 		RETURNING ` + hubUserColumns + `
 	`
-	return scanHubUser(r.pool.QueryRow(ctx, query, userID))
+	user, err := scanHubUser(r.pool.QueryRow(ctx, query, userID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.HubUser{}, ports.ErrHubNotFound
+	}
+	return user, err
 }
 
 func (r *HubUserRepository) SaveHubUserSession(ctx context.Context, session domain.HubUserSession) (domain.HubUserSession, error) {

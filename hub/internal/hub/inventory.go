@@ -605,6 +605,11 @@ func (h *Hub) SaveAgent(ctx context.Context, input SaveAgentInput) (domain.Agent
 	if fingerprint == "" {
 		return domain.Agent{}, errors.New("agent fingerprint is required")
 	}
+	if existing, ok, err := h.inventory.FindAgentByAgentID(ctx, agentID); err != nil {
+		return domain.Agent{}, err
+	} else if ok && nodePublicKey != "" && existing.NodePublicKey != "" && existing.NodePublicKey != nodePublicKey {
+		return domain.Agent{}, ErrAgentAlreadyProvisioned
+	}
 	now := time.Now().UTC()
 	return h.inventory.SaveAgent(ctx, domain.Agent{
 		HostID:        host.ID,

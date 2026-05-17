@@ -197,6 +197,9 @@ func (r *HubFindingRepository) getHubFindingByDedupeKey(ctx context.Context, row
 		&item.CreatedAt,
 		&item.UpdatedAt,
 	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.HubFinding{}, ports.ErrHubNotFound
+		}
 		return domain.HubFinding{}, err
 	}
 	item.EventIDs = domainIDs(eventIDs)
@@ -309,6 +312,9 @@ func (r *HubFindingRepository) GetHubFinding(ctx context.Context, findingID doma
 		&item.CreatedAt,
 		&item.UpdatedAt,
 	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.HubFinding{}, ports.ErrHubNotFound
+		}
 		return domain.HubFinding{}, err
 	}
 	item.EventIDs = domainIDs(eventIDs)
@@ -418,6 +424,9 @@ func (r *HubFindingRepository) UpdateHubFindingStatus(ctx context.Context, findi
 		&item.CreatedAt,
 		&item.UpdatedAt,
 	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.HubFinding{}, ports.ErrHubNotFound
+		}
 		return domain.HubFinding{}, err
 	}
 	item.EventIDs = domainIDs(eventIDs)

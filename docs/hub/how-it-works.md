@@ -43,6 +43,8 @@ The Hub process validates required security secrets at startup in `serve` mode.
 local insecure credentials. `AEGRAIL_HUB_WIRE_PRIVATE_KEY` is required before
 Agent ingest can decrypt wire envelopes, and `AEGRAIL_HUB_USER_SECRET` is
 required before dashboard TOTP material and CSRF tokens can be used safely.
+Hub derives the TOTP-at-rest encryption key with HKDF-SHA-256 and stores only
+AES-GCM ciphertext for pending and active TOTP secrets.
 
 ## Ingest
 

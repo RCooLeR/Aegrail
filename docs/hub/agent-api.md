@@ -104,9 +104,13 @@ Dashboard Settings uses these Hub routes:
 | --- | --- | --- | --- |
 | `POST` | `/api/v1/inventory/companies` | admin | Create/update a company. |
 | `POST` | `/api/v1/inventory/sites` | admin | Create/update a site project, environment, app, and service. |
-| `POST` | `/api/v1/inventory/nodes` | admin | Create/update a node, generate node keys, store the node public key, and return a sample Agent config. |
+| `POST` | `/api/v1/inventory/nodes` | admin | Create a node, generate node keys, store the node public key, and return a sample Agent config. |
 
 `POST /api/v1/inventory/nodes` requires `AEGRAIL_HUB_WIRE_PRIVATE_KEY` so Hub can derive and show the matching Hub public key.
 
 This route also refuses non-HTTPS, non-loopback requests because the response
 contains the one-time node secret.
+
+If an agent id already has a stored wire public key, the route returns `409`
+instead of replacing it. Replacing a node key must be a deliberate key-rotation
+operation, not a second create call.

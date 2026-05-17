@@ -2,6 +2,7 @@ package hub
 
 import (
 	"encoding/base32"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,5 +25,25 @@ func TestHubTOTPCodeCannotBeReplayedInSameWindow(t *testing.T) {
 	}
 	if h.verifyAndConsumeTOTPCode(userID, secret, code, at.Add(10*time.Second)) {
 		t.Fatalf("replayed TOTP code was accepted inside the same 90-second window")
+	}
+}
+
+func TestHubUserSecretEncryptionUsesHKDFV2(t *testing.T) {
+	ciphertext, err := encryptHubUserSecret("strong local test secret", "JBSWY3DPEHPK3PXP")
+	if err != nil {
+		t.Fatalf("encryptHubUserSecret returned error: %v", err)
+	}
+	if !strings.HasPrefix(ciphertext, "v2:") {
+		t.Fatalf("ciphertext version = %q, want v2", ciphertext)
+	}
+	plaintext, err := decryptHubUserSecret("strong local test secret", ciphertext)
+	if err != nil {
+		t.Fatalf("decryptHubUserSecret returned error: %v", err)
+	}
+	if plaintext != "JBSWY3DPEHPK3PXP" {
+		t.Fatalf("plaintext = %q", plaintext)
+	}
+	if _, err := decryptHubUserSecret("strong local test secret", "v1:abc:def"); err == nil {
+		t.Fatalf("legacy v1 ciphertext was accepted")
 	}
 }

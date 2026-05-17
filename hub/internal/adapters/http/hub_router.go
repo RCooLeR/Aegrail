@@ -3167,14 +3167,7 @@ func trustedForwardedHeaders(r *http.Request, options HubOptions) bool {
 
 func isLoopbackRequest(r *http.Request) bool {
 	ip := requestRemoteIP(r)
-	if ip == nil {
-		host := strings.TrimSpace(r.Host)
-		if hostName, _, err := net.SplitHostPort(host); err == nil {
-			host = hostName
-		}
-		return strings.EqualFold(host, "localhost") || host == "127.0.0.1" || host == "::1"
-	}
-	return ip.IsLoopback()
+	return ip != nil && ip.IsLoopback()
 }
 
 func requestRemoteIP(r *http.Request) net.IP {
@@ -3223,11 +3216,19 @@ func hubErrorStatus(err error) int {
 	if errors.Is(err, hubapp.ErrHubNotFound) {
 		return http.StatusNotFound
 	}
+	if errors.Is(err, hubapp.ErrHubLastOwner) {
+		return http.StatusConflict
+	}
+	if errors.Is(err, hubapp.ErrHubUserExists) {
+		return http.StatusConflict
+	}
+	if errors.Is(err, hubapp.ErrAgentAlreadyProvisioned) {
+		return http.StatusConflict
+	}
 	message := strings.ToLower(err.Error())
 	if strings.Contains(message, " does not exist") ||
 		strings.Contains(message, " was not found") ||
-		strings.Contains(message, " not found") ||
-		strings.Contains(message, "no rows in result set") {
+		strings.Contains(message, " not found") {
 		return http.StatusNotFound
 	}
 	return http.StatusBadRequest

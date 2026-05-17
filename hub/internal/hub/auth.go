@@ -382,7 +382,7 @@ func decryptHubUserSecret(secretKey string, ciphertextValue string) (string, err
 		return "", errors.New("AEGRAIL_HUB_USER_SECRET is required before verifying 2FA")
 	}
 	parts := strings.Split(strings.TrimSpace(ciphertextValue), ":")
-	if len(parts) != 3 || parts[0] != "v1" {
+	if len(parts) != 3 || parts[0] != "v2" {
 		return "", errors.New("stored 2FA secret is invalid")
 	}
 	nonce, err := base64.RawURLEncoding.DecodeString(parts[1])
@@ -393,8 +393,11 @@ func decryptHubUserSecret(secretKey string, ciphertextValue string) (string, err
 	if err != nil {
 		return "", errors.New("stored 2FA ciphertext is invalid")
 	}
-	key := sha256.Sum256([]byte(secretKey))
-	block, err := aes.NewCipher(key[:])
+	key, err := deriveHubUserSecretKey(secretKey)
+	if err != nil {
+		return "", err
+	}
+	block, err := aes.NewCipher(key)
 	if err != nil {
 		return "", err
 	}

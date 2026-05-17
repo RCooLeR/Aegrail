@@ -12,6 +12,12 @@ var ErrHubTOTPChanged = errors.New("pending 2FA enrolment changed; start setup a
 
 var ErrHubNotFound = errors.New("resource not found")
 
+var ErrHubLastOwner = errors.New("at least one active owner must remain")
+
+var ErrHubUserExists = errors.New("hub user already exists")
+
+var ErrAgentAlreadyProvisioned = errors.New("agent already has a wire public key; rotate the key explicitly")
+
 type HubUserRepository interface {
 	SaveHubUser(ctx context.Context, user domain.HubUser) (domain.HubUser, error)
 	ListHubUsers(ctx context.Context) ([]domain.HubUser, error)

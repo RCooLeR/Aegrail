@@ -53,6 +53,25 @@ func TestHubUserRepositoryIntegration(t *testing.T) {
 	if reloaded.LastLoginAt == nil || !reloaded.LastLoginAt.Equal(now) {
 		t.Fatalf("LastLoginAt=%v, want %v", reloaded.LastLoginAt, now)
 	}
+	_, err = repo.SaveHubUser(ctx, domain.HubUser{
+		Email:             "ADMIN@example.test",
+		DisplayName:       "Overwrite",
+		AccessLevel:       "viewer",
+		Status:            "disabled",
+		PasswordHash:      "new-hash",
+		PasswordSetAt:     &now,
+		TwoFactorRequired: false,
+	})
+	if !errors.Is(err, ports.ErrHubUserExists) {
+		t.Fatalf("duplicate SaveHubUser err=%v, want ErrHubUserExists", err)
+	}
+	reloaded, ok, err = repo.FindHubUserByID(ctx, user.ID)
+	if err != nil || !ok {
+		t.Fatalf("FindHubUserByID after duplicate returned ok=%v err=%v", ok, err)
+	}
+	if reloaded.AccessLevel != "owner" || reloaded.Status != "active" || reloaded.PasswordHash != "hash" || !reloaded.TwoFactorRequired {
+		t.Fatalf("duplicate SaveHubUser changed existing user: %#v", reloaded)
+	}
 
 	started, err := repo.StartHubUserTOTP(ctx, user.ID, domain.HubUserTOTPStart{
 		PendingSecretCiphertext: "pending-secret-v1",
@@ -125,6 +144,67 @@ func TestHubUserRepositoryBootstrapLockIntegration(t *testing.T) {
 	}
 	if count != 1 || created.Load() != 1 {
 		t.Fatalf("count=%d created=%d, want exactly one bootstrap owner", count, created.Load())
+	}
+}
+
+func TestHubUserRepositoryProtectsLastOwnerIntegration(t *testing.T) {
+	ctx := context.Background()
+	pool, cleanup := newHubUserIntegrationPool(t, ctx)
+	defer cleanup()
+	repo := NewHubUserRepository(pool)
+	now := time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)
+
+	owner, err := repo.SaveHubUser(ctx, domain.HubUser{
+		Email:             "owner@example.test",
+		DisplayName:       "Owner",
+		AccessLevel:       "owner",
+		Status:            "active",
+		PasswordHash:      "hash",
+		PasswordSetAt:     &now,
+		TwoFactorRequired: true,
+	})
+	if err != nil {
+		t.Fatalf("SaveHubUser owner returned error: %v", err)
+	}
+	_, err = repo.UpdateHubUser(ctx, owner.ID, domain.HubUserUpdate{
+		DisplayName:       "Owner",
+		AccessLevel:       "admin",
+		Status:            "active",
+		TwoFactorRequired: true,
+	})
+	if !errors.Is(err, ports.ErrHubLastOwner) {
+		t.Fatalf("downgrade last owner err=%v, want ErrHubLastOwner", err)
+	}
+	if _, err := repo.DeleteHubUser(ctx, owner.ID); !errors.Is(err, ports.ErrHubLastOwner) {
+		t.Fatalf("delete last owner err=%v, want ErrHubLastOwner", err)
+	}
+
+	secondOwner, err := repo.SaveHubUser(ctx, domain.HubUser{
+		Email:             "owner2@example.test",
+		DisplayName:       "Second Owner",
+		AccessLevel:       "owner",
+		Status:            "active",
+		PasswordHash:      "hash",
+		PasswordSetAt:     &now,
+		TwoFactorRequired: true,
+	})
+	if err != nil {
+		t.Fatalf("SaveHubUser second owner returned error: %v", err)
+	}
+	updated, err := repo.UpdateHubUser(ctx, owner.ID, domain.HubUserUpdate{
+		DisplayName:       "Former Owner",
+		AccessLevel:       "admin",
+		Status:            "active",
+		TwoFactorRequired: true,
+	})
+	if err != nil {
+		t.Fatalf("downgrade with second owner returned error: %v", err)
+	}
+	if updated.AccessLevel != "admin" {
+		t.Fatalf("updated access level = %q, want admin", updated.AccessLevel)
+	}
+	if _, err := repo.DeleteHubUser(ctx, secondOwner.ID); !errors.Is(err, ports.ErrHubLastOwner) {
+		t.Fatalf("delete remaining owner err=%v, want ErrHubLastOwner", err)
 	}
 }
 

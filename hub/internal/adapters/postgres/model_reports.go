@@ -7,6 +7,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rcooler/aegrail/hub/internal/domain"
+	"github.com/rcooler/aegrail/hub/internal/ports"
 )
 
 type ModelAnalysisReportRepository struct {
@@ -176,7 +177,11 @@ func (r *ModelAnalysisReportRepository) GetModelAnalysisReport(ctx context.Conte
 			AND environment_id = $2
 			AND ($3::text = '' OR app_id = nullif($3::text, '')::uuid)
 	`
-	return r.scanModelAnalysisReport(r.pool.QueryRow(ctx, query, reportID, environmentID, string(appID)))
+	report, err := r.scanModelAnalysisReport(r.pool.QueryRow(ctx, query, reportID, environmentID, string(appID)))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ModelAnalysisReport{}, ports.ErrHubNotFound
+	}
+	return report, err
 }
 
 func (r *ModelAnalysisReportRepository) FindModelAnalysisReportByEvidence(ctx context.Context, environmentID domain.ID, appID domain.ID, findingID domain.ID, evidenceBundleSHA256 string) (domain.ModelAnalysisReport, bool, error) {
