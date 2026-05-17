@@ -1,0 +1,438 @@
+# Aegrail full agent configuration example.
+#
+# This file intentionally shows every supported YAML option for
+# aegrail.agent.server_config.v1. Replace example names, paths, URLs, and
+# environment variable names before running it.
+#
+# Related environment variables used by agents:
+# - AEGRAIL_PII_KEY adds one-way HMAC fingerprints for database account
+#   identifiers. It is not transport encryption and it is not reversible.
+# - AEGRAIL_CONFIG_COVERAGE_HEARTBEAT_INTERVAL optionally overrides the default
+#   config coverage heartbeat interval, for example 10m or 1h.
+
+# Required schema version. The agent rejects unknown schemas.
+schema: aegrail.agent.server_config.v1
+
+hub:
+  # Absolute Hub URL. Use HTTPS outside localhost/private development networks.
+  # Aegrail wire v1 encrypts the JSON payload. TLS is still recommended outside
+  # localhost/private development networks to protect metadata and sessions.
+  url: http://127.0.0.1:8787
+
+  # Required Agent-to-Hub protocol. Hub creates node_id/node_secret values and
+  # shows a ready-to-copy config sample from Settings -> Nodes.
+  protocol: aegrail-wire-v1
+
+  # Hub X25519 public key shown by Hub when creating the node.
+  hub_public_key: replace-with-hub-public-key
+
+  # Node X25519 private key shown once by Hub when creating the node.
+  # For production, prefer node_secret_env and keep the secret outside YAML.
+  node_secret: replace-with-node-secret
+  node_secret_env: ""
+
+  # Maximum pending queue batches to send to Hub after each agent loop.
+  # CLI --send-limit overrides this. 0 means use CLI/runtime default.
+  send_limit: 100
+
+identity:
+  # Company/customer slug in Hub inventory.
+  org: acme
+
+  # Site/project slug in Hub inventory.
+  project: customer-site
+
+  # Environment slug, such as production, staging, local, or development.
+  environment: production
+
+  # Host/node slug for this runtime target.
+  host: web-01
+
+  # Stable external agent id for this process.
+  agent_id: agt_web_01
+
+  # Optional region/location label for filtering and reports.
+  region: eu-central
+
+  # Optional arbitrary labels attached to the agent identity.
+  labels:
+    provider: vps
+    role: web
+
+runtime:
+  # Local directory for pending/sent/failed/discarded queue batches.
+  # Queue files are JSON runtime data. Treat this directory as sensitive.
+  queue_dir: /var/lib/aegrail/queue
+
+  # Local directory for collector state and baselines.
+  # State files are JSON runtime data. Treat this directory as sensitive.
+  state_dir: /var/lib/aegrail/state
+
+  # Continuous agent polling interval. CLI --interval overrides this.
+  interval: 30s
+
+  # Optional timezone label for operator context. Events are still sent in UTC.
+  timezone: UTC
+
+sites:
+  - # Stable site slug inside this agent config.
+    slug: example-wordpress
+
+    # Human-readable site name shown in dashboard/report contexts.
+    name: Example WordPress
+
+    # Primary domain without scheme. Used as a label, not as the crawl URL.
+    domain: example.com
+
+    # Site kind. Known values: wordpress, wordpress-multisite, prestashop,
+    # generic-php, mautic, yii2-rbac, laravel.
+    kind: wordpress
+
+    # Hub app slug. Defaults to slug when omitted.
+    app: example-wordpress
+
+    # Hub service slug. Defaults to frontend when omitted.
+    service: frontend
+
+    # Absolute local filesystem root. Required when files.enabled is true.
+    # Can be omitted for provider-managed sites when local file monitoring is off.
+    root: /var/www/example.com
+
+    # Optional arbitrary site labels copied to emitted events.
+    labels:
+      cms: wordpress
+      tier: production
+      site_url: https://example.com/
+
+    files:
+      # Enable local file monitoring for this site. Defaults to true when omitted.
+      # Set false for Pantheon/provider-managed nodes with no local filesystem.
+      enabled: true
+
+      # Built-in watch profiles. Known values: wordpress, wp, woocommerce,
+      # prestashop, ps, mautic, yii2-rbac, laravel. If omitted and files are enabled, the agent
+      # auto-picks wordpress for WordPress kinds, prestashop for PrestaShop
+      # kinds, mautic for Mautic sites, yii2-rbac for Yii2 RBAC sites, and laravel for Laravel sites.
+      profiles:
+        - wordpress
+
+      # Extra absolute paths to watch in addition to profile paths.
+      extra_paths:
+        - /var/www/example.com/wp-config.php
+        - /var/www/example.com/wp-config-local.php
+        - /var/www/example.com/wp-content/mu-plugins
+        - /var/www/example.com/wp-content/plugins
+        - /var/www/example.com/wp-content/themes
+
+      # Absolute paths/pattern roots to ignore. Use this for cache, build output,
+      # temporary upload folders, logs, backups, and other expected churn.
+      exclude:
+        - /var/www/example.com/wp-content/cache
+        - /var/www/example.com/wp-content/upgrade
+        - /var/www/example.com/wp-content/uploads/cache
+
+    coverage:
+      # Enable config coverage reporting for this site. Defaults to true.
+      # Set false when missing local collectors are expected and should display
+      # as disabled rather than warning/missing in the dashboard.
+      enabled: true
+
+    logs:
+      - # Absolute log path to tail.
+        path: /var/log/nginx/example.com.access.log
+
+        # Log kind. Known values: nginx_access, apache_access, php_error, generic.
+        # Access log remotes are checked against a cached Tor exit list by default.
+        # Use AEGRAIL_TOR_CHECK=0 to disable this on nodes without outbound access.
+        kind: nginx_access
+
+      - # PHP/application error log path.
+        path: /var/www/example.com/wp-content/debug.log
+        kind: php_error
+
+    databases:
+      - # Human-readable database source name. Used in labels/state file names.
+        name: wordpress
+
+        # Database engine. Known values: mysql, mariadb, postgres, postgresql.
+        # Current CMS snapshot collectors are primarily MySQL/MariaDB oriented.
+        engine: mysql
+
+        # Literal DSN option exists but should stay empty. Validation rejects
+        # non-empty literal DSNs because credentials belong in environment vars.
+        dsn: ""
+
+        # Environment variable containing the DSN.
+        dsn_env: AEGRAIL_DB_EXAMPLE_WORDPRESS_DSN
+
+        # Snapshot profile. Known values: wordpress, wp, woocommerce,
+        # prestashop, ps, mautic, yii2-rbac, laravel. Defaults to site kind when omitted.
+        profile: wordpress
+
+        # CMS table prefix, such as wp_ or ps_.
+        table_prefix: wp_
+
+        # Per-collection timeout.
+        timeout: 20s
+
+        # Minimum time between database snapshots. Empty or 0 runs each loop.
+        schedule: 5m
+
+    browser_crawl:
+      # Enable browser/page crawl collection.
+      enabled: true
+
+      # Use rendered browser mode when available.
+      rendered: true
+
+      # Wait for tag manager activity before collecting script observations.
+      wait_tag_manager: true
+
+      # Maximum pages to crawl from the URL list. 0 uses collector defaults.
+      max_pages: 5
+
+      # Browser crawl timeout.
+      timeout: 30s
+
+      # Minimum time between browser crawls. Empty or 0 runs each loop.
+      schedule: 15m
+
+      # Primary User-Agent for HTTP and rendered crawls. Empty uses the built-in
+      # named crawler identity:
+      # AegrailBot/0.1 (+https://aegrail.local/monitoring; Aegrail bot)
+      user_agent: ""
+
+      # Browser-like fallbacks used only when the named bot is blocked or fails
+      # with bot-filter style responses such as 403, 406, or 429. Empty uses
+      # Aegrail's maintained reduced-UA fallback list.
+      fallback_user_agents: []
+
+      # Absolute HTTP/HTTPS URLs to crawl.
+      urls:
+        - https://example.com/
+        - https://example.com/contact/
+
+    wordpress:
+      # Mark this WordPress install as multisite/network.
+      multisite: false
+
+      # Known network sites. Useful for WordPress multisite context.
+      network_sites:
+        - blog_id: 1
+          domain: example.com
+
+  - # Example provider-managed/Pantheon-style node where only DB/browser data is available.
+    slug: managed-wordpress
+    name: Managed WordPress
+    domain: managed.example.com
+    kind: wordpress-multisite
+    app: managed-wordpress
+    service: frontend
+    labels:
+      provider: pantheon
+      cms: wordpress
+
+    files:
+      # No local root or file scan for managed hosting.
+      enabled: false
+
+      # Profiles/paths can be left empty when files are disabled.
+      profiles: []
+      extra_paths: []
+      exclude: []
+
+    coverage:
+      # Mark config/file coverage gaps as intentional for this site.
+      enabled: false
+
+    logs: []
+
+    databases:
+      - name: wordpress-network
+        engine: mysql
+        dsn: ""
+        dsn_env: AEGRAIL_DB_MANAGED_WORDPRESS_DSN
+        profile: wordpress
+        table_prefix: wp_
+        timeout: 20s
+        schedule: 5m
+
+    browser_crawl:
+      enabled: true
+      rendered: true
+      wait_tag_manager: true
+      max_pages: 8
+      timeout: 45s
+      schedule: 15m
+      urls:
+        - https://managed.example.com/
+
+    wordpress:
+      multisite: true
+      network_sites:
+        - blog_id: 1
+          domain: managed.example.com
+        - blog_id: 2
+          domain: shop.managed.example.com
+
+  - # Example Mautic node.
+    slug: marketing-automation
+    name: Marketing Automation
+    domain: marketing.example.com
+    kind: mautic
+    app: marketing-automation
+    service: frontend
+    root: /var/www/marketing.example.com
+    labels:
+      cms: mautic
+      tier: production
+
+    files:
+      enabled: true
+      profiles:
+        - mautic
+      extra_paths: []
+      exclude:
+        - /var/www/marketing.example.com/var/cache
+        - /var/www/marketing.example.com/var/logs
+        - /var/www/marketing.example.com/app/cache
+        - /var/www/marketing.example.com/app/logs
+
+    coverage:
+      enabled: true
+
+    logs:
+      - path: /var/log/nginx/marketing.example.com.access.log
+        kind: nginx_access
+      - path: /var/www/marketing.example.com/var/logs
+        kind: php_error
+
+    databases:
+      - name: mautic
+        engine: mysql
+        dsn: ""
+        dsn_env: AEGRAIL_DB_MAUTIC_DSN
+        profile: mautic
+        # Mautic defaults to no table prefix. Set only if the install uses one.
+        table_prefix: ""
+        timeout: 20s
+        schedule: 5m
+
+    browser_crawl:
+      enabled: true
+      rendered: true
+      wait_tag_manager: false
+      max_pages: 5
+      timeout: 30s
+      schedule: 15m
+      urls:
+        - https://marketing.example.com/
+
+  - # Example Yii2 RBAC node.
+    slug: yii2-rbac
+    name: Yii2 RBAC
+    domain: yii2-rbac.example.com
+    kind: yii2-rbac
+    app: yii2-rbac
+    service: frontend
+    root: /var/www/yii2-rbac.example.com
+    labels:
+      app_profile: yii2-rbac
+      tier: production
+
+    files:
+      enabled: true
+      profiles:
+        - yii2-rbac
+      extra_paths: []
+      exclude:
+        - /var/www/yii2-rbac.example.com/vendor
+        - /var/www/yii2-rbac.example.com/runtime
+        - /var/www/yii2-rbac.example.com/assets
+        - /var/www/yii2-rbac.example.com/web/assets
+        - /var/www/yii2-rbac.example.com/web/app-assets
+        - /var/www/yii2-rbac.example.com/tests
+
+    coverage:
+      enabled: true
+
+    logs:
+      - path: /var/log/nginx/yii2-rbac.example.com.access.log
+        kind: nginx_access
+      - path: /var/www/yii2-rbac.example.com/runtime/logs
+        kind: php_error
+
+    databases:
+      - name: yii2_rbac
+        engine: postgres
+        dsn: ""
+        dsn_env: AEGRAIL_DB_YII2_RBAC_DSN
+        profile: yii2-rbac
+        table_prefix: ""
+        timeout: 20s
+        schedule: 5m
+
+    browser_crawl:
+      enabled: true
+      rendered: true
+      wait_tag_manager: false
+      max_pages: 5
+      timeout: 30s
+      schedule: 15m
+      urls:
+        - https://yii2-rbac.example.com/
+
+  - # Example Laravel node.
+    slug: laravel
+    name: Laravel
+    domain: laravel.example.com
+    kind: laravel
+    app: laravel
+    service: frontend
+    root: /var/www/laravel.example.com
+    labels:
+      app_profile: laravel
+      tier: production
+
+    files:
+      enabled: true
+      profiles:
+        - laravel
+      extra_paths: []
+      exclude:
+        - /var/www/laravel.example.com/vendor
+        - /var/www/laravel.example.com/node_modules
+        - /var/www/laravel.example.com/storage
+        - /var/www/laravel.example.com/bootstrap/cache
+        - /var/www/laravel.example.com/public/build
+        - /var/www/laravel.example.com/public/vendor
+        - /var/www/laravel.example.com/tests
+
+    coverage:
+      enabled: true
+
+    logs:
+      - path: /var/log/nginx/laravel.example.com.access.log
+        kind: nginx_access
+      - path: /var/www/laravel.example.com/storage/logs
+        kind: php_error
+
+    databases:
+      - name: laravel
+        engine: mysql
+        dsn: ""
+        dsn_env: AEGRAIL_DB_LARAVEL_DSN
+        profile: laravel
+        table_prefix: ""
+        timeout: 20s
+        schedule: 5m
+
+    browser_crawl:
+      enabled: true
+      rendered: true
+      wait_tag_manager: false
+      max_pages: 5
+      timeout: 30s
+      schedule: 15m
+      urls:
+        - https://laravel.example.com/

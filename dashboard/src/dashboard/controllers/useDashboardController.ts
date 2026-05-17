@@ -190,7 +190,8 @@ export function useDashboardController() {
     setActionMessage("");
     setActionLoading(true);
     try {
-      await updateFindingStatus(row.instance.scope, row.finding, status, actionState.actor, actionState.reason, actionState.note);
+      const actor = actionState.actor.trim() || auth?.user?.email || "dashboard";
+      await updateFindingStatus(row.instance.scope, row.finding, status, actor, actionState.reason.trim() || defaultStatusReason(status), actionState.note.trim() || defaultStatusNote(status));
       await refresh();
     } catch (error) {
       setActionError(error instanceof Error ? error.message : String(error));
@@ -215,7 +216,7 @@ export function useDashboardController() {
 
   async function allowBrowserScript(row: BrowserScriptRow) {
     const script = row.script;
-    const kind = script.domain ? "domain" : script.sha256 ? "sha256" : script.tag_manager_ids?.length ? "tag_manager_id" : "";
+    const kind = script.domain ? "domain" : script.sha256 ? "inline_hash" : script.tag_manager_ids?.length ? "tag_manager_id" : "";
     const value = script.domain ?? script.sha256 ?? script.tag_manager_ids?.[0] ?? "";
     if (!kind || !value) {
       throw new Error("Cannot infer an allowlist value for this script.");
@@ -446,4 +447,22 @@ export function useDashboardController() {
     visibleInstances,
     visibleSites
   };
+}
+
+function defaultStatusReason(status: string) {
+  switch (status) {
+    case "acknowledged": return "operator_acknowledged";
+    case "resolved": return "operator_resolved";
+    case "false_positive": return "operator_false_positive";
+    default: return "operator_updated";
+  }
+}
+
+function defaultStatusNote(status: string) {
+  switch (status) {
+    case "acknowledged": return "Reviewed and accepted as expected for now.";
+    case "resolved": return "Reviewed and fixed or cleaned up.";
+    case "false_positive": return "Reviewed and marked as noise or irrelevant.";
+    default: return "Status updated from dashboard.";
+  }
 }

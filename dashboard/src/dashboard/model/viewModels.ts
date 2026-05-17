@@ -2,6 +2,7 @@ import { buildEstateModel, collectorIsProblem, type CompanyModel, type EstateMod
 import type { HubFinding, RuleDefinition, TimelineEvent } from "../../types";
 import { severityRank } from "../config/navigation";
 import type { AllowlistRow, BrowserScriptRow, DashboardStats, DeploymentRow, FilterState, IssueRow, ReportRow, SignalRow, SiteRow, ViewKey } from "../types";
+import { operatorActionGuidance } from "../utils/metadata";
 import { newest, titleCase } from "../utils/time";
 
 export function buildSiteRows(instances: InstanceModel[]): SiteRow[] {
@@ -65,7 +66,8 @@ export function filterIssueRows(rows: IssueRow[], filters: FilterState) {
   return rows.filter((row) => {
     if (filters.severity !== "all" && row.finding.severity !== filters.severity) return false;
     if (!query) return true;
-    return [row.finding.title, row.finding.summary, row.finding.description, row.finding.rule_id, row.instance.companyName, row.instance.projectName, row.service]
+    const guidance = operatorActionGuidance(row.finding);
+    return [row.finding.title, row.finding.summary, row.finding.description, row.finding.rule_id, guidance.primaryAction, guidance.safeToAcknowledgeWhen, guidance.escalateWhen, row.instance.companyName, row.instance.projectName, row.service]
       .filter(Boolean)
       .some((value) => String(value).toLowerCase().includes(query));
   });
@@ -120,7 +122,8 @@ export function buildBrowserScriptRows(instances: InstanceModel[]): BrowserScrip
       const value = entry.value.trim().toLowerCase();
       switch (entry.kind) {
         case "domain": allowedDomains.add(value); break;
-        case "sha256": allowedHashes.add(value); break;
+        case "sha256":
+        case "inline_hash": allowedHashes.add(value); break;
         case "tag_manager_id": allowedTagManagers.add(value); break;
       }
     }
@@ -176,6 +179,7 @@ export function serviceFromCollector(key: string) {
   switch (key) {
     case "files": return "Files";
     case "database": return "Database";
+    case "logs": return "Logs";
     case "browser": return "Browser";
     case "config": return "Config";
     default: return titleCase(key);
@@ -185,6 +189,7 @@ export function serviceFromCollector(key: string) {
 export function collectorLabel(event: TimelineEvent) {
   if (event.type.startsWith("db.")) return "DB collector";
   if (event.type.startsWith("file.")) return "Files collector";
+  if (event.type.startsWith("log.")) return "Logs collector";
   if (event.type.startsWith("browser.")) return "Browser collector";
   if (event.type.includes("config")) return "Config collector";
   if (event.type.startsWith("agent.")) return "Agent";
@@ -195,6 +200,7 @@ export function signalTypeLabel(event: TimelineEvent) {
   const type = event.type;
   if (type.includes("entity") && type.includes("db")) return "Database change";
   if (type.startsWith("db.")) return "Database check";
+  if (type.startsWith("log.")) return "Log scan";
   if (type.includes("file") && type.includes("added")) return "File added";
   if (type.startsWith("file.")) return "File changed";
   if (type.includes("script")) return "Browser script";
@@ -213,7 +219,7 @@ export function issueStatusLabel(status: string, reason = "") {
   }
   switch (status) {
     case "open": return "New";
-    case "acknowledged": return "Triaged";
+    case "acknowledged": return "Acknowledged";
     case "resolved": return "Fixed";
     case "false_positive": return "False positive";
     default: return titleCase(status.replace(/[_-]/g, " "));
@@ -221,12 +227,17 @@ export function issueStatusLabel(status: string, reason = "") {
 }
 
 export function recommendedAction(row: IssueRow, rule?: RuleDefinition) {
+  const guidance = operatorActionGuidance(row.finding);
+  if (guidance.primaryAction) {
+    return guidance.primaryAction;
+  }
   if (rule?.action_hints?.length) {
-    return rule.action_hints.join(" ");
+    return friendlyActionHints(rule.action_hints).join(" ");
   }
   switch (row.service) {
     case "Browser": return "Check whether the script came from a known plugin, tag manager, checkout provider, or marketing tool. Allow it only after confirming it is expected.";
     case "Database": return "Review the account or option change, confirm it with the site owner, and remove unauthorized access before marking fixed.";
+    case "Logs": return "Review the access or PHP error log signal, then confirm whether it matches normal site traffic or a maintenance window.";
     case "Files": return "Compare the changed file with a known deploy or CMS update. Treat executable files in uploads as suspicious.";
     case "Config": return "Fix the collector or site configuration, then wait for a clean scan.";
     default: return "Review the linked signals, confirm ownership, and update the issue status.";
@@ -246,10 +257,26 @@ export function severityTone(value: string) {
 export function statusTone(value: string) {
   const lower = value.toLowerCase();
   if (["critical", "missing", "failed", "new"].includes(lower)) return "critical";
-  if (["warning", "stale", "required", "triaged", "medium"].includes(lower)) return "warning";
+  if (["warning", "stale", "required", "triaged", "acknowledged", "medium"].includes(lower)) return "warning";
   if (["healthy", "fresh", "fixed", "ok", "enabled", "active", "completed", "baseline"].includes(lower)) return "healthy";
   if (["disabled", "optional"].includes(lower)) return "neutral";
   return "neutral";
+}
+
+function friendlyActionHints(hints: string[]) {
+  const labels = hints.map((hint) => {
+    switch (hint) {
+      case "acknowledge": return "Acknowledge it after confirming the change is expected.";
+      case "mark_false_positive": return "Mark it false positive only when the signal is noisy or irrelevant.";
+      case "inspect_timeline": return "Review the linked timeline first.";
+      case "inspect_database": return "Check the affected database entity.";
+      case "inspect_files": return "Compare the changed files with the expected release or runtime path.";
+      case "inspect_deployment": return "Check whether a deployment window explains it.";
+      case "allow_browser_script": return "Allowlist the script only after confirming ownership.";
+      default: return titleCase(hint.replace(/[_-]/g, " ")) + ".";
+    }
+  });
+  return Array.from(new Set(labels));
 }
 
 export function viewSubtitle(view: ViewKey, filters: FilterState, estate: EstateModel) {
@@ -288,6 +315,7 @@ function serviceForFinding(finding: HubFinding, rule?: RuleDefinition) {
   const text = [finding.rule_id, finding.title, finding.summary, finding.description, rule?.category].filter(Boolean).join(" ").toLowerCase();
   if (text.includes("browser") || text.includes("script") || text.includes("tag-manager")) return "Browser";
   if (text.includes("database") || text.includes("db.") || text.includes("wordpress user") || text.includes("employee")) return "Database";
+  if (text.includes("log.") || text.includes("access log") || text.includes("php error")) return "Logs";
   if (text.includes("file")) return "Files";
   if (text.includes("config") || text.includes("coverage")) return "Config";
   if (text.includes("agent")) return "Agent";
@@ -297,6 +325,7 @@ function serviceForFinding(finding: HubFinding, rule?: RuleDefinition) {
 function serviceForEvent(event: TimelineEvent) {
   if (event.type.startsWith("browser.")) return "Browser";
   if (event.type.startsWith("db.")) return "Database";
+  if (event.type.startsWith("log.")) return "Logs";
   if (event.type.startsWith("file.")) return "Files";
   if (event.type.includes("config") || event.type.includes("coverage")) return "Config";
   if (event.type.startsWith("agent.")) return "Agent";
@@ -354,6 +383,9 @@ function appKindLabel(kind: string) {
     case "wordpress-multisite": return "WordPress Network";
     case "wordpress": return "WordPress";
     case "prestashop": return "PrestaShop";
+    case "mautic": return "Mautic";
+    case "yii2-rbac": return "Yii2 RBAC";
+    case "laravel": return "Laravel";
     default: return titleCase(kind || "app");
   }
 }

@@ -22,6 +22,34 @@ export function metadataStringList(metadata: Record<string, unknown>, key: strin
   return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
 }
 
+export type OperatorActionGuidance = {
+  actions: string[];
+  escalateWhen: string;
+  primaryAction: string;
+  recommendedStatusExpected: string;
+  recommendedStatusFixed: string;
+  recommendedStatusNoise: string;
+  safeToAcknowledgeWhen: string;
+};
+
+export function operatorActionGuidance(finding: { metadata: Record<string, unknown>; operator_action?: Record<string, unknown> }): OperatorActionGuidance {
+  const action = metadataRecord(finding.operator_action) ?? metadataRecord(finding.metadata.operator_action);
+  return {
+    actions: metadataStringListFromRecord(action, "actions"),
+    escalateWhen: metadataStringFromRecord(action, "escalate_when"),
+    primaryAction: metadataStringFromRecord(action, "primary_action"),
+    recommendedStatusExpected: metadataStringFromRecord(action, "recommended_status_expected") || "acknowledged",
+    recommendedStatusFixed: metadataStringFromRecord(action, "recommended_status_fixed") || "resolved",
+    recommendedStatusNoise: metadataStringFromRecord(action, "recommended_status_noise") || "false_positive",
+    safeToAcknowledgeWhen: metadataStringFromRecord(action, "safe_to_acknowledge_when")
+  };
+}
+
+export function metadataRecord(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  return value as Record<string, unknown>;
+}
+
 export function fileIgnorePathCandidate(metadata: Record<string, unknown>) {
   const files = metadataStringList(metadata, "files");
   const commonParent = commonFileParent(files);
@@ -80,4 +108,17 @@ function normalizePath(value: string) {
     .replace(/^\.\//, "")
     .replace(/^\/+|\/+$/g, "")
     .toLowerCase();
+}
+
+function metadataStringFromRecord(metadata: Record<string, unknown> | undefined, key: string) {
+  if (!metadata) return "";
+  const value = metadata[key];
+  return typeof value === "string" && value.trim() ? value.trim() : "";
+}
+
+function metadataStringListFromRecord(metadata: Record<string, unknown> | undefined, key: string) {
+  if (!metadata) return [];
+  const value = metadata[key];
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.trim());
 }

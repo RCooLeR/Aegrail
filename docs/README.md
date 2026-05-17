@@ -4,14 +4,25 @@ This directory contains the maintained project documentation. Keep implementatio
 
 ## Start Here
 
-- [Project Overview](overview.md): what Aegrail is, runtime model, and data hierarchy.
-- [Agent And Evidence Internals](agent.md): collectors, schedules, exact database queries, hashes, queue format, signing, and Hub ingest.
-- [Dashboard](dashboard.md): dashboard purpose, views, scripts/deployments workflows, settings, and local development commands.
-- [Local Runbook](runbook.md): local PostgreSQL, Hub, CLI, and report commands.
+- [How Aegrail Works](../how-it-works.md): full-system architecture, data flow, and operational model.
+- [Agent](agent/README.md): what the Agent owns and where to install/run it.
+- [Hub](hub/README.md): Hub storage, APIs, rules, reporting, users, and model analysis.
+- [Dashboard](dashboard/README.md): dashboard purpose, views, operator flows, and frontend structure.
+- [Services](services/README.md): local PostgreSQL, Redis, and development infrastructure.
 - [Security And Data Handling](security.md): privacy, redaction, transport, storage, and operating checklist.
 - [Development Notes](development.md): engineering standards and verification commands.
-- [Project Tracker](tracker.md): current status, next work, and later roadmap.
+- [Project Tracker](tracker.md): cross-project status and links to app-specific trackers.
 - [Brand Assets](brand/README.md): logos and visual assets.
+
+## App Docs
+
+```text
+docs/agent/       Agent docs: install, internals, tracker.
+docs/hub/         Hub docs: install, internals, Agent API, Dashboard API, tracker.
+docs/dashboard/   Dashboard docs: install, UI model, tracker.
+docs/services/    Local service docs: PostgreSQL, Redis, and Compose setup.
+docs/brand/       Brand assets and favicon/logo notes.
+```
 
 ## Maintenance Rules
 

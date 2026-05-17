@@ -2,7 +2,7 @@ import type { DashboardInstanceSnapshot } from "./api";
 import type { ApiScope, CoverageRecord, HubFinding, TimelineEvent } from "./types";
 
 export type EstateStatus = "critical" | "warning" | "healthy";
-export type CollectorKey = "files" | "database" | "browser" | "config";
+export type CollectorKey = "files" | "database" | "logs" | "browser" | "config";
 export type CollectorStatus = "fresh" | "warning" | "stale" | "missing" | "disabled";
 
 export type CollectorState = {
@@ -284,6 +284,7 @@ function buildCollectorStates(events: TimelineEvent[], latestCoverage?: Coverage
   return [
     coverageAwareCollectorState("files", "Files", events, latestCoverage, (event) => event.type.startsWith("file.")),
     coverageAwareCollectorState("database", "Database", events, latestCoverage, (event) => event.type.startsWith("db.")),
+    coverageAwareCollectorState("logs", "Logs", events, latestCoverage, (event) => event.type.startsWith("log.")),
     coverageAwareCollectorState("browser", "Browser", events, latestCoverage, (event) => event.type.startsWith("browser.")),
     configCollectorState(latestCoverage)
   ];

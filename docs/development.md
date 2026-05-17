@@ -1,35 +1,39 @@
 # Development Notes
 
-## App Module
+## Go Apps
 
-`app/` is the Go module for the Aegrail Hub and Agent binaries.
+`hub/` and `agent/` are separate Go modules, joined for local development by the root `go.work`. They intentionally duplicate the small shared domain/redaction surface for now so each app can evolve without a hidden shared runtime dependency.
 
-It owns:
+`hub/` owns:
 
 - Hub APIs, ingest, inventory, findings, deployments, allowlists, reports, users, and dashboard serving
-- Agent config, file/log/database/browser collection, local state, queueing, and replay
 - deterministic rules, correlation, risk scoring, and fixture evaluation
 - PostgreSQL migrations and storage adapters
-- CLI commands for local development and operations
+- Hub CLI commands for local development and operations
+
+`agent/` owns:
+
+- Agent config, file/log/database/browser collection, local state, queueing, and replay
+- WordPress, PrestaShop, and Mautic module/profile helpers used by the agent
+- Agent CLI commands for local development and operations
 
 Package map:
 
 ```text
-cmd/aegrail/             combined compatibility binary entrypoint
-cmd/aegrail-agent/       Agent binary entrypoint
-cmd/aegrail-hub/         Hub binary entrypoint
-internal/adapters/       CLI, HTTP, PostgreSQL, browser, model adapters
-internal/agent/          agent runtime, config, queue, file watch, log watch
-internal/bootstrap/      config, logger, database wiring
-internal/collector/      database and browser collectors
-internal/domain/         shared domain types
-internal/hub/            inventory, ingest, correlation, findings, reports, users
-internal/modules/        WordPress and PrestaShop source logic
-internal/ports/          storage and integration interfaces
-internal/redaction/      secret and token redaction
-internal/reports/        JSON, Markdown, CSV, and evidence bundle renderers
-migrations/              SQL migrations
-configs/                 local examples only; never put real secrets here
+hub/cmd/hub/                 Hub app entrypoint
+hub/internal/adapters/       Hub CLI, HTTP, PostgreSQL, model adapters
+hub/internal/bootstrap/      Hub config, logger, database wiring
+hub/internal/hub/            inventory, ingest, correlation, findings, reports, users
+hub/internal/reports/        JSON, Markdown, CSV, and evidence bundle renderers
+hub/migrations/              SQL migrations
+hub/configs/                 Hub config examples
+
+agent/cmd/agent/             Agent app entrypoint
+agent/internal/agent/        agent runtime, config, queue, file watch, log watch
+agent/internal/collector/    database and browser collectors
+agent/internal/modules/      WordPress, PrestaShop, and Mautic source logic
+agent/internal/redaction/    secret and token redaction
+agent/configs/               Agent YAML examples
 ```
 
 ## Standards
@@ -44,7 +48,10 @@ configs/                 local examples only; never put real secrets here
 ## Verification
 
 ```powershell
-cd app
+cd agent
+go test ./...
+
+cd ..\hub
 go test ./...
 
 cd ..\dashboard
@@ -53,7 +60,7 @@ npm run build
 
 ## Documentation Maintenance
 
-- Root `README.md` is only a short intro, banner, quick links, and quick start.
+- Root `README.md` is only a short intro, banner, quick links, and license pointer.
 - Maintained docs live in `docs/`.
 - If behavior changes, update the matching doc and the tracker.
 - If a topic becomes too large, add a named file under `docs/` and link it from `docs/README.md`.

@@ -1,7 +1,9 @@
 import {
   Building2,
+  Copy,
   DatabaseZap,
   Filter,
+  KeyRound,
   Loader2,
   MonitorCog,
   QrCode,
@@ -15,6 +17,9 @@ import {
 } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
 import {
+  createInventoryCompany,
+  createInventoryNode,
+  createInventorySite,
   createHubUser,
   defaultScope,
   disableHubUserTOTP,
@@ -24,7 +29,7 @@ import {
   verifyHubUserTOTP
 } from "../../api";
 import type { InstanceModel } from "../../estate";
-import type { ApiScope, HubUser, HubUserTOTPEnrollment, InventoryOrganization } from "../../types";
+import type { ApiScope, HubUser, HubUserTOTPEnrollment, InventoryOrganization, NodeProvisioning } from "../../types";
 import { autoModelValue, modelPresets } from "../config/modelPresets";
 import type { ActionState, SiteRow } from "../types";
 import { formatDate, formatRelative } from "../utils/time";
@@ -53,6 +58,7 @@ export function SettingsPage({
   inventory,
   loading,
   onActionChange,
+  onRefresh,
   onScopeChange,
   onScopeSubmit,
   scope,
@@ -65,6 +71,7 @@ export function SettingsPage({
   inventory: InventoryOrganization[];
   loading: boolean;
   onActionChange: (state: ActionState) => void;
+  onRefresh: () => void;
   onScopeChange: (scope: ApiScope) => void;
   onScopeSubmit: (event: FormEvent<HTMLFormElement>) => void;
   scope: ApiScope;
@@ -131,9 +138,9 @@ export function SettingsPage({
           </div>
         </Panel>
       )}
-      {activeTab === "companies" && <CompaniesOverview instances={allInstances} inventory={inventory} />}
-      {activeTab === "sites" && <SitesOverview sites={allSites} />}
-      {activeTab === "nodes" && <NodesOverview instances={allInstances} />}
+      {activeTab === "companies" && <CompaniesSettings instances={allInstances} inventory={inventory} onRefresh={onRefresh} scope={scope} />}
+      {activeTab === "sites" && <SitesSettings onRefresh={onRefresh} scope={scope} sites={allSites} />}
+      {activeTab === "nodes" && <NodesSettings instances={allInstances} onRefresh={onRefresh} scope={scope} />}
       {activeTab === "users" && <UserAccessManager currentUser={user} scope={scope} />}
       {activeTab === "inventory" && (
         <Panel title="Inventory" icon={DatabaseZap}>
@@ -161,6 +168,205 @@ function ProfileSettings({ scope, user }: { scope: ApiScope; user?: HubUser }) {
         <EmptyState title="No signed-in user loaded" />
       )}
       <p className="muted-line">Current dashboard scope: {scope.org} / {scope.project} / {scope.environment} / {scope.app || "all apps"}</p>
+    </Panel>
+  );
+}
+
+function CompaniesSettings({ instances, inventory, onRefresh, scope }: { instances: InstanceModel[]; inventory: InventoryOrganization[]; onRefresh: () => void; scope: ApiScope }) {
+  return (
+    <div className="page-stack">
+      <CompanyProvisioner onRefresh={onRefresh} scope={scope} />
+      <CompaniesOverview instances={instances} inventory={inventory} />
+    </div>
+  );
+}
+
+function SitesSettings({ onRefresh, scope, sites }: { onRefresh: () => void; scope: ApiScope; sites: SiteRow[] }) {
+  return (
+    <div className="page-stack">
+      <SiteProvisioner onRefresh={onRefresh} scope={scope} />
+      <SitesOverview sites={sites} />
+    </div>
+  );
+}
+
+function NodesSettings({ instances, onRefresh, scope }: { instances: InstanceModel[]; onRefresh: () => void; scope: ApiScope }) {
+  return (
+    <div className="page-stack">
+      <NodeProvisioner onRefresh={onRefresh} scope={scope} />
+      <NodesOverview instances={instances} />
+    </div>
+  );
+}
+
+function CompanyProvisioner({ onRefresh, scope }: { onRefresh: () => void; scope: ApiScope }) {
+  const [form, setForm] = useState({ name: "", slug: "" });
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      const organization = await createInventoryCompany(scope, form);
+      setMessage(`Company created: ${organization.name}`);
+      setForm({ name: "", slug: "" });
+      onRefresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Panel title="Create company" icon={Building2}>
+      {error && <InlineAlert message={error} />}
+      {message && <InlineSuccess message={message} />}
+      <form className="form-grid compact" onSubmit={submit}>
+        <TextInput label="Company slug" value={form.slug} onChange={(slug) => setForm((current) => ({ ...current, slug }))} />
+        <TextInput label="Display name" value={form.name} onChange={(name) => setForm((current) => ({ ...current, name }))} />
+        <button className="primary-button" type="submit" disabled={saving}>{saving ? <Loader2 size={15} className="spin" /> : <Save size={15} />} Create</button>
+      </form>
+    </Panel>
+  );
+}
+
+function SiteProvisioner({ onRefresh, scope }: { onRefresh: () => void; scope: ApiScope }) {
+  const [form, setForm] = useState({
+    app: scope.app || "main-web",
+    app_name: "",
+    environment: scope.environment || "production",
+    kind: "wordpress",
+    org: scope.org,
+    project: scope.project,
+    project_name: "",
+    service: "frontend"
+  });
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      const result = await createInventorySite(scope, form);
+      setMessage(`Site created: ${result.project.name} / ${result.environment.slug} / ${result.app.slug}`);
+      onRefresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Panel title="Create site" icon={Building2}>
+      {error && <InlineAlert message={error} />}
+      {message && <InlineSuccess message={message} />}
+      <form className="form-grid compact" onSubmit={submit}>
+        <TextInput label="Company slug" value={form.org} onChange={(org) => setForm((current) => ({ ...current, org }))} />
+        <TextInput label="Site slug" value={form.project} onChange={(project) => setForm((current) => ({ ...current, project }))} />
+        <TextInput label="Site name" value={form.project_name} onChange={(project_name) => setForm((current) => ({ ...current, project_name }))} />
+        <TextInput label="Environment" value={form.environment} onChange={(environment) => setForm((current) => ({ ...current, environment }))} />
+        <TextInput label="App slug" value={form.app} onChange={(app) => setForm((current) => ({ ...current, app }))} />
+        <label>Kind<select value={form.kind} onChange={(event) => setForm((current) => ({ ...current, kind: event.target.value }))}>
+          <option value="wordpress">WordPress</option>
+          <option value="wordpress-multisite">WordPress network</option>
+          <option value="prestashop">PrestaShop</option>
+          <option value="mautic">Mautic</option>
+          <option value="yii2-rbac">Yii2 RBAC</option>
+          <option value="laravel">Laravel</option>
+          <option value="generic-php">Generic PHP</option>
+        </select></label>
+        <TextInput label="Service" value={form.service} onChange={(service) => setForm((current) => ({ ...current, service }))} />
+        <button className="primary-button" type="submit" disabled={saving}>{saving ? <Loader2 size={15} className="spin" /> : <Save size={15} />} Create</button>
+      </form>
+    </Panel>
+  );
+}
+
+function NodeProvisioner({ onRefresh, scope }: { onRefresh: () => void; scope: ApiScope }) {
+  const [form, setForm] = useState({
+    agent_id: "",
+    app: scope.app || "main-web",
+    environment: scope.environment || "production",
+    host: "",
+    hostname: "",
+    interval: "30s",
+    org: scope.org,
+    project: scope.project,
+    queue_dir: "/var/lib/aegrail/queue",
+    region: "",
+    service: "frontend",
+    state_dir: "/var/lib/aegrail/state"
+  });
+  const [provisioning, setProvisioning] = useState<NodeProvisioning | null>(null);
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    setCopied(false);
+    try {
+      const result = await createInventoryNode(scope, form);
+      setProvisioning(result);
+      onRefresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function copyConfig() {
+    if (!provisioning) {
+      return;
+    }
+    await navigator.clipboard.writeText(provisioning.sample_config);
+    setCopied(true);
+  }
+
+  return (
+    <Panel title="Create node" icon={MonitorCog}>
+      {error && <InlineAlert message={error} />}
+      <form className="form-grid compact" onSubmit={submit}>
+        <TextInput label="Company slug" value={form.org} onChange={(org) => setForm((current) => ({ ...current, org }))} />
+        <TextInput label="Site slug" value={form.project} onChange={(project) => setForm((current) => ({ ...current, project }))} />
+        <TextInput label="Environment" value={form.environment} onChange={(environment) => setForm((current) => ({ ...current, environment }))} />
+        <TextInput label="App" value={form.app} onChange={(app) => setForm((current) => ({ ...current, app }))} />
+        <TextInput label="Service" value={form.service} onChange={(service) => setForm((current) => ({ ...current, service }))} />
+        <TextInput label="Node slug" value={form.host} onChange={(host) => setForm((current) => ({ ...current, host }))} />
+        <TextInput label="Hostname" value={form.hostname} onChange={(hostname) => setForm((current) => ({ ...current, hostname }))} />
+        <TextInput label="Node ID" value={form.agent_id} placeholder="Generated when empty" onChange={(agent_id) => setForm((current) => ({ ...current, agent_id }))} />
+        <TextInput label="Queue dir" value={form.queue_dir} onChange={(queue_dir) => setForm((current) => ({ ...current, queue_dir }))} />
+        <TextInput label="State dir" value={form.state_dir} onChange={(state_dir) => setForm((current) => ({ ...current, state_dir }))} />
+        <TextInput label="Interval" value={form.interval} onChange={(interval) => setForm((current) => ({ ...current, interval }))} />
+        <button className="primary-button" type="submit" disabled={saving}>{saving ? <Loader2 size={15} className="spin" /> : <KeyRound size={15} />} Create & generate config</button>
+      </form>
+      {provisioning && (
+        <div className="provisioning-box">
+          <div className="settings-summary-grid">
+            <MiniBlock label="Node ID" value={provisioning.node_id} />
+            <MiniBlock label="Protocol" value={provisioning.agent.wire_protocol || "aegrail-wire-v1"} />
+            <MiniBlock label="Fingerprint" value={provisioning.agent.fingerprint} />
+          </div>
+          <div className="button-row">
+            <button className="ghost-button" type="button" onClick={copyConfig}><Copy size={15} /> Copy config</button>
+            {copied && <InlineSuccess message="Config copied." />}
+          </div>
+          <pre className="config-sample">{provisioning.sample_config}</pre>
+        </div>
+      )}
     </Panel>
   );
 }
@@ -425,7 +631,7 @@ function UserAccessManager({ currentUser, scope }: { currentUser?: HubUser; scop
   }
 
   async function disableEnroll(user: HubUser) {
-    if (!window.confirm(`Disable 2FA for ${user.email}? They will sign in with password only until they re-enroll.`)) {
+    if (!window.confirm(`Disable 2FA for ${user.email}? They will be blocked from dashboard access until they re-enroll.`)) {
       return;
     }
     setSavingID(user.id);
@@ -458,7 +664,7 @@ function UserAccessManager({ currentUser, scope }: { currentUser?: HubUser; scop
             <option value="operator">Operator</option>
             <option value="viewer">Viewer</option>
           </select></label>
-          <label className="check-row"><input checked={form.two_factor_required} type="checkbox" onChange={(event) => setForm((current) => ({ ...current, two_factor_required: event.target.checked }))} />Require 2FA</label>
+          <label className="check-row"><input checked readOnly type="checkbox" />Require 2FA</label>
           <button className="primary-button" type="submit" disabled={savingID === "new"}>{savingID === "new" ? <Loader2 size={15} className="spin" /> : <UserPlus size={15} />} Add</button>
         </form>
       </Panel>

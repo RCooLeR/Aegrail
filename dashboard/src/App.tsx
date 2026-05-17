@@ -17,7 +17,7 @@ import { SitesPage } from "./dashboard/pages/SitesPage";
 export default function App() {
   const dashboard = useDashboardController();
 
-  if (dashboard.authLoading || !dashboard.auth?.authenticated) {
+  if (dashboard.authLoading || !dashboard.auth?.authenticated || !dashboard.auth.dashboard_ready) {
     return (
       <AuthGate
         auth={dashboard.auth}
@@ -130,6 +130,7 @@ export default function App() {
           inventory={dashboard.inventory}
           loading={dashboard.loading}
           onActionChange={dashboard.setActionState}
+          onRefresh={dashboard.refresh}
           onScopeChange={dashboard.setDraftScope}
           onScopeSubmit={dashboard.applyScope}
           scope={dashboard.scope}

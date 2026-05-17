@@ -66,7 +66,7 @@ export function SiteRiskList({ sites }: { sites: SiteRow[] }) {
 }
 
 export function HealthRows({ instances }: { instances: InstanceModel[] }) {
-  const collectorRows = ["files", "database", "browser", "config"].map((key) => {
+  const collectorRows = ["files", "database", "logs", "browser", "config"].map((key) => {
     const collectors = instances.flatMap((instance) => instance.collectors).filter((collector) => collector.key === key);
     const bad = collectors.filter(collectorIsProblem).length;
     return { bad, key, total: collectors.length };

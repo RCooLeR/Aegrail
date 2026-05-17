@@ -1,43 +1,35 @@
 # Project Tracker
 
+This is the cross-project tracker. App-specific details live in:
+
+- [Agent Tracker](agent/tracker.md)
+- [Hub Tracker](hub/tracker.md)
+- [Dashboard Tracker](dashboard/tracker.md)
+
 ## Done
 
-- Split `aegrail-hub` and `aegrail-agent` binaries, with `aegrail` kept as compatibility CLI.
-- Removed legacy local evidence/site/workspace code from the active app.
-- PostgreSQL storage and local Docker service.
-- Signed Hub ingest.
-- Distributed inventory: organizations, projects, environments, apps, services, hosts, agents.
-- Multi-site agent config loading, validation, file scans, log tailing, database checks, browser crawls, queueing, replay, and coverage reporting.
-- WordPress and PrestaShop database snapshots with redacted entity diffs.
-- WordPress Multisite network option support.
-- `wp-config-local.php` included in WordPress file coverage.
-- Browser script observations and allowlist workflow.
-- Deterministic rule registry, risk scoring, deployment context, and fixture evaluation.
-- Finding lifecycle actions.
-- Dashboard refactor into modular React app.
-- Dashboard overview/company/site/node/issues/signals/browser/deployments/report/settings views.
-- Browser scripts page with allowlist review and revoke/reinstate actions.
-- Deployment marker page with timeframe preview and confirmation.
-- Tabbed settings for profile, Hub scope, triage defaults, companies, sites, nodes, users/2FA, and inventory.
-- Dashboard auth users, access levels, and pending TOTP verification before 2FA activation.
-- Grouped file findings for plugin/theme/module changes.
-- Full account display in database user/employee findings when evidence contains it.
-- Dashboard-created Hub ignore rules for noisy file directories.
-- Safe agent config coverage in node details, including sanitized ignore paths.
+- Split the old combined Go module into independent `hub/` and `agent/` modules with separate `go.mod`, configs, commands, and internal packages.
+- Established the documentation structure by app area: Agent, Hub, Dashboard, Services, plus root system docs.
+- Local PostgreSQL, Redis queue/lock service, and migrations.
+- Signed Agent-to-Hub ingest.
+- Encrypted Agent-Hub wire v1 with Hub-generated node config samples.
+- Dashboard/Hub creation flow for companies, sites, and nodes.
+- Distributed inventory: organizations, projects, environments, apps, services, hosts, and agents.
+- Modular React dashboard with operational overview, drilldowns, issue detail, signals, scripts, deployments, reports, and settings.
+- Deterministic rules, Redis-backed ingest correlation, finding lifecycle, baseline acceptance, ignore/allowlist workflows, reports, and optional model analysis.
+- Mautic, Yii2 RBAC, and Laravel support in Agent collectors, Hub rules, and model-analysis prompt context.
+- Browser crawler uses a named Aegrail bot identity, compatibility fallbacks, and redacted browser URL/attribute payloads.
 
 ## Next
 
-- Polish dashboard issue resolution flow so each warning clearly says why it exists and what action is expected.
-- Add tighter rule coverage for expected cache/upload churn and allowed CMS-generated paths.
-- Add report views that make deterministic reports and model reports easier to compare.
-- Improve operational setup scripts for local Hub plus multiple agents.
-- Add notification hooks after the issue model is stable.
+- Tighten default noise rules for cache/upload/generated paths as more real projects are profiled.
+- Improve report comparison between deterministic findings and model analysis.
+- Add operational scripts for starting a local Hub plus multiple Agents.
 
 ## Later
 
-- Remote collectors for provider-managed sites.
-- Pantheon and other hosting adapters.
+- Provider-hosted collectors.
 - Scheduled Hub-side jobs.
+- Notifications.
 - Per-agent secrets or mTLS.
 - Audit log and retention settings.
-- More CMS/framework profiles beyond WordPress and PrestaShop.

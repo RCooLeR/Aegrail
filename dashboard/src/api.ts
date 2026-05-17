@@ -15,6 +15,7 @@ import type {
   InventoryProject,
   ModelAnalysisReport,
   MonitoredApp,
+  NodeProvisioning,
   RequestState,
   RuleDefinition,
   TimelineEvent,
@@ -36,6 +37,9 @@ const defaults = {
   reports: [] as ModelAnalysisReport[],
   rules: [] as RuleDefinition[]
 };
+
+const dashboardProtocol = "aegrail.dashboard.v1";
+let dashboardCSRFToken = "";
 
 export const defaultScope: ApiScope = {
   baseUrl: "",
@@ -95,10 +99,27 @@ function joinUrl(scope: ApiScope, path: string) {
   return `${base}${path}`;
 }
 
+function dashboardHeaders(mutating = false): HeadersInit {
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    "X-Aegrail-Dashboard-Protocol": dashboardProtocol
+  };
+  if (mutating && dashboardCSRFToken) {
+    headers["X-Aegrail-CSRF"] = dashboardCSRFToken;
+  }
+  return headers;
+}
+
+function rememberDashboardProtocol(body: { csrf_token?: string }) {
+  if (body.csrf_token) {
+    dashboardCSRFToken = body.csrf_token;
+  }
+}
+
 async function apiGet<T>(scope: ApiScope, path: string): Promise<T> {
   const response = await fetch(joinUrl(scope, path), {
     credentials: "include",
-    headers: { Accept: "application/json" }
+    headers: dashboardHeaders()
   });
   if (!response.ok) {
     const message = await response.text();
@@ -112,7 +133,7 @@ async function apiPatch<T>(scope: ApiScope, path: string, body: unknown): Promis
     credentials: "include",
     method: "PATCH",
     headers: {
-      Accept: "application/json",
+      ...dashboardHeaders(true),
       "Content-Type": "application/json"
     },
     body: JSON.stringify(body)
@@ -129,7 +150,7 @@ async function apiPost<T>(scope: ApiScope, path: string, body: unknown): Promise
     credentials: "include",
     method: "POST",
     headers: {
-      Accept: "application/json",
+      ...dashboardHeaders(true),
       "Content-Type": "application/json"
     },
     body: JSON.stringify(body)
@@ -145,7 +166,7 @@ async function apiDelete<T>(scope: ApiScope, path: string): Promise<T> {
   const response = await fetch(joinUrl(scope, path), {
     credentials: "include",
     method: "DELETE",
-    headers: { Accept: "application/json" }
+    headers: dashboardHeaders(true)
   });
   if (!response.ok) {
     const message = await response.text();
@@ -162,7 +183,9 @@ export class MFARequiredError extends Error {
 }
 
 export async function loadAuthMe(scope: ApiScope) {
-  return apiGet<HubAuthMe>(scope, "/api/v1/auth/me");
+  const body = await apiGet<HubAuthMe>(scope, "/api/v1/auth/me");
+  rememberDashboardProtocol(body);
+  return body;
 }
 
 export async function loginHubUser(
@@ -177,7 +200,7 @@ export async function loginHubUser(
     body: JSON.stringify(input),
     credentials: "include",
     headers: {
-      Accept: "application/json",
+      ...dashboardHeaders(),
       "Content-Type": "application/json"
     },
     method: "POST"
@@ -196,11 +219,21 @@ export async function loginHubUser(
     }
     throw new Error(text || `${response.status} ${response.statusText}`);
   }
-  return (await response.json()) as ApiEnvelope<{ user: HubUser; expires_at: string }>;
+  const body = (await response.json()) as ApiEnvelope<{
+    csrf_token?: string;
+    dashboard_ready?: boolean;
+    expires_at: string;
+    totp_setup_required?: boolean;
+    user: HubUser;
+  }>;
+  rememberDashboardProtocol(body);
+  return body;
 }
 
 export async function logoutHubUser(scope: ApiScope) {
-  return apiPost<ApiEnvelope<{ ok: boolean }>>(scope, "/api/v1/auth/logout", {});
+  const body = await apiPost<ApiEnvelope<{ ok: boolean }>>(scope, "/api/v1/auth/logout", {});
+  dashboardCSRFToken = "";
+  return body;
 }
 
 async function state<T>(request: Promise<T>, fallback: T): Promise<RequestState<T>> {
@@ -441,6 +474,67 @@ export async function createHubUser(
   return apiPost<ApiEnvelope<{ user: HubUser }>>(scope, "/api/v1/access/users", input).then((body) => body.user);
 }
 
+export async function createInventoryCompany(
+  scope: ApiScope,
+  input: {
+    name: string;
+    slug: string;
+  }
+) {
+  return apiPost<ApiEnvelope<{ organization: InventoryOrganization }>>(
+    scope,
+    "/api/v1/inventory/companies",
+    input
+  ).then((body) => body.organization);
+}
+
+export async function createInventorySite(
+  scope: ApiScope,
+  input: {
+    app?: string;
+    app_name?: string;
+    environment?: string;
+    environment_name?: string;
+    kind?: string;
+    org: string;
+    project: string;
+    project_name?: string;
+    service?: string;
+    service_name?: string;
+    service_role?: string;
+  }
+) {
+  return apiPost<
+    ApiEnvelope<{
+      app: MonitoredApp;
+      environment: InventoryEnvironment;
+      project: InventoryProject;
+    }>
+  >(scope, "/api/v1/inventory/sites", input);
+}
+
+export async function createInventoryNode(
+  scope: ApiScope,
+  input: {
+    agent_id?: string;
+    app?: string;
+    environment?: string;
+    host: string;
+    hostname?: string;
+    interval?: string;
+    labels?: Record<string, string>;
+    org: string;
+    project: string;
+    queue_dir?: string;
+    region?: string;
+    service?: string;
+    state_dir?: string;
+    version?: string;
+  }
+) {
+  return apiPost<NodeProvisioning>(scope, "/api/v1/inventory/nodes", input);
+}
+
 export async function updateHubUser(
   scope: ApiScope,
   user: HubUser,
@@ -466,10 +560,26 @@ export async function startHubUserTOTP(scope: ApiScope, user: HubUser) {
   ).then((body) => body);
 }
 
+export async function startCurrentHubUserTOTP(scope: ApiScope) {
+  return apiPost<ApiEnvelope<{ enrollment: HubUserTOTPEnrollment; user: HubUser }>>(
+    scope,
+    "/api/v1/auth/totp/start",
+    { issuer: "Aegrail" }
+  ).then((body) => body);
+}
+
 export async function verifyHubUserTOTP(scope: ApiScope, user: HubUser, code: string) {
   return apiPost<ApiEnvelope<{ user: HubUser }>>(
     scope,
     `/api/v1/access/users/${encodeURIComponent(user.id)}/totp/verify`,
+    { code }
+  ).then((body) => body.user);
+}
+
+export async function verifyCurrentHubUserTOTP(scope: ApiScope, code: string) {
+  return apiPost<ApiEnvelope<{ user: HubUser }>>(
+    scope,
+    "/api/v1/auth/totp/verify",
     { code }
   ).then((body) => body.user);
 }

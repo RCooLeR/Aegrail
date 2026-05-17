@@ -4,6 +4,7 @@
   --sidebar: #0b111b;
   --panel: #ffffff;
   --panel-soft: #f8fafc;
+  --surface: #f8fafc;
   --line: #d8e0ec;
   --line-soft: #e7edf5;
   --text: #172033;
@@ -735,6 +736,7 @@ input::placeholder {
 .panel-header {
   justify-content: space-between;
   margin-bottom: 12px;
+  flex-wrap: wrap;
 }
 
 .panel-header h2 {
@@ -1450,10 +1452,27 @@ td small {
   max-height: 320px;
 }
 
+.evidence-list.action-list {
+  max-height: none;
+  margin-top: 10px;
+}
+
+.action-guidance {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line-soft);
+}
+
 .muted-line {
   margin-top: 8px;
   color: var(--muted);
   font-size: 0.84rem;
+}
+
+.muted-line.inline {
+  margin-top: 0;
+  display: inline-flex;
+  align-items: center;
 }
 
 .comment-card,
@@ -1541,6 +1560,11 @@ td small {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface);
+}
+
+.analysis-operator-comment {
+  border-color: rgba(37, 99, 235, 0.22);
+  background: rgba(37, 99, 235, 0.06);
 }
 
 .analysis-section h4,
@@ -1664,6 +1688,37 @@ td small {
   gap: 10px;
   align-items: end;
   margin-bottom: 12px;
+}
+
+.form-grid.compact {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  gap: 10px;
+  align-items: end;
+}
+
+.form-grid.compact .primary-button {
+  min-height: 38px;
+}
+
+.provisioning-box {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.config-sample {
+  max-height: 420px;
+  overflow: auto;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: #0f172a;
+  color: #e5f6ff;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  white-space: pre;
 }
 
 .check-row {
@@ -1954,6 +2009,24 @@ input[type="checkbox"] {
   color: var(--cyan);
 }
 
+.empty-state strong {
+  color: var(--text);
+  font-size: 0.94rem;
+}
+
+.empty-state span {
+  max-width: 440px;
+  line-height: 1.42;
+}
+
+.empty-state.warning svg {
+  color: var(--yellow);
+}
+
+.empty-state.danger svg {
+  color: var(--red);
+}
+
 .inline-alert {
   display: flex;
   align-items: flex-start;
@@ -2005,6 +2078,13 @@ input[type="checkbox"] {
 
 .auth-card h1 {
   color: #edf3fb;
+}
+
+.auth-note {
+  color: #c8d4e3;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  margin: 0;
 }
 
 .auth-card .eyebrow,
@@ -2153,7 +2233,12 @@ input[type="checkbox"] {
     width: 100%;
   }
 
+  .panel-header {
+    align-items: flex-start;
+  }
+
   .filters,
+  .form-grid.compact,
   .user-form,
   .totp-box {
     grid-template-columns: 1fr;
@@ -2176,6 +2261,8 @@ input[type="checkbox"] {
 
   .issue-hero-actions {
     justify-content: flex-start;
+    width: 100%;
+    max-width: none;
   }
 
   .node-issue-actions {
@@ -2188,6 +2275,10 @@ input[type="checkbox"] {
 }
 
 @media (max-width: 560px) {
+  .main {
+    padding: 12px;
+  }
+
   .side-nav {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -2198,6 +2289,33 @@ input[type="checkbox"] {
 
   .summary-grid {
     gap: 10px;
+  }
+
+  .panel {
+    padding: 14px;
+  }
+
+  .panel-header,
+  .analysis-action,
+  .button-row {
+    align-items: stretch;
+    width: 100%;
+  }
+
+  .analysis-action .ghost-button,
+  .issue-hero-actions .ghost-button,
+  .button-row .ghost-button,
+  .button-row .primary-button {
+    flex: 1 1 150px;
+  }
+
+  .detail-tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+  }
+
+  .detail-tabs button {
+    flex: 0 0 auto;
   }
 
   .overview-company-metrics {

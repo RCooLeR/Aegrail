@@ -4,18 +4,18 @@
 
 Aegrail is a local-first monitoring and incident-triage system for WordPress, PrestaShop, and PHP application estates.
 
-It runs agents near sites, sends signed evidence to a Hub, turns deterministic rules into findings, and gives an operator dashboard for answering one practical question: is something wrong, where is it, and what evidence proves it?
+It runs agents near sites, sends encrypted evidence to a Hub, turns deterministic rules into findings, and gives an operator dashboard for answering one practical question: is something wrong, where is it, and what evidence proves it?
 
 ## Quick Links
 
+- [How Aegrail Works](how-it-works.md)
 - [Documentation Index](docs/README.md)
-- [Project Overview](docs/overview.md)
-- [Agent And Evidence Internals](docs/agent.md)
-- [Dashboard](docs/dashboard.md)
-- [Local Runbook](docs/runbook.md)
+- [Agent](docs/agent/README.md)
+- [Hub](docs/hub/README.md)
+- [Dashboard](docs/dashboard/README.md)
+- [Services](docs/services/README.md)
 - [Security And Data Handling](docs/security.md)
 - [Development Notes](docs/development.md)
-- [Project Tracker](docs/tracker.md)
 - [License](LICENSE.md)
 
 ## License

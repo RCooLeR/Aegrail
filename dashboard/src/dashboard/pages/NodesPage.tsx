@@ -242,7 +242,7 @@ function NodeIssueList({
             </button>
             <button className="ghost-button compact" type="button" disabled={actionLoading} onClick={() => onStatus(row, "acknowledged")}>
               <Eye size={14} />
-              Triaged
+              Acknowledge
             </button>
             <button className="ghost-button compact" type="button" disabled={actionLoading} onClick={() => onStatus(row, "resolved")}>
               <CheckCircle2 size={14} />

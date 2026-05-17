@@ -23,6 +23,7 @@ export type HubFinding = {
   title: string;
   summary?: string;
   description?: string;
+  operator_action?: Record<string, unknown>;
   event_ids: string[];
   first_event_at: string;
   last_event_at: string;
@@ -135,8 +136,19 @@ export type Agent = {
   fingerprint: string;
   version?: string;
   last_seen_at?: string;
+  wire_protocol?: string;
+  node_public_key?: string;
   created_at: string;
   updated_at: string;
+};
+
+export type NodeProvisioning = {
+  host: Host;
+  agent: Agent;
+  node_id: string;
+  node_secret: string;
+  hub_public_key: string;
+  sample_config: string;
 };
 
 export type Topology = {
@@ -217,7 +229,11 @@ export type HubUser = {
 export type HubAuthMe = {
   authenticated: boolean;
   auth_configured: boolean;
+  csrf_token?: string;
+  dashboard_ready?: boolean;
+  protocol?: string;
   requires_bootstrap: boolean;
+  totp_setup_required?: boolean;
   user?: HubUser;
 };
 

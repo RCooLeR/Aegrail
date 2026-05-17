@@ -10,7 +10,8 @@ Data handling rules:
 - Agent coverage payloads do not include local filesystem roots.
 - Database DSNs must come from environment variables such as `dsn_env`; literal DSNs with passwords are rejected.
 - File evidence does not include file contents.
-- Browser/log URLs are redacted for token, session, password, secret, and API-key-like query values.
+- Browser/log URLs are redacted for token, session, password, secret, and API-key-like query values before they leave the Agent queue.
+- Browser script attributes such as `src` are redacted before sending. The Hub should receive script domain/path/hash evidence, not private query material.
 - Free-text log/error evidence is pattern-redacted for credentials, cookies, and authorization-like assignments.
 - Database user/employee evidence may include full normalized emails/logins because the operator needs to know which account changed.
 - Set `AEGRAIL_PII_KEY` on agents that collect database users or employees to add stable one-way HMAC fingerprints for account identifiers.
@@ -18,21 +19,23 @@ Data handling rules:
 - Dashboard-triggered LLM analysis is generated from persisted Hub findings, not raw site files. The Hub builds an evidence bundle, applies redaction and truncation, hashes the bundle and prompt, calls the configured model gateway, then saves the report and provenance in PostgreSQL.
 - Automatic issue-queue analysis uses the same path. It skips a finding when the Hub already has a model report for the current evidence bundle hash, so repeated scans do not resend unchanged evidence.
 - TOTP enrollment uses a pending flow. The Hub returns a QR/secret once, requires a valid current code, then promotes the encrypted pending secret to the active 2FA secret.
+- Dashboard access requires an authenticated Hub session and active 2FA. Password-only sessions can only enroll/verify their own TOTP setup.
 
 ## Transport And Storage
 
-- Agent batches are signed with `AEGRAIL_HUB_INGEST_SECRET` using HMAC-SHA256 over `timestamp + newline + request body`.
-- The Hub rejects missing/invalid signatures and timestamps outside the configured skew window.
-- Signing gives authenticity and tamper detection. It does not encrypt the payload.
-- Transfer confidentiality comes from the URL you configure. Use `https://` or a trusted private tunnel/VPN outside localhost. `http://127.0.0.1` is acceptable for local development; plain `http://` over a network is not encrypted.
-- Aegrail does not currently do separate application-level end-to-end payload encryption before sending JSON to Hub.
+- Agent batches use `aegrail.agent.wire.v1`: the Agent encrypts the raw ingest JSON with X25519-derived AES-256-GCM using the node secret and Hub public key.
+- Browser crawling identifies itself as `AegrailBot/0.1 (+https://aegrail.local/monitoring; Aegrail bot)` by default. Browser-like fallback User-Agents are used only for compatibility when the named bot is blocked or fails with bot-filter status codes.
+- The Hub stores the node public key, decrypts with `AEGRAIL_HUB_WIRE_PRIVATE_KEY`, and rejects invalid ciphertext or timestamps outside the configured skew window.
+- Raw JSON ingest is not accepted. Agent traffic must arrive as an encrypted wire envelope.
+- Wire v1 protects the JSON payload, but transfer confidentiality still matters for HTTP metadata, cookies, and dashboard sessions. Use `https://` or a trusted private tunnel/VPN outside localhost.
 - Hub user TOTP secrets are encrypted at rest with AES-GCM using a key derived from `AEGRAIL_HUB_USER_SECRET`. If that secret is lost, existing TOTP secrets cannot be verified and users must be re-enrolled.
+- Dashboard mutating requests use `aegrail.dashboard.v1` with an HttpOnly session cookie and a session-bound CSRF token in `X-Aegrail-CSRF`.
 - Local agent queue/state files are JSON on disk, created with restrictive file permissions where the OS supports them. Treat `queue_dir` and `state_dir` as sensitive runtime data.
 - Hub stores accepted events, payloads, findings, reports, users, and audit-relevant metadata in PostgreSQL. Protect the database with normal database access controls, disk encryption/backup policy, and network restrictions.
 
 ## Secret Roles
 
-- `AEGRAIL_HUB_INGEST_SECRET`: shared signing secret for agent-to-Hub ingest.
+- `AEGRAIL_HUB_WIRE_PRIVATE_KEY`: Hub X25519 private key for decrypting Agent wire v1 envelopes.
 - `AEGRAIL_PII_KEY`: optional agent-side key for one-way HMAC fingerprints of account identifiers.
 - `AEGRAIL_HUB_USER_SECRET`: Hub-side encryption secret for user security material such as pending and active TOTP secrets.
 
@@ -40,7 +43,7 @@ Data handling rules:
 
 Before using Aegrail on real projects:
 
-- Use a strong `AEGRAIL_HUB_INGEST_SECRET`.
+- Generate and protect a strong `AEGRAIL_HUB_WIRE_PRIVATE_KEY`.
 - Use a separate strong `AEGRAIL_PII_KEY`.
 - Use `https://` Hub URLs or a private tunnel/VPN for any agent outside the same local machine.
 - Keep Hub behind local network/VPN/reverse proxy authentication.

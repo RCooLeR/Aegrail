@@ -1,7 +1,7 @@
-import { KeyRound, Loader2 } from "lucide-react";
+import { KeyRound, Loader2, QrCode, ShieldCheck } from "lucide-react";
 import { FormEvent, useState } from "react";
-import { createHubUser, loginHubUser, MFARequiredError } from "../../api";
-import type { ApiScope, HubAuthMe } from "../../types";
+import { createHubUser, loginHubUser, MFARequiredError, startCurrentHubUserTOTP, verifyCurrentHubUserTOTP } from "../../api";
+import type { ApiScope, HubAuthMe, HubUserTOTPEnrollment } from "../../types";
 import { InlineAlert, TextInput } from "./common";
 
 export function AuthGate({
@@ -25,6 +25,10 @@ export function AuthGate({
   const [mfaRequired, setMFARequired] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState("");
+  const [enrollment, setEnrollment] = useState<HubUserTOTPEnrollment | null>(null);
+  const [setupCode, setSetupCode] = useState("");
+
+  const needsTOTPSetup = Boolean(auth?.authenticated && auth.totp_setup_required && auth.user);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -54,6 +58,84 @@ export function AuthGate({
     } finally {
       setSubmitting(false);
     }
+  }
+
+  async function startTOTPSetup() {
+    setSubmitting(true);
+    setFormError("");
+    try {
+      const result = await startCurrentHubUserTOTP(scope);
+      setEnrollment(result.enrollment);
+    } catch (caught) {
+      setFormError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function verifyTOTPSetup(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSubmitting(true);
+    setFormError("");
+    try {
+      await verifyCurrentHubUserTOTP(scope, setupCode);
+      setEnrollment(null);
+      setSetupCode("");
+      await onAuthenticated();
+    } catch (caught) {
+      setFormError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (needsTOTPSetup) {
+    return (
+      <main className="auth-shell">
+        <section className="auth-card">
+          <img src={`${import.meta.env.BASE_URL}aegrail-horizontal-white.png`} alt="Aegrail" />
+          <div>
+            <p className="eyebrow">2FA required</p>
+            <h1>Secure this dashboard</h1>
+          </div>
+          <p className="auth-note">Aegrail requires an authenticator app before dashboard access is unlocked.</p>
+          {!enrollment ? (
+            <button className="primary-button" disabled={loading || submitting} type="button" onClick={startTOTPSetup}>
+              {loading || submitting ? <Loader2 size={16} className="spin" /> : <QrCode size={16} />}
+              Generate QR code
+            </button>
+          ) : (
+            <form className="form-stack" onSubmit={verifyTOTPSetup}>
+              <div className="totp-box">
+                <img src={enrollment.qr_code_data_url} alt="2FA QR code" />
+                <details>
+                  <summary>Cannot scan? Show secret</summary>
+                  <code>{enrollment.secret}</code>
+                </details>
+              </div>
+              <label>
+                2FA code
+                <input
+                  autoComplete="one-time-code"
+                  inputMode="numeric"
+                  maxLength={8}
+                  placeholder="123456"
+                  required
+                  value={setupCode}
+                  onChange={(event) => setSetupCode(event.target.value)}
+                />
+              </label>
+              {(error || formError) && <InlineAlert message={formError || error} />}
+              <button className="primary-button" disabled={loading || submitting} type="submit">
+                {loading || submitting ? <Loader2 size={16} className="spin" /> : <ShieldCheck size={16} />}
+                Verify and continue
+              </button>
+            </form>
+          )}
+          {!enrollment && (error || formError) && <InlineAlert message={formError || error} />}
+        </section>
+      </main>
+    );
   }
 
   return (

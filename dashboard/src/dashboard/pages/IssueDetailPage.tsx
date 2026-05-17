@@ -4,6 +4,8 @@ import {
   ArrowLeft,
   Brain,
   CheckCircle2,
+  Copy,
+  Download,
   Eye,
   FileText,
   Link2,
@@ -17,13 +19,13 @@ import type { RuleDefinition } from "../../types";
 import { modelPresetLabel } from "../config/modelPresets";
 import { collectorLabel, issueStatusLabel, nodeLabel, recommendedAction, signalTypeLabel } from "../model/viewModels";
 import type { IssueRow, ReportRow, SignalRow } from "../types";
-import { fileIgnorePathCandidate, firstMetadataString, metadataNumber, metadataString, metadataStringList } from "../utils/metadata";
-import { exportIssueBrief } from "../utils/reports";
+import { fileIgnorePathCandidate, firstMetadataString, metadataNumber, metadataString, metadataStringList, operatorActionGuidance } from "../utils/metadata";
+import { copyIssueBrief, exportIssueBrief } from "../utils/reports";
 import { AnalysisLine, isModelAnalysisHTML, parseModelAnalysisSections, splitCodeTokens } from "../utils/modelAnalysis";
 import { formatDate, formatRelative } from "../utils/time";
 import { EmptyState, Panel, ResponsiveTable, SeverityPill, StatusPill } from "../components/common";
 
-type IssueDetailTab = "overview" | "evidence" | "timeline" | "comments" | "related" | "analysis";
+type IssueDetailTab = "overview" | "evidence" | "timeline" | "comments" | "related" | "report" | "analysis";
 
 const tabs: Array<{ key: IssueDetailTab; label: string }> = [
   { key: "overview", label: "Overview" },
@@ -31,6 +33,7 @@ const tabs: Array<{ key: IssueDetailTab; label: string }> = [
   { key: "timeline", label: "Timeline" },
   { key: "comments", label: "Comments" },
   { key: "related", label: "Related issues" },
+  { key: "report", label: "Report" },
   { key: "analysis", label: "LLM analysis" }
 ];
 
@@ -89,7 +92,7 @@ export function IssueDetailPage({
       (candidate.instance.companySlug === instance.companySlug && candidate.instance.projectSlug === instance.projectSlug && candidate.service === service)
     )
     .slice(0, 8);
-  const matchingReports = reportRows.filter((item) => item.report.source_finding_ids.includes(finding.id)).slice(0, 5);
+  const matchingReports = latestReportsForFinding(reportRows, finding.id);
 
   return (
     <section className="issue-workspace">
@@ -104,8 +107,8 @@ export function IssueDetailPage({
           <p>{finding.summary || finding.description || rule?.title || "No summary was returned."}</p>
         </div>
         <div className="issue-hero-actions">
-          <button className="ghost-button" type="button" onClick={() => exportIssueBrief(row, rule)}><FileText size={15} /> Create report</button>
-          <button className="ghost-button" type="button" disabled={actionLoading} onClick={() => onStatus(row, "acknowledged")}><Eye size={15} /> Triaged</button>
+          <button className="ghost-button" type="button" onClick={() => setActiveTab("report")}><FileText size={15} /> Report</button>
+          <button className="ghost-button" type="button" disabled={actionLoading} onClick={() => onStatus(row, "acknowledged")}><Eye size={15} /> Acknowledge</button>
           <button className="ghost-button" type="button" disabled={actionLoading} onClick={() => onStatus(row, "resolved")}><CheckCircle2 size={15} /> Fixed</button>
           <button className="ghost-button" type="button" disabled={actionLoading} onClick={() => onStatus(row, "false_positive")}><XCircle size={15} /> False positive</button>
           {ignorePath && <button className="ghost-button" type="button" disabled={actionLoading} onClick={() => onIgnoreFilePath(row)}><XCircle size={15} /> Ignore directory</button>}
@@ -128,6 +131,7 @@ export function IssueDetailPage({
       {activeTab === "timeline" && <TimelineTab linkedSignals={linkedSignals} />}
       {activeTab === "comments" && <CommentsTab row={row} />}
       {activeTab === "related" && <RelatedIssuesTab onIssue={onIssue} rows={relatedIssues} />}
+      {activeTab === "report" && <ReportTab actionLoading={actionLoading} modelValue={selectedModel} onGenerate={() => onGenerateAnalysis(row)} reports={matchingReports} row={row} rule={rule} />}
       {activeTab === "analysis" && <AnalysisTab actionLoading={actionLoading} modelValue={selectedModel} onGenerate={() => onGenerateAnalysis(row)} reports={matchingReports} />}
     </section>
   );
@@ -157,9 +161,7 @@ function OverviewTab({ row, rule }: { row: IssueRow; rule?: RuleDefinition }) {
   const { finding } = row;
   return (
     <div className="issue-tab-grid">
-      <Panel title="Recommended action" icon={ShieldCheck}>
-        <p className="tab-copy">{recommendedAction(row, rule)}</p>
-      </Panel>
+      <OperatorActionPanel row={row} rule={rule} />
       <Panel title="Rule context" icon={AlertTriangle}>
         <dl className="compact-dl">
           <dt>Rule ID</dt><dd>{finding.rule_id}</dd>
@@ -177,6 +179,25 @@ function OverviewTab({ row, rule }: { row: IssueRow; rule?: RuleDefinition }) {
         </dl>
       </Panel>
     </div>
+  );
+}
+
+function OperatorActionPanel({ row, rule }: { row: IssueRow; rule?: RuleDefinition }) {
+  const guidance = operatorActionGuidance(row.finding);
+  const steps = guidance.actions.length ? guidance.actions : [recommendedAction(row, rule)];
+  return (
+    <Panel title="Recommended action" icon={ShieldCheck}>
+      <p className="tab-copy">{recommendedAction(row, rule)}</p>
+      {(guidance.safeToAcknowledgeWhen || guidance.escalateWhen) && (
+        <dl className="compact-dl action-guidance">
+          {guidance.safeToAcknowledgeWhen && <><dt>Acknowledge when</dt><dd>{guidance.safeToAcknowledgeWhen}</dd></>}
+          {guidance.escalateWhen && <><dt>Escalate when</dt><dd>{guidance.escalateWhen}</dd></>}
+        </dl>
+      )}
+      <ul className="evidence-list action-list">
+        {steps.map((step) => <li key={step}>{step}</li>)}
+      </ul>
+    </Panel>
   );
 }
 
@@ -288,6 +309,79 @@ function RelatedIssuesTab({ onIssue, rows }: { onIssue: (row: IssueRow) => void;
   );
 }
 
+function ReportTab({
+  actionLoading,
+  modelValue,
+  onGenerate,
+  reports,
+  row,
+  rule
+}: {
+  actionLoading: boolean;
+  modelValue: string;
+  onGenerate: () => void;
+  reports: ReportRow[];
+  row: IssueRow;
+  rule?: RuleDefinition;
+}) {
+  const [copyState, setCopyState] = useState("");
+  const latestReport = reports[0]?.report;
+  const guidance = operatorActionGuidance(row.finding);
+
+  async function handleCopy() {
+    setCopyState("");
+    try {
+      await copyIssueBrief(row, rule, latestReport);
+      setCopyState("Copied");
+    } catch (error) {
+      setCopyState(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  const action = (
+    <div className="analysis-action">
+      <button className="ghost-button compact" type="button" onClick={() => exportIssueBrief(row, rule, latestReport)}>
+        <Download size={15} /> Download
+      </button>
+      <button className="ghost-button compact" type="button" onClick={() => void handleCopy()}>
+        <Copy size={15} /> Copy
+      </button>
+      <button className="ghost-button compact" type="button" disabled={actionLoading} onClick={onGenerate}>
+        <Brain size={15} /> Generate analysis
+      </button>
+    </div>
+  );
+
+  return (
+    <div className="issue-tab-grid">
+      <Panel title="Issue brief" icon={FileText} action={action}>
+        <dl className="compact-dl">
+          <dt>Status</dt><dd>{issueStatusLabel(row.finding.status, row.finding.status_reason)}</dd>
+          <dt>Company</dt><dd>{row.instance.companyName}</dd>
+          <dt>Site</dt><dd>{row.instance.projectName}</dd>
+          <dt>Node</dt><dd>{nodeLabel(row.instance)}</dd>
+          <dt>Primary action</dt><dd>{guidance.primaryAction || recommendedAction(row, rule)}</dd>
+          {guidance.safeToAcknowledgeWhen && <><dt>Acknowledge when</dt><dd>{guidance.safeToAcknowledgeWhen}</dd></>}
+          {guidance.escalateWhen && <><dt>Escalate when</dt><dd>{guidance.escalateWhen}</dd></>}
+        </dl>
+        {copyState && <p className="muted-line">{copyState}</p>}
+      </Panel>
+      <Panel title="Model section" icon={Brain} action={<span className="muted-line inline">{modelPresetLabel(modelValue)}</span>}>
+        {latestReport ? (
+          <div className="analysis-card">
+            <strong>{latestReport.model_name || latestReport.model_provider || "Model report"}</strong>
+            <small>{latestReport.status} / {formatDate(latestReport.generated_at)}</small>
+            {latestReport.error && <p className="analysis-error">{latestReport.error}</p>}
+            {latestReport.analysis ? <AnalysisOutput analysis={latestReport.analysis} /> : <p className="tab-copy">No analysis body was returned.</p>}
+          </div>
+        ) : (
+          <EmptyState title="No model analysis yet" description="The brief still includes deterministic Hub guidance." />
+        )}
+      </Panel>
+    </div>
+  );
+}
+
 function AnalysisTab({ actionLoading, modelValue, onGenerate, reports }: { actionLoading: boolean; modelValue: string; onGenerate: () => void; reports: ReportRow[] }) {
   const action = (
     <div className="analysis-action">
@@ -328,6 +422,13 @@ function AnalysisTab({ actionLoading, modelValue, onGenerate, reports }: { actio
       </div>
     </Panel>
   );
+}
+
+function latestReportsForFinding(reportRows: ReportRow[], findingID: string) {
+  const matching = reportRows.filter((item) => item.report.source_finding_ids.includes(findingID));
+  const completed = matching.find((item) => item.report.status === "completed" && item.report.analysis);
+  const latest = completed ?? matching[0];
+  return latest ? [latest] : [];
 }
 
 function AnalysisOutput({ analysis }: { analysis: string }) {

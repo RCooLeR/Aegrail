@@ -28,7 +28,7 @@ export function IssuesPage({
       <Panel title="Issue queue" icon={AlertTriangle} action={<select value={status} onChange={(event) => setStatus(event.target.value)}>
         <option value="active">New only</option>
         <option value="all">All statuses</option>
-        <option value="acknowledged">Triaged</option>
+        <option value="acknowledged">Acknowledged</option>
         <option value="resolved">Fixed</option>
         <option value="false_positive">False positive</option>
       </select>}>
@@ -57,7 +57,7 @@ export function IssuesPage({
                 <td>
                   <StatusPill value={issueStatusLabel(row.finding.status, row.finding.status_reason)} />
                   <div className="inline-row-actions">
-                    <button type="button" disabled={actionLoading} onClick={(event) => { event.stopPropagation(); onStatus(row, "acknowledged"); }}>Triaged</button>
+                    <button type="button" disabled={actionLoading} onClick={(event) => { event.stopPropagation(); onStatus(row, "acknowledged"); }}>Acknowledge</button>
                     <button type="button" disabled={actionLoading} onClick={(event) => { event.stopPropagation(); onStatus(row, "resolved"); }}>Fixed</button>
                   </div>
                 </td>

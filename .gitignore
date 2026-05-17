@@ -14,9 +14,16 @@ app/.aegrail/
 app/bin/
 app/tmp/
 app/dist/
+agent/bin/
+agent/tmp/
+hub/bin/
+hub/tmp/
 dashboard/node_modules/
 dashboard/dist/
 tmp/
+.tmp-go/
+agent/.tmp-go/
+hub/.tmp-go/
 *.exe
 *.test
 coverage.out

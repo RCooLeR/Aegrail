@@ -1,0 +1,262 @@
+schema: aegrail.agent.server_config.v1
+
+hub:
+  url: http://127.0.0.1:8787
+  protocol: aegrail-wire-v1
+  hub_public_key: replace-with-hub-public-key
+  node_secret: replace-with-node-secret
+  send_limit: 100
+
+identity:
+  org: acme
+  project: hosted-sites
+  environment: production
+  host: web-01
+  agent_id: agt_web_01
+  region: eu-central
+  labels:
+    role: web
+    provider: vps
+
+runtime:
+  queue_dir: /var/lib/aegrail/queue
+  state_dir: /var/lib/aegrail/state
+  interval: 30s
+  timezone: UTC
+
+sites:
+  - slug: example-com
+    name: Example WordPress
+    domain: example.com
+    kind: wordpress
+    app: example-com
+    service: frontend
+    root: /var/www/example.com
+    labels:
+      cms: wordpress
+      tier: production
+    files:
+      profiles:
+        - wordpress
+      extra_paths:
+        - /var/www/example.com/wp-content/mu-plugins
+      exclude:
+        - /var/www/example.com/wp-content/cache
+    logs:
+      - path: /var/log/nginx/example.com.access.log
+        kind: nginx_access
+      - path: /var/www/example.com/wp-content/debug.log
+        kind: php_error
+    databases:
+      - name: wordpress
+        engine: mysql
+        dsn_env: AEGRAIL_DB_EXAMPLE_COM_DSN
+        profile: wordpress
+        table_prefix: wp_
+        timeout: 10s
+        schedule: 15m
+    browser_crawl:
+      enabled: true
+      rendered: true
+      wait_tag_manager: true
+      max_pages: 8
+      timeout: 30s
+      urls:
+        - https://example.com/
+        - https://example.com/contact/
+
+  - slug: example2-com
+    name: Example2 PrestaShop
+    domain: example2.com
+    kind: prestashop
+    app: example2-com
+    service: frontend
+    root: /var/www/example2.com
+    labels:
+      cms: prestashop
+      tier: production
+    files:
+      profiles:
+        - prestashop
+    logs:
+      - path: /var/log/nginx/example2.com.access.log
+        kind: nginx_access
+      - path: /var/www/example2.com/var/logs
+        kind: php_error
+    databases:
+      - name: prestashop
+        engine: mysql
+        dsn_env: AEGRAIL_DB_EXAMPLE2_COM_DSN
+        profile: prestashop
+        table_prefix: ps_
+        timeout: 10s
+        schedule: 15m
+    browser_crawl:
+      enabled: true
+      rendered: true
+      wait_tag_manager: false
+      max_pages: 8
+      timeout: 30s
+      urls:
+        - https://example2.com/
+        - https://example2.com/contact-us
+
+  - slug: network-main
+    name: Example WordPress Network
+    domain: network.example.net
+    kind: wordpress-multisite
+    app: network-main
+    service: frontend
+    root: /var/www/network.example.net
+    files:
+      profiles:
+        - wordpress
+    databases:
+      - name: wordpress_network
+        engine: mysql
+        dsn_env: AEGRAIL_DB_NETWORK_MAIN_DSN
+        profile: wordpress
+        table_prefix: wp_
+        timeout: 10s
+        schedule: 15m
+    wordpress:
+      multisite: true
+      network_sites:
+        - blog_id: 1
+          domain: network.example.net
+        - blog_id: 2
+          domain: shop.network.example.net
+    browser_crawl:
+      enabled: true
+      rendered: true
+      wait_tag_manager: true
+      max_pages: 12
+      timeout: 45s
+      urls:
+        - https://network.example.net/
+        - https://shop.network.example.net/
+
+  - slug: marketing-automation
+    name: Example Mautic
+    domain: marketing.example.com
+    kind: mautic
+    app: marketing-automation
+    service: frontend
+    root: /var/www/marketing.example.com
+    labels:
+      cms: mautic
+      tier: production
+    files:
+      profiles:
+        - mautic
+      exclude:
+        - /var/www/marketing.example.com/var/cache
+        - /var/www/marketing.example.com/var/logs
+        - /var/www/marketing.example.com/app/cache
+        - /var/www/marketing.example.com/app/logs
+    logs:
+      - path: /var/log/nginx/marketing.example.com.access.log
+        kind: nginx_access
+      - path: /var/www/marketing.example.com/var/logs
+        kind: php_error
+    databases:
+      - name: mautic
+        engine: mysql
+        dsn_env: AEGRAIL_DB_MAUTIC_DSN
+        profile: mautic
+        table_prefix: ""
+        timeout: 10s
+        schedule: 15m
+    browser_crawl:
+      enabled: true
+      rendered: true
+      wait_tag_manager: false
+      max_pages: 5
+      timeout: 30s
+      urls:
+        - https://marketing.example.com/
+
+  - slug: yii2-rbac
+    name: Example Yii2 RBAC
+    domain: yii2-rbac.example.com
+    kind: yii2-rbac
+    app: yii2-rbac
+    service: frontend
+    root: /var/www/yii2-rbac.example.com
+    labels:
+      app_profile: yii2-rbac
+      tier: production
+    files:
+      profiles:
+        - yii2-rbac
+      exclude:
+        - /var/www/yii2-rbac.example.com/vendor
+        - /var/www/yii2-rbac.example.com/runtime
+        - /var/www/yii2-rbac.example.com/assets
+        - /var/www/yii2-rbac.example.com/web/assets
+        - /var/www/yii2-rbac.example.com/web/app-assets
+        - /var/www/yii2-rbac.example.com/tests
+    logs:
+      - path: /var/log/nginx/yii2-rbac.example.com.access.log
+        kind: nginx_access
+      - path: /var/www/yii2-rbac.example.com/runtime/logs
+        kind: php_error
+    databases:
+      - name: yii2_rbac
+        engine: postgres
+        dsn_env: AEGRAIL_DB_YII2_RBAC_DSN
+        profile: yii2-rbac
+        table_prefix: ""
+        timeout: 10s
+        schedule: 15m
+    browser_crawl:
+      enabled: true
+      rendered: true
+      wait_tag_manager: false
+      max_pages: 5
+      timeout: 30s
+      urls:
+        - https://yii2-rbac.example.com/
+
+  - slug: laravel
+    name: Example Laravel
+    domain: laravel.example.com
+    kind: laravel
+    app: laravel
+    service: frontend
+    root: /var/www/laravel.example.com
+    labels:
+      app_profile: laravel
+      tier: production
+    files:
+      profiles:
+        - laravel
+      exclude:
+        - /var/www/laravel.example.com/vendor
+        - /var/www/laravel.example.com/node_modules
+        - /var/www/laravel.example.com/storage
+        - /var/www/laravel.example.com/bootstrap/cache
+        - /var/www/laravel.example.com/public/build
+        - /var/www/laravel.example.com/public/vendor
+        - /var/www/laravel.example.com/tests
+    logs:
+      - path: /var/log/nginx/laravel.example.com.access.log
+        kind: nginx_access
+      - path: /var/www/laravel.example.com/storage/logs
+        kind: php_error
+    databases:
+      - name: laravel
+        engine: mysql
+        dsn_env: AEGRAIL_DB_LARAVEL_DSN
+        profile: laravel
+        table_prefix: ""
+        timeout: 10s
+        schedule: 15m
+    browser_crawl:
+      enabled: true
+      rendered: true
+      wait_tag_manager: false
+      max_pages: 5
+      timeout: 30s
+      urls:
+        - https://laravel.example.com/

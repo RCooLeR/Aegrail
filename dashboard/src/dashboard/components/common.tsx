@@ -40,8 +40,27 @@ export function StatusPill({ tone, value }: { tone?: string; value: string }) {
   return <span className={`pill ${tone ?? statusTone(value)}`}>{value}</span>;
 }
 
-export function EmptyState({ title }: { title: string }) {
-  return <div className="empty-state"><ShieldCheck size={18} /><span>{title}</span></div>;
+export function EmptyState({
+  action,
+  description,
+  icon: Icon = ShieldCheck,
+  title,
+  tone = "neutral"
+}: {
+  action?: ReactNode;
+  description?: string;
+  icon?: LucideIcon;
+  title: string;
+  tone?: "neutral" | "warning" | "danger";
+}) {
+  return (
+    <div className={`empty-state ${tone}`}>
+      <Icon size={20} />
+      <strong>{title}</strong>
+      {description && <span>{description}</span>}
+      {action}
+    </div>
+  );
 }
 
 export function InlineAlert({ message }: { message: string }) {
@@ -52,8 +71,12 @@ export function InlineSuccess({ message }: { message: string }) {
   return <div className="inline-success"><CheckCircle2 size={16} />{message}</div>;
 }
 
-export function LoadingBlock() {
-  return <div className="empty-state"><Loader2 size={18} className="spin" /><span>Loading</span></div>;
+export function ErrorState({ message, title = "Could not load data" }: { message: string; title?: string }) {
+  return <EmptyState description={message} icon={AlertTriangle} title={title} tone="danger" />;
+}
+
+export function LoadingBlock({ title = "Loading" }: { title?: string }) {
+  return <div className="empty-state"><Loader2 size={18} className="spin" /><strong>{title}</strong></div>;
 }
 
 export function TextInput({ label, onChange, placeholder, value }: { label: string; onChange: (value: string) => void; placeholder?: string; value: string }) {
