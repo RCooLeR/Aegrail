@@ -305,11 +305,6 @@ func (h *Hub) verifyHubUserTOTP(user domain.HubUser, code string, at time.Time) 
 	return h.verifyAndConsumeTOTPCode(user.ID, secret, code, at), nil
 }
 
-func verifyTOTPCode(secret string, code string, at time.Time) bool {
-	_, ok := verifyTOTPCodeCounter(secret, code, at)
-	return ok
-}
-
 func (h *Hub) verifyAndConsumeTOTPCode(userID domain.ID, secret string, code string, at time.Time) bool {
 	counter, ok := verifyTOTPCodeCounter(secret, code, at)
 	if !ok {
@@ -404,6 +399,9 @@ func decryptHubUserSecret(secretKey string, ciphertextValue string) (string, err
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
 		return "", err
+	}
+	if len(nonce) != gcm.NonceSize() {
+		return "", errors.New("stored 2FA nonce is invalid")
 	}
 	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
 	if err != nil {

@@ -49,6 +49,13 @@ User-security follow-up implemented on 2026-05-18:
 | ARCH-01 | Replaced bare SHA-256 TOTP secret key derivation with HKDF-SHA-256-backed `v2` ciphertext. No legacy decrypt fallback is kept because the project is not deployed yet. |
 | TEST-01 | Added HTTP duplicate-create regression coverage for owner and non-owner users plus PostgreSQL duplicate insert coverage. |
 
+Ninth-pass cleanup implemented on 2026-05-18:
+
+| ID | Resolution |
+|---|---|
+| DEAD-01 | Deleted the unused `verifyTOTPCode` wrapper so all live TOTP verification paths keep replay protection through `verifyAndConsumeTOTPCode`. |
+| TEST-02 | Added explicit coverage that malformed `v2` TOTP ciphertext with a short nonce returns a nonce error before AES-GCM open. |
+
 The issue details below are retained as the source analysis. The table above is the current implementation status.
 
 ### Bugs

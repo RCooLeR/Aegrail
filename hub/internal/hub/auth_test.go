@@ -43,7 +43,11 @@ func TestHubUserSecretEncryptionUsesHKDFV2(t *testing.T) {
 	if plaintext != "JBSWY3DPEHPK3PXP" {
 		t.Fatalf("plaintext = %q", plaintext)
 	}
+	// Any non-v2 version tag must be rejected.
 	if _, err := decryptHubUserSecret("strong local test secret", "v1:abc:def"); err == nil {
-		t.Fatalf("legacy v1 ciphertext was accepted")
+		t.Fatalf("non-v2 ciphertext was accepted without error")
+	}
+	if _, err := decryptHubUserSecret("strong local test secret", "v2:abc:def"); err == nil || !strings.Contains(err.Error(), "nonce") {
+		t.Fatalf("short nonce error = %v, want nonce error", err)
 	}
 }
