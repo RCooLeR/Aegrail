@@ -18,18 +18,20 @@ This is the cross-project tracker. App-specific details live in:
 - Modular React dashboard with operational overview, drilldowns, issue detail, signals, scripts, deployments, reports, and settings.
 - Deterministic rules, Redis-backed ingest correlation, finding lifecycle, baseline acceptance, ignore/allowlist workflows, reports, and optional model analysis.
 - Mautic, Yii2 RBAC, and Laravel support in Agent collectors, Hub rules, and model-analysis prompt context.
+- Admin login POST and password-reset request monitoring from normalized access logs.
 - Browser crawler uses a named Aegrail bot identity, compatibility fallbacks, and redacted browser URL/attribute payloads.
+- Email notifications through Mailjet SMTP and browser push notifications through VAPID/web push subscriptions.
+- Added Docker examples for packaging Hub and Agent with ignored env/config templates.
 
 ## Next
 
 - Tighten default noise rules for cache/upload/generated paths as more real projects are profiled.
 - Improve report comparison between deterministic findings and model analysis.
-- Add operational scripts for starting a local Hub plus multiple Agents.
+- Add production rollout runbooks for starting Hub plus one Agent at a time.
 
 ## Later
 
 - Provider-hosted collectors.
 - Scheduled Hub-side jobs.
-- Notifications.
 - Per-agent secrets or mTLS.
 - Audit log and retention settings.

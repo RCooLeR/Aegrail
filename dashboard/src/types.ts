@@ -246,6 +246,11 @@ export type HubUserTOTPEnrollment = {
   secret: string;
 };
 
+export type PushNotificationConfig = {
+  enabled: boolean;
+  public_key?: string;
+};
+
 export type ModelAnalysisReport = {
   id: string;
   app_id?: string;

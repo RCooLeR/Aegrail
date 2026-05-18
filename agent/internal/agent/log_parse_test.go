@@ -170,3 +170,38 @@ func TestMauticAccessLogFilterDropsStaticClientNoiseButKeepsServerErrors(t *test
 		t.Fatalf("event = %#v, want static Mautic server error kept", static500)
 	}
 }
+
+func TestAccessLogFiltersKeepPasswordResetPaths(t *testing.T) {
+	cases := []struct {
+		name     string
+		siteKind string
+		target   string
+	}{
+		{
+			name:     "mautic",
+			siteKind: "mautic",
+			target:   "/passwordreset",
+		},
+		{
+			name:     "yii2",
+			siteKind: "yii2-rbac",
+			target:   "/site/request-password-reset",
+		},
+		{
+			name:     "laravel",
+			siteKind: "laravel",
+			target:   "/forgot-password",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			event := logLineEvent("/var/log/nginx/access.log", logLine{
+				Text: `203.0.113.10 - - [12/May/2026:09:10:11 +0000] "POST ` + tc.target + ` HTTP/1.1" 200 42 "-" "Mozilla/5.0"`,
+			})
+			event.Labels = mergeStringMaps(event.Labels, map[string]string{"site_kind": tc.siteKind})
+			if shouldDropNoisyLogEvent(event) {
+				t.Fatalf("event = %#v, want password reset path kept", event)
+			}
+		})
+	}
+}

@@ -158,6 +158,8 @@ func ruleSpecificRiskFactors(ruleID string) []riskFactor {
 		add("rule:incident_chain", 12, "probable multi-step incident chain")
 	case "web-to-file-change", "file-change-to-sensitive-followup", "file-change-to-db-security-change", "file-change-to-persistence":
 		add("rule:correlated_followup", 8, "sensitive follow-up after an earlier signal")
+	case "web-password-reset-request":
+		add("rule:account_recovery", 4, "account recovery request observed")
 	case "file-php-in-writable-path":
 		add("rule:writable_php", 8, "PHP file under writable path")
 	case "file-sensitive-config-changed":

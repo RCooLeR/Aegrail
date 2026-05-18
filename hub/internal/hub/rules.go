@@ -246,10 +246,12 @@ func defaultRuleDefinitions() []RuleDefinition {
 		"browser-inline-script-changed",
 		"browser-tag-manager-id-new",
 		"browser-script-drift",
+		"web-admin-login-request",
 		"web-admin-success-after-failures",
 		"web-admin-failed-request-burst",
 		"web-admin-login-post-burst",
 		"web-admin-tool-probe",
+		"web-password-reset-request",
 		"web-request-volume-spike",
 		"web-error-rate-spike",
 		"web-admin-post-volume-spike",
@@ -427,10 +429,12 @@ func isFilePathRuleID(id string) bool {
 
 func isWebRequestRuleID(id string) bool {
 	switch id {
-	case "web-admin-success-after-failures",
+	case "web-admin-login-request",
+		"web-admin-success-after-failures",
 		"web-admin-failed-request-burst",
 		"web-admin-login-post-burst",
 		"web-admin-tool-probe",
+		"web-password-reset-request",
 		"web-request-volume-spike",
 		"web-error-rate-spike",
 		"web-admin-post-volume-spike",

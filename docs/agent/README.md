@@ -8,7 +8,7 @@ The Agent runs near a monitored site or hosting account. It reads a YAML config,
 | --- | --- | --- |
 | Files | Profile paths, configured extra paths, file metadata, mtime, size, and SHA-256 when hashed. | File created/modified/deleted events with relative paths and hashes. No file contents. |
 | Database | Read-only platform snapshots for WordPress, PrestaShop, Mautic, Yii2 RBAC, and Laravel. | Counts, entity signatures, safe account identifiers, masked hints, optional HMAC identifiers, and hashes of selected values. No DSNs, password hashes, raw tokens, or raw secrets. |
-| Logs | New access/PHP/generic log lines since the saved offset. | Normalized request/error events with query strings, cookies, auth headers, passwords, sessions, and tokens redacted. |
+| Logs | New access/PHP/generic log lines since the saved offset. Admin login, password-reset, privileged/admin, server-error, and platform-specific security paths are kept while routine campaign/static noise can be dropped. | Normalized request/error events with query strings, cookies, auth headers, passwords, sessions, and tokens redacted. |
 | Browser | Static or rendered pages from configured URLs only. | Redacted page/script URLs, script domains/paths, inline script hashes, tag-manager IDs, favicons, status/warnings, and the crawler User-Agent. |
 | Coverage | Enabled collectors and safe config posture. | Collector state, disabled/optional coverage, DSN-env presence, and sanitized ignore paths. No local roots or env values. |
 

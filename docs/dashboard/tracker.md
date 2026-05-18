@@ -13,12 +13,13 @@
 - Dashboard wording now uses `Acknowledged` instead of the confusing `Triaged` label.
 - Reusable empty/loading/error states and tighter mobile behavior for issue detail, tabs, actions, and panels.
 - Settings tabs for profile, Hub scope, triage defaults, companies, sites, nodes, users/2FA, and inventory.
+- Profile push notification controls with browser support/config/permission/subscription state.
 - Site icons/favicons where available.
 
 ## Next
 
 - Validate the dashboard against a live Hub with all local agents running.
-- Add daily/operator notifications once the notification backend is ready.
+- Validate push opt-in against a served Hub URL with HTTPS or localhost.
 
 ## Later
 

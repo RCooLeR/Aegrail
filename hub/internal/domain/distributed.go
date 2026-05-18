@@ -270,9 +270,9 @@ type HubUserTOTPStart struct {
 }
 
 type HubUserTOTPActivation struct {
-	ActiveSecretCiphertext string
+	ActiveSecretCiphertext          string
 	ExpectedPendingSecretCiphertext string
-	EnrolledAt             time.Time
+	EnrolledAt                      time.Time
 }
 
 type HubUserSession struct {
@@ -282,5 +282,18 @@ type HubUserSession struct {
 	ExpiresAt  time.Time
 	RevokedAt  *time.Time
 	CreatedAt  time.Time
+	LastSeenAt time.Time
+}
+
+type HubPushSubscription struct {
+	ID         ID
+	UserID     ID
+	Endpoint   string
+	P256DH     string
+	Auth       string
+	UserAgent  string
+	Status     string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 	LastSeenAt time.Time
 }

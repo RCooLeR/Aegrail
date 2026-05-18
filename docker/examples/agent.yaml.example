@@ -1,0 +1,86 @@
+schema: aegrail.agent.server_config.v1
+
+hub:
+  url: https://hub.example.internal
+  protocol: aegrail-wire-v1
+  hub_public_key: replace-with-hub-public-key-from-node-create
+  node_secret: ""
+  node_secret_env: AEGRAIL_NODE_SECRET
+  send_limit: 100
+
+identity:
+  org: acme
+  project: example-wordpress
+  environment: production
+  host: web-01
+  agent_id: agt_example_wordpress_web_01
+  region: local
+  labels:
+    role: web
+    runtime: docker
+
+runtime:
+  queue_dir: /var/lib/aegrail/queue
+  state_dir: /var/lib/aegrail/state
+  sent_retention: 0s
+  interval: 30s
+  timezone: UTC
+
+sites:
+  - slug: example-wordpress
+    name: Example WordPress
+    domain: example.com
+    kind: wordpress
+    app: main-web
+    service: frontend
+    root: /mnt/sites/example-wordpress
+    labels:
+      cms: wordpress
+
+    files:
+      enabled: true
+      profiles:
+        - wordpress
+      extra_paths:
+        - /mnt/sites/example-wordpress/wp-config.php
+        - /mnt/sites/example-wordpress/wp-config-local.php
+        - /mnt/sites/example-wordpress/wp-content/mu-plugins
+        - /mnt/sites/example-wordpress/wp-content/plugins
+        - /mnt/sites/example-wordpress/wp-content/themes
+      exclude:
+        - /mnt/sites/example-wordpress/wp-content/cache
+        - /mnt/sites/example-wordpress/wp-content/upgrade
+        - /mnt/sites/example-wordpress/wp-content/uploads/cache
+
+    coverage:
+      enabled: true
+
+    logs:
+      - path: /mnt/logs/nginx/example-wordpress.access.log
+        kind: nginx_access
+
+    databases:
+      - name: wordpress
+        engine: mysql
+        dsn: ""
+        dsn_env: AEGRAIL_DB_EXAMPLE_WORDPRESS_DSN
+        profile: wordpress
+        table_prefix: wp_
+        timeout: 20s
+        schedule: 5m
+
+    browser_crawl:
+      enabled: true
+      rendered: true
+      wait_tag_manager: true
+      max_pages: 5
+      timeout: 30s
+      schedule: 15m
+      user_agent: ""
+      fallback_user_agents: []
+      urls:
+        - https://example.com/
+
+    wordpress:
+      multisite: false
+      network_sites: []

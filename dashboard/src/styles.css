@@ -1704,6 +1704,11 @@ td small {
   align-self: stretch;
 }
 
+.notification-settings {
+  display: grid;
+  gap: 12px;
+}
+
 .user-form {
   display: grid;
   grid-template-columns: minmax(180px, 1.1fr) minmax(150px, 0.8fr) minmax(160px, 0.9fr) minmax(120px, 0.55fr) auto auto;

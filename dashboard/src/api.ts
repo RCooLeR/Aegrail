@@ -16,6 +16,7 @@ import type {
   ModelAnalysisReport,
   MonitoredApp,
   NodeProvisioning,
+  PushNotificationConfig,
   RequestState,
   RuleDefinition,
   TimelineEvent,
@@ -548,6 +549,18 @@ export async function createBrowserScriptAllowlistEntry(
 
 export async function loadHubUsers(scope: ApiScope) {
   return apiGet<ApiEnvelope<{ users: HubUser[] }>>(scope, "/api/v1/access/users").then((body) => body.users ?? []);
+}
+
+export async function loadPushNotificationConfig(scope: ApiScope) {
+  return apiGet<PushNotificationConfig>(scope, "/api/v1/notifications/push/config");
+}
+
+export async function savePushSubscription(scope: ApiScope, subscription: PushSubscriptionJSON) {
+  return apiPost(scope, "/api/v1/notifications/push/subscriptions", subscription);
+}
+
+export async function deletePushSubscription(scope: ApiScope, endpoint: string) {
+  return apiPost(scope, "/api/v1/notifications/push/subscriptions/delete", { endpoint });
 }
 
 export async function createHubUser(

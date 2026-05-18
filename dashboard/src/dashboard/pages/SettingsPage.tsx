@@ -1,4 +1,5 @@
 import {
+  Bell,
   Building2,
   Copy,
   DatabaseZap,
@@ -22,8 +23,11 @@ import {
   createInventorySite,
   createHubUser,
   defaultScope,
+  deletePushSubscription,
   disableHubUserTOTP,
   loadHubUsers,
+  loadPushNotificationConfig,
+  savePushSubscription,
   startHubUserTOTP,
   updateInventoryAgent,
   updateInventoryApp,
@@ -36,7 +40,7 @@ import {
   verifyHubUserTOTP
 } from "../../api";
 import type { InstanceModel } from "../../estate";
-import type { Agent, ApiScope, Host, HubUser, HubUserTOTPEnrollment, InventoryEnvironment, InventoryOrganization, InventoryProject, MonitoredApp, NodeProvisioning, Service } from "../../types";
+import type { Agent, ApiScope, Host, HubUser, HubUserTOTPEnrollment, InventoryEnvironment, InventoryOrganization, InventoryProject, MonitoredApp, NodeProvisioning, PushNotificationConfig, Service } from "../../types";
 import { autoModelValue, modelPresets } from "../config/modelPresets";
 import type { ActionState, SiteRow } from "../types";
 import { formatDate, formatRelative } from "../utils/time";
@@ -161,22 +165,184 @@ export function SettingsPage({
 
 function ProfileSettings({ scope, user }: { scope: ApiScope; user?: HubUser }) {
   return (
-    <Panel title="Profile" icon={UserCircle}>
-      {user ? (
-        <div className="settings-summary-grid">
-          <MiniBlock label="User" value={user.display_name || user.email} />
-          <MiniBlock label="Email" value={user.email} />
-          <MiniBlock label="Access" value={user.access_level} />
-          <MiniBlock label="Status" value={user.status} />
-          <MiniBlock label="2FA" value={user.two_factor_enabled ? "enabled" : user.two_factor_pending ? "pending" : user.two_factor_required ? "required" : "optional"} />
-          <MiniBlock label="Last sign-in" value={user.last_login_at ? formatRelative(user.last_login_at) : "never"} />
+    <div className="page-stack">
+      <Panel title="Profile" icon={UserCircle}>
+        {user ? (
+          <div className="settings-summary-grid">
+            <MiniBlock label="User" value={user.display_name || user.email} />
+            <MiniBlock label="Email" value={user.email} />
+            <MiniBlock label="Access" value={user.access_level} />
+            <MiniBlock label="Status" value={user.status} />
+            <MiniBlock label="2FA" value={user.two_factor_enabled ? "enabled" : user.two_factor_pending ? "pending" : user.two_factor_required ? "required" : "optional"} />
+            <MiniBlock label="Last sign-in" value={user.last_login_at ? formatRelative(user.last_login_at) : "never"} />
+          </div>
+        ) : (
+          <EmptyState title="No signed-in user loaded" />
+        )}
+        <p className="muted-line">Current dashboard scope: {scope.org} / {scope.project} / {scope.environment} / {scope.app || "all apps"}</p>
+      </Panel>
+      <PushNotificationSettings scope={scope} />
+    </div>
+  );
+}
+
+function PushNotificationSettings({ scope }: { scope: ApiScope }) {
+  const [config, setConfig] = useState<PushNotificationConfig | null>(null);
+  const [supported, setSupported] = useState(false);
+  const [permission, setPermission] = useState<NotificationPermission>("default");
+  const [subscribed, setSubscribed] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  async function refresh() {
+    setLoading(true);
+    setError("");
+    try {
+      const nextConfig = await loadPushNotificationConfig(scope);
+      setConfig(nextConfig);
+      const canPush = browserPushSupported();
+      setSupported(canPush);
+      setPermission(canPush ? Notification.permission : "denied");
+      if (canPush) {
+        const registration = await navigator.serviceWorker.getRegistration("/dashboard/");
+        const subscription = await registration?.pushManager.getSubscription();
+        setSubscribed(Boolean(subscription));
+      } else {
+        setSubscribed(false);
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void refresh();
+  }, [scope.baseUrl]);
+
+  async function enablePush() {
+    setSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      if (!config?.enabled || !config.public_key) {
+        throw new Error("Browser push is not configured on this Hub");
+      }
+      if (!browserPushSupported()) {
+        throw new Error("This browser cannot receive push notifications from this page");
+      }
+      const nextPermission = Notification.permission === "granted" ? "granted" : await Notification.requestPermission();
+      setPermission(nextPermission);
+      if (nextPermission !== "granted") {
+        throw new Error("Browser notification permission was not granted");
+      }
+      const registration = await navigator.serviceWorker.register("/dashboard/aegrail-sw.js", { scope: "/dashboard/" });
+      const existing = await registration.pushManager.getSubscription();
+      const subscription = existing ?? await registration.pushManager.subscribe({
+        applicationServerKey: urlBase64ToUint8Array(config.public_key),
+        userVisibleOnly: true
+      });
+      await savePushSubscription(scope, pushSubscriptionPayload(subscription));
+      setSubscribed(true);
+      setMessage("Push notifications are enabled for this browser.");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function disablePush() {
+    setSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      const registration = await navigator.serviceWorker.getRegistration("/dashboard/");
+      const subscription = await registration?.pushManager.getSubscription();
+      if (subscription) {
+        const endpoint = subscription.endpoint;
+        await subscription.unsubscribe();
+        await deletePushSubscription(scope, endpoint);
+      }
+      setSubscribed(false);
+      setMessage("Push notifications are disabled for this browser.");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const disabledReason = pushDisabledReason(config, supported, permission);
+  return (
+    <Panel title="Push notifications" icon={Bell}>
+      {error && <InlineAlert message={error} />}
+      {message && <InlineSuccess message={message} />}
+      {loading ? <LoadingBlock /> : (
+        <div className="notification-settings">
+          <div className="settings-summary-grid">
+            <MiniBlock label="Hub push" value={config?.enabled ? "configured" : "disabled"} />
+            <MiniBlock label="Browser" value={supported ? "supported" : "unsupported"} />
+            <MiniBlock label="Permission" value={permission} />
+            <MiniBlock label="This browser" value={subscribed ? "subscribed" : "not subscribed"} />
+          </div>
+          {disabledReason && <p className="muted-line">{disabledReason}</p>}
+          <div className="button-row">
+            <button className="primary-button" type="button" disabled={saving || Boolean(disabledReason) || subscribed} onClick={() => void enablePush()}>
+              {saving ? <Loader2 size={15} className="spin" /> : <Bell size={15} />}
+              Enable
+            </button>
+            <button className="ghost-button" type="button" disabled={saving || !subscribed} onClick={() => void disablePush()}>
+              Disable
+            </button>
+          </div>
         </div>
-      ) : (
-        <EmptyState title="No signed-in user loaded" />
       )}
-      <p className="muted-line">Current dashboard scope: {scope.org} / {scope.project} / {scope.environment} / {scope.app || "all apps"}</p>
     </Panel>
   );
+}
+
+function browserPushSupported() {
+  return typeof window !== "undefined" &&
+    window.isSecureContext &&
+    "Notification" in window &&
+    "serviceWorker" in navigator &&
+    "PushManager" in window;
+}
+
+function pushDisabledReason(config: PushNotificationConfig | null, supported: boolean, permission: NotificationPermission) {
+  if (!config?.enabled) {
+    return "Browser push is not configured on this Hub.";
+  }
+  if (!supported) {
+    return "Browser push requires HTTPS or localhost and a browser with Service Worker support.";
+  }
+  if (permission === "denied") {
+    return "Browser notifications are blocked for this site.";
+  }
+  return "";
+}
+
+function pushSubscriptionPayload(subscription: PushSubscription): PushSubscriptionJSON {
+  const payload = subscription.toJSON();
+  if (!payload.endpoint || !payload.keys?.p256dh || !payload.keys.auth) {
+    throw new Error("Browser returned an incomplete push subscription");
+  }
+  return payload;
+}
+
+function urlBase64ToUint8Array(value: string) {
+  const padding = "=".repeat((4 - value.length % 4) % 4);
+  const base64 = (value + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = window.atob(base64);
+  const output = new Uint8Array(raw.length);
+  for (let index = 0; index < raw.length; index += 1) {
+    output[index] = raw.charCodeAt(index);
+  }
+  return output;
 }
 
 function CompaniesSettings({ instances, inventory, onRefresh, scope }: { instances: InstanceModel[]; inventory: InventoryOrganization[]; onRefresh: () => void; scope: ApiScope }) {

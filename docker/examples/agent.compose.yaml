@@ -1,0 +1,21 @@
+name: aegrail-agent-example
+
+services:
+  agent:
+    image: aegrail-agent:example
+    build:
+      context: ../..
+      dockerfile: docker/examples/agent.Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ./.env.agent
+    user: "${AEGRAIL_AGENT_UID:-1000}:${AEGRAIL_AGENT_GID:-1000}"
+    volumes:
+      - ./agent.yaml:/etc/aegrail/agent.yaml:ro
+      - agent-state:/var/lib/aegrail
+      - ${AEGRAIL_SITE_ROOT:-/srv/example-wordpress}:/mnt/sites/example-wordpress:ro
+      - ${AEGRAIL_NGINX_LOG_DIR:-/var/log/nginx}:/mnt/logs/nginx:ro
+    command: ["run", "--config", "/etc/aegrail/agent.yaml"]
+
+volumes:
+  agent-state:

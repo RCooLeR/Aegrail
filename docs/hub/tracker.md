@@ -24,12 +24,12 @@
 - Dashboard static serving from built assets.
 - Operator-action metadata on findings so warnings and alerts explain the concrete review action and final status choice.
 - Finding review report that places deterministic Hub findings beside latest model analysis.
-- Notification hooks for observed findings and finding status changes, with optional signed webhook delivery.
+- Notification hooks for observed findings and finding status changes, with optional signed webhook delivery, Mailjet SMTP email, and browser push delivery.
 - Graceful shutdown waits briefly for Hub background workers.
 
 ## Next
 
-- Validate notification payloads against the eventual Slack/Teams/email adapter shape.
+- Validate notification copy/noise levels during the first production site rollout.
 
 ## Later
 

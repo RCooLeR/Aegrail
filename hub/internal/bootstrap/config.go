@@ -40,6 +40,31 @@ type NotificationsConfig struct {
 	WebhookURL     string
 	WebhookSecret  string
 	WebhookTimeout time.Duration
+	PublicURL      string
+	Email          EmailNotificationsConfig
+	Push           PushNotificationsConfig
+}
+
+type EmailNotificationsConfig struct {
+	SMTPHost    string
+	SMTPPort    string
+	Username    string
+	Password    string
+	From        string
+	To          []string
+	MinSeverity string
+	Events      []string
+	Timeout     time.Duration
+}
+
+type PushNotificationsConfig struct {
+	VAPIDPublicKey  string
+	VAPIDPrivateKey string
+	Subject         string
+	MinSeverity     string
+	Events          []string
+	TTL             int
+	Timeout         time.Duration
 }
 
 type OllamaConfig struct {
@@ -91,6 +116,27 @@ func LoadConfig() Config {
 			WebhookURL:     envString("AEGRAIL_NOTIFICATION_WEBHOOK_URL", ""),
 			WebhookSecret:  envString("AEGRAIL_NOTIFICATION_WEBHOOK_SECRET", ""),
 			WebhookTimeout: envDuration("AEGRAIL_NOTIFICATION_WEBHOOK_TIMEOUT", 5*time.Second),
+			PublicURL:      envString("AEGRAIL_HUB_PUBLIC_URL", ""),
+			Email: EmailNotificationsConfig{
+				SMTPHost:    envString("AEGRAIL_NOTIFICATION_EMAIL_SMTP_HOST", "in-v3.mailjet.com"),
+				SMTPPort:    envString("AEGRAIL_NOTIFICATION_EMAIL_SMTP_PORT", "587"),
+				Username:    envString("AEGRAIL_NOTIFICATION_EMAIL_USERNAME", ""),
+				Password:    envString("AEGRAIL_NOTIFICATION_EMAIL_PASSWORD", ""),
+				From:        envString("AEGRAIL_NOTIFICATION_EMAIL_FROM", ""),
+				To:          envStringList("AEGRAIL_NOTIFICATION_EMAIL_TO", nil),
+				MinSeverity: envString("AEGRAIL_NOTIFICATION_EMAIL_MIN_SEVERITY", "medium"),
+				Events:      envStringList("AEGRAIL_NOTIFICATION_EMAIL_EVENTS", []string{"finding.observed"}),
+				Timeout:     envDuration("AEGRAIL_NOTIFICATION_EMAIL_TIMEOUT", 10*time.Second),
+			},
+			Push: PushNotificationsConfig{
+				VAPIDPublicKey:  envString("AEGRAIL_NOTIFICATION_PUSH_VAPID_PUBLIC_KEY", ""),
+				VAPIDPrivateKey: envString("AEGRAIL_NOTIFICATION_PUSH_VAPID_PRIVATE_KEY", ""),
+				Subject:         envString("AEGRAIL_NOTIFICATION_PUSH_SUBJECT", ""),
+				MinSeverity:     envString("AEGRAIL_NOTIFICATION_PUSH_MIN_SEVERITY", "medium"),
+				Events:          envStringList("AEGRAIL_NOTIFICATION_PUSH_EVENTS", []string{"finding.observed"}),
+				TTL:             envInt("AEGRAIL_NOTIFICATION_PUSH_TTL", 3600),
+				Timeout:         envDuration("AEGRAIL_NOTIFICATION_PUSH_TIMEOUT", 10*time.Second),
+			},
 		},
 		Ollama: OllamaConfig{
 			BaseURL:             envString("AEGRAIL_OLLAMA_BASE_URL", "http://localhost:11434"),

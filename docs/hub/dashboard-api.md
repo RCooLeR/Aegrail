@@ -49,6 +49,19 @@ Access levels used by the router:
 | `POST` | `/api/v1/auth/totp/start` | setup session | Start current-user TOTP enrollment before dashboard access. |
 | `POST` | `/api/v1/auth/totp/verify` | setup session | Verify current-user TOTP and unlock dashboard access. |
 
+## Notifications
+
+| Method | Route | Access | Purpose |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/notifications/push/config` | viewer | Return whether browser push is configured and the public VAPID key. |
+| `POST` | `/api/v1/notifications/push/subscriptions` | viewer | Save or refresh the current user's browser push subscription. |
+| `DELETE` | `/api/v1/notifications/push/subscriptions` | viewer | Disable the current user's browser push subscription by endpoint. |
+| `POST` | `/api/v1/notifications/push/subscriptions/delete` | viewer | Same disable action for browsers/clients that avoid DELETE request bodies. |
+
+Push subscription requests send the browser `endpoint` and `keys.p256dh` /
+`keys.auth` values returned by `PushSubscription.toJSON()`. The private VAPID
+key never leaves the Hub environment.
+
 ## Findings And Signals
 
 | Method | Route | Access | Purpose |

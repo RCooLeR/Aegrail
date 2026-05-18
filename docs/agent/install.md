@@ -85,6 +85,25 @@ Run continuously:
 go run ./cmd/agent run --config .aegrail\agent.yaml
 ```
 
+## Docker Example
+
+Example Agent image, Compose file, env template, and YAML template live in
+[`docker/examples`](../../docker/examples/README.md). Create the node in Hub
+first, then copy the Hub-generated `node_secret` and `hub_public_key` into the
+ignored `.env.agent` and `agent.yaml` files.
+
+Basic flow:
+
+```powershell
+Copy-Item docker\examples\.env.agent.example docker\examples\.env.agent
+Copy-Item docker\examples\agent.yaml.example docker\examples\agent.yaml
+docker compose --env-file docker/examples/.env.agent -f docker/examples/agent.compose.yaml run --rm agent run --config /etc/aegrail/agent.yaml --once --bootstrap --discard-pending
+docker compose --env-file docker/examples/.env.agent -f docker/examples/agent.compose.yaml up -d agent
+```
+
+Mount site files and logs read-only. Keep queue/state volumes, database DSNs,
+node secrets, and PII keys out of Git.
+
 ## Verification
 
 ```powershell

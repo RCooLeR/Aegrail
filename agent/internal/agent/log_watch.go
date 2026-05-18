@@ -575,7 +575,11 @@ func isYii2RBACImportantAccessPath(path string) bool {
 	if strings.Contains(path, ".php") && !strings.HasSuffix(path, "/index.php") {
 		return true
 	}
-	for _, marker := range []string{"/login", "/logout", "/admin", "/user", "/profile", "/rbac", "/debug", "/gii"} {
+	for _, marker := range []string{
+		"/login", "/logout", "/admin", "/user", "/profile", "/rbac", "/debug", "/gii",
+		"/forgot-password", "/password-reset", "/request-password-reset", "/reset-password",
+		"/site/request-password-reset", "/site/reset-password", "/user/request-password-reset", "/user/reset-password",
+	} {
 		if path == marker || strings.HasPrefix(path, marker+"/") {
 			return true
 		}
@@ -634,7 +638,8 @@ func isLaravelImportantAccessPath(path string) bool {
 	}
 	for _, marker := range []string{
 		"/admin", "/api", "/dashboard", "/horizon", "/import", "/login", "/logout",
-		"/permissions", "/profile", "/reports", "/roles", "/shortener", "/telescope", "/users",
+		"/forgot-password", "/password/email", "/password/reset", "/permissions", "/profile",
+		"/reports", "/reset-password", "/roles", "/shortener", "/telescope", "/users",
 	} {
 		if path == marker || strings.HasPrefix(path, marker+"/") {
 			return true
@@ -693,6 +698,9 @@ func isMauticImportantAccessPath(path string) bool {
 		"/admin",
 		"/login",
 		"/logout",
+		"/passwordreset",
+		"/password/reset",
+		"/forgot-password",
 	} {
 		if path == strings.TrimSuffix(prefix, "/") || strings.HasPrefix(path, prefix) {
 			return true
@@ -816,6 +824,12 @@ func isSensitiveAccessPath(path string) bool {
 	}
 	return path == "/wp-login.php" ||
 		path == "/xmlrpc.php" ||
+		strings.Contains(path, "lostpassword") ||
+		strings.Contains(path, "lost-password") ||
+		strings.Contains(path, "passwordreset") ||
+		strings.Contains(path, "reset-password") ||
+		strings.Contains(path, "forgot-password") ||
+		strings.Contains(path, "request-password-reset") ||
 		strings.HasPrefix(path, "/wp-admin") ||
 		strings.HasPrefix(path, "/admin") ||
 		strings.HasPrefix(path, "/administrator") ||

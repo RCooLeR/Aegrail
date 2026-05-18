@@ -269,6 +269,22 @@ CREATE TABLE hub_user_sessions (
 	CONSTRAINT hub_user_sessions_token_hash_present CHECK (length(trim(token_hash)) > 0)
 );
 
+CREATE TABLE hub_push_subscriptions (
+	id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+	user_id uuid NOT NULL REFERENCES hub_users(id) ON DELETE CASCADE,
+	endpoint text NOT NULL,
+	p256dh text NOT NULL,
+	auth text NOT NULL,
+	user_agent text NOT NULL DEFAULT '',
+	status text NOT NULL DEFAULT 'active',
+	created_at timestamptz NOT NULL DEFAULT now(),
+	updated_at timestamptz NOT NULL DEFAULT now(),
+	last_seen_at timestamptz NOT NULL DEFAULT now(),
+	CONSTRAINT hub_push_subscriptions_endpoint_present CHECK (length(trim(endpoint)) > 0),
+	CONSTRAINT hub_push_subscriptions_keys_present CHECK (length(trim(p256dh)) > 0 AND length(trim(auth)) > 0),
+	CONSTRAINT hub_push_subscriptions_status_shape CHECK (status IN ('active', 'disabled'))
+);
+
 CREATE TABLE hub_file_ignore_rules (
 	id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
 	organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
@@ -340,12 +356,16 @@ CREATE UNIQUE INDEX hub_user_sessions_token_hash_idx ON hub_user_sessions (token
 CREATE INDEX hub_user_sessions_user_id_idx ON hub_user_sessions (user_id);
 CREATE INDEX hub_user_sessions_active_idx ON hub_user_sessions (expires_at) WHERE revoked_at IS NULL;
 
+CREATE UNIQUE INDEX hub_push_subscriptions_endpoint_idx ON hub_push_subscriptions (endpoint);
+CREATE INDEX hub_push_subscriptions_user_status_idx ON hub_push_subscriptions (user_id, status);
+
 CREATE UNIQUE INDEX hub_file_ignore_rules_unique_idx
 	ON hub_file_ignore_rules (environment_id, coalesce(app_id, '00000000-0000-0000-0000-000000000000'::uuid), match_kind, normalized_value);
 CREATE INDEX hub_file_ignore_rules_scope_idx ON hub_file_ignore_rules (environment_id, app_id, status);
 
 -- +goose Down
 DROP TABLE IF EXISTS hub_file_ignore_rules;
+DROP TABLE IF EXISTS hub_push_subscriptions;
 DROP TABLE IF EXISTS hub_user_sessions;
 DROP TABLE IF EXISTS hub_users;
 DROP TABLE IF EXISTS hub_model_analysis_reports;

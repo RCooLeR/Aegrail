@@ -152,6 +152,19 @@ func builtInRuleEvaluationCases() []ruleEvaluationCase {
 		},
 		{
 			fixture: RuleEvaluationFixture{
+				ID:          "admin-account-requests",
+				Name:        "Admin Account Requests",
+				Kind:        "web_request",
+				Description: "Single admin login POSTs and password-reset requests should produce deterministic web request findings.",
+			},
+			expected: []RuleEvaluationExpectedSignal{
+				{ID: "web-admin-login-request", Severity: domain.SeverityLow, Confidence: domain.ConfidenceMedium},
+				{ID: "web-password-reset-request", Severity: domain.SeverityMedium, Confidence: domain.ConfidenceMedium},
+			},
+			evaluate: evaluateAdminAccountRequestFixture,
+		},
+		{
+			fixture: RuleEvaluationFixture{
 				ID:          "web-request-traffic-and-tor",
 				Name:        "Web Request Traffic And Tor",
 				Kind:        "web_request",
@@ -355,6 +368,16 @@ func evaluateAdminRequestAnomalyFixture(now time.Time) []RuleEvaluationSignal {
 		evaluationAdminAccessEvent("evt-login-post-5", now.Add(14*time.Minute), "POST", "/wp-login.php", 200, "203.0.113.20"),
 		evaluationAdminAccessEvent("evt-tool-probe", now.Add(20*time.Minute), "GET", "/phpmyadmin/index.php", 404, "203.0.113.30"),
 		evaluationAdminAccessEvent("evt-admin-ajax", now.Add(21*time.Minute), "POST", "/wp-admin/admin-ajax.php", 200, "203.0.113.40"),
+	}, 30*time.Minute)
+}
+
+func evaluateAdminAccountRequestFixture(now time.Time) []RuleEvaluationSignal {
+	return correlationEvaluationSignals([]domain.TimelineEvent{
+		evaluationAdminAccessEvent("evt-admin-login", now, "POST", "/login", 302, "203.0.113.50"),
+		evaluationAccessEvent("evt-password-reset", now.Add(time.Minute), "POST", "/wp-login.php", 302, "203.0.113.60", map[string]any{
+			"query_redacted":          "action=lostpassword",
+			"request_target_redacted": "/wp-login.php?action=lostpassword",
+		}),
 	}, 30*time.Minute)
 }
 

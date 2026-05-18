@@ -26,6 +26,7 @@ type Hub struct {
 	locks                      ports.LockManager
 	rateLimiter                ports.RateLimiter
 	users                      ports.HubUserRepository
+	pushSubscriptions          ports.PushSubscriptionRepository
 	notifications              ports.NotificationSink
 	userSecretKey              string
 	backgroundError            func(error)
@@ -38,41 +39,43 @@ type Hub struct {
 }
 
 type Dependencies struct {
-	Meta             domain.AppMeta
-	Inventory        ports.InventoryRepository
-	Ingest           ports.IngestRepository
-	Findings         ports.HubFindingRepository
-	FileIgnoreRules  ports.HubFileIgnoreRuleRepository
-	BrowserAllowlist ports.BrowserScriptAllowlistRepository
-	ModelReports     ports.ModelAnalysisReportRepository
-	Model            ports.ModelGateway
-	Jobs             ports.JobQueue
-	Locks            ports.LockManager
-	RateLimiter      ports.RateLimiter
-	Users            ports.HubUserRepository
-	Notifications    ports.NotificationSink
-	UserSecretKey    string
-	BackgroundError  func(error)
+	Meta              domain.AppMeta
+	Inventory         ports.InventoryRepository
+	Ingest            ports.IngestRepository
+	Findings          ports.HubFindingRepository
+	FileIgnoreRules   ports.HubFileIgnoreRuleRepository
+	BrowserAllowlist  ports.BrowserScriptAllowlistRepository
+	ModelReports      ports.ModelAnalysisReportRepository
+	Model             ports.ModelGateway
+	Jobs              ports.JobQueue
+	Locks             ports.LockManager
+	RateLimiter       ports.RateLimiter
+	Users             ports.HubUserRepository
+	PushSubscriptions ports.PushSubscriptionRepository
+	Notifications     ports.NotificationSink
+	UserSecretKey     string
+	BackgroundError   func(error)
 }
 
 func New(deps Dependencies) *Hub {
 	return &Hub{
-		meta:             deps.Meta,
-		inventory:        deps.Inventory,
-		ingest:           deps.Ingest,
-		findings:         deps.Findings,
-		fileIgnoreRules:  deps.FileIgnoreRules,
-		browserAllowlist: deps.BrowserAllowlist,
-		modelReports:     deps.ModelReports,
-		model:            deps.Model,
-		jobs:             deps.Jobs,
-		locks:            deps.Locks,
-		rateLimiter:      deps.RateLimiter,
-		users:            deps.Users,
-		notifications:    deps.Notifications,
-		userSecretKey:    strings.TrimSpace(deps.UserSecretKey),
-		backgroundError:  deps.BackgroundError,
-		totpReplay:       map[totpReplayKey]time.Time{},
+		meta:              deps.Meta,
+		inventory:         deps.Inventory,
+		ingest:            deps.Ingest,
+		findings:          deps.Findings,
+		fileIgnoreRules:   deps.FileIgnoreRules,
+		browserAllowlist:  deps.BrowserAllowlist,
+		modelReports:      deps.ModelReports,
+		model:             deps.Model,
+		jobs:              deps.Jobs,
+		locks:             deps.Locks,
+		rateLimiter:       deps.RateLimiter,
+		users:             deps.Users,
+		pushSubscriptions: deps.PushSubscriptions,
+		notifications:     deps.Notifications,
+		userSecretKey:     strings.TrimSpace(deps.UserSecretKey),
+		backgroundError:   deps.BackgroundError,
+		totpReplay:        map[totpReplayKey]time.Time{},
 	}
 }
 

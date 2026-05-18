@@ -1,0 +1,71 @@
+name: aegrail-hub-example
+
+x-hub-common: &hub-common
+  image: aegrail-hub:example
+  build:
+    context: ../..
+    dockerfile: docker/examples/hub.Dockerfile
+  env_file:
+    - ./.env.hub
+  environment:
+    AEGRAIL_HTTP_ADDR: 0.0.0.0:8787
+    AEGRAIL_MIGRATIONS_DIR: /app/migrations
+    AEGRAIL_DATABASE_URL: postgres://aegrail:${AEGRAIL_POSTGRES_PASSWORD:-replace-with-db-password}@postgres18:5432/aegrail?sslmode=disable
+    AEGRAIL_REDIS_URL: redis://redis:6379/0
+  volumes:
+    - hub-data:/var/lib/aegrail/hub
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  depends_on:
+    postgres18:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
+services:
+  postgres18:
+    image: pgvector/pgvector:0.8.2-pg18-trixie
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: aegrail
+      POSTGRES_USER: aegrail
+      POSTGRES_PASSWORD: ${AEGRAIL_POSTGRES_PASSWORD:-replace-with-db-password}
+    volumes:
+      - postgres18-data:/var/lib/postgresql/data
+      - ../../services/postgres18/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  hub-migrate:
+    <<: *hub-common
+    profiles: ["tools"]
+    restart: "no"
+    command: ["db", "migrate"]
+
+  hub:
+    <<: *hub-common
+    restart: unless-stopped
+    ports:
+      - "${AEGRAIL_HTTP_PORT:-8787}:8787"
+
+volumes:
+  hub-data:
+  postgres18-data:
+  redis-data:

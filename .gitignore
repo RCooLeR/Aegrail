@@ -4,11 +4,17 @@ data/*
 app/data/
 .aegrail/
 app/.aegrail/
+/prod/
 
 # Local environment
 .env
 .env.*
 !.env.example
+!docker/examples/.env.hub.example
+!docker/examples/.env.agent.example
+docker/examples/.env.hub
+docker/examples/.env.agent
+docker/examples/agent.yaml
 
 # Go build and test output
 app/bin/

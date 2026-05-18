@@ -1,0 +1,28 @@
+.git
+.aegrail
+.claude
+.idea
+data
+tmp
+.tmp-go
+
+# Local env/secrets. Example files are intentionally tracked.
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Build/runtime output.
+**/bin
+**/tmp
+**/*.exe
+**/*.test
+coverage.out
+
+# Frontend dependencies/build output are rebuilt in Docker.
+dashboard/node_modules
+dashboard/dist
+
+# OS/editor noise.
+.DS_Store
+Thumbs.db

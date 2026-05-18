@@ -490,6 +490,69 @@ func TestCorrelateEventsBuildsAdminRequestAnomalyChains(t *testing.T) {
 	}
 }
 
+func TestCorrelateEventsBuildsAdminLoginRequestChain(t *testing.T) {
+	now := time.Date(2026, 5, 12, 14, 0, 0, 0, time.UTC)
+	events := []domain.TimelineEvent{
+		adminAccessEvent("evt-login", now, "POST", "/login", 302, "203.0.113.10"),
+		adminAccessEvent("evt-admin-action", now.Add(time.Minute), "POST", "/wp-admin/admin-ajax.php", 200, "203.0.113.10"),
+	}
+
+	chains := correlateTimelineEvents(events, 30*time.Minute)
+	byRule := map[string]CorrelationChain{}
+	for _, chain := range chains {
+		byRule[chain.RuleID] = chain
+	}
+	loginChain, ok := byRule["web-admin-login-request"]
+	if !ok {
+		t.Fatalf("chains = %#v, missing admin login request chain", chains)
+	}
+	if loginChain.Severity != domain.SeverityLow || loginChain.Confidence != domain.ConfidenceMedium {
+		t.Fatalf("login chain = %#v, want low/medium", loginChain)
+	}
+	if len(loginChain.Events) != 1 || !strings.Contains(loginChain.Summary, "success likely") {
+		t.Fatalf("login chain = %#v, want one likely-success login event", loginChain)
+	}
+	if _, ok := byRule["web-password-reset-request"]; ok {
+		t.Fatalf("chains = %#v, login should not be classified as password reset", chains)
+	}
+}
+
+func TestCorrelateEventsBuildsPasswordResetRequestChain(t *testing.T) {
+	now := time.Date(2026, 5, 12, 14, 10, 0, 0, time.UTC)
+	events := []domain.TimelineEvent{
+		accessEvent("evt-reset", now, "POST", "/wp-login.php", 302, "203.0.113.20", map[string]any{
+			"query_redacted":          "action=lostpassword&token=%5BREDACTED%5D",
+			"request_target_redacted": "/wp-login.php?action=lostpassword&token=%5BREDACTED%5D",
+		}),
+		accessEvent("evt-reset-repeat", now.Add(2*time.Minute), "POST", "/wp-login.php", 200, "203.0.113.20", map[string]any{
+			"query_redacted":          "action=lostpassword",
+			"request_target_redacted": "/wp-login.php?action=lostpassword",
+		}),
+	}
+
+	chains := correlateTimelineEvents(events, 30*time.Minute)
+	byRule := map[string]CorrelationChain{}
+	for _, chain := range chains {
+		byRule[chain.RuleID] = chain
+	}
+	resetChain, ok := byRule["web-password-reset-request"]
+	if !ok {
+		t.Fatalf("chains = %#v, missing password reset request chain", chains)
+	}
+	if resetChain.Severity != domain.SeverityMedium || resetChain.Confidence != domain.ConfidenceMedium {
+		t.Fatalf("reset chain = %#v, want medium/medium", resetChain)
+	}
+	if len(resetChain.Events) != 2 {
+		t.Fatalf("reset chain = %#v, want grouped reset events", resetChain)
+	}
+	if !strings.Contains(resetChain.Events[0].Target, "lostpassword") {
+		t.Fatalf("reset event target = %q, want reset action context", resetChain.Events[0].Target)
+	}
+	if _, ok := byRule["web-admin-login-request"]; ok {
+		t.Fatalf("chains = %#v, password reset should not be classified as admin login", chains)
+	}
+}
+
 func TestCorrelateEventsBuildsTrafficAndTorWebRequestChains(t *testing.T) {
 	now := time.Date(2026, 5, 12, 14, 30, 0, 0, time.UTC)
 	var events []domain.TimelineEvent

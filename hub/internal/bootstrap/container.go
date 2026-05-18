@@ -6,10 +6,13 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	notificationfanout "github.com/rcooler/aegrail/hub/internal/adapters/notifications"
 	"github.com/rcooler/aegrail/hub/internal/adapters/ollama"
 	"github.com/rcooler/aegrail/hub/internal/adapters/postgres"
 	redisadapter "github.com/rcooler/aegrail/hub/internal/adapters/redis"
+	"github.com/rcooler/aegrail/hub/internal/adapters/smtpnotify"
 	"github.com/rcooler/aegrail/hub/internal/adapters/webhook"
+	"github.com/rcooler/aegrail/hub/internal/adapters/webpushnotify"
 	"github.com/rcooler/aegrail/hub/internal/domain"
 	"github.com/rcooler/aegrail/hub/internal/hub"
 	"github.com/rcooler/aegrail/hub/internal/ports"
@@ -73,11 +76,9 @@ func (c *Container) ConnectDatabase(ctx context.Context) error {
 		}
 		c.redis = redisClient
 	}
-	notificationSink, err := webhook.NewNotificationSink(webhook.Config{
-		URL:     c.Config.Notifications.WebhookURL,
-		Secret:  c.Config.Notifications.WebhookSecret,
-		Timeout: c.Config.Notifications.WebhookTimeout,
-	})
+	c.migrator = postgres.NewMigrator(c.Config.Database.URL, c.Config.Paths.MigrationsDir)
+	pushSubscriptions := postgres.NewHubPushSubscriptionRepository(pool)
+	notificationSink, err := c.buildNotificationSink(pushSubscriptions)
 	if err != nil {
 		pool.Close()
 		if c.redis != nil {
@@ -87,27 +88,67 @@ func (c *Container) ConnectDatabase(ctx context.Context) error {
 		c.db = nil
 		return err
 	}
-	c.migrator = postgres.NewMigrator(c.Config.Database.URL, c.Config.Paths.MigrationsDir)
 	c.Hub = hub.New(hub.Dependencies{
-		Meta:             c.meta,
-		Inventory:        postgres.NewInventoryRepository(pool),
-		Ingest:           postgres.NewIngestRepository(pool),
-		Findings:         postgres.NewHubFindingRepository(pool),
-		FileIgnoreRules:  postgres.NewHubFileIgnoreRuleRepository(pool),
-		BrowserAllowlist: postgres.NewBrowserScriptAllowlistRepository(pool),
-		ModelReports:     postgres.NewModelAnalysisReportRepository(pool),
-		Model:            c.Model,
-		Jobs:             c.redis,
-		Locks:            c.redis,
-		RateLimiter:      c.redis,
-		Users:            postgres.NewHubUserRepository(pool),
-		Notifications:    notificationSink,
-		UserSecretKey:    c.Config.Hub.UserSecretKey,
+		Meta:              c.meta,
+		Inventory:         postgres.NewInventoryRepository(pool),
+		Ingest:            postgres.NewIngestRepository(pool),
+		Findings:          postgres.NewHubFindingRepository(pool),
+		FileIgnoreRules:   postgres.NewHubFileIgnoreRuleRepository(pool),
+		BrowserAllowlist:  postgres.NewBrowserScriptAllowlistRepository(pool),
+		ModelReports:      postgres.NewModelAnalysisReportRepository(pool),
+		Model:             c.Model,
+		Jobs:              c.redis,
+		Locks:             c.redis,
+		RateLimiter:       c.redis,
+		Users:             postgres.NewHubUserRepository(pool),
+		PushSubscriptions: pushSubscriptions,
+		Notifications:     notificationSink,
+		UserSecretKey:     c.Config.Hub.UserSecretKey,
 		BackgroundError: func(err error) {
 			c.Logger.Error().Err(err).Msg("hub background task failed")
 		},
 	})
 	return nil
+}
+
+func (c *Container) buildNotificationSink(pushSubscriptions ports.PushSubscriptionRepository) (ports.NotificationSink, error) {
+	webhookSink, err := webhook.NewNotificationSink(webhook.Config{
+		URL:     c.Config.Notifications.WebhookURL,
+		Secret:  c.Config.Notifications.WebhookSecret,
+		Timeout: c.Config.Notifications.WebhookTimeout,
+	})
+	if err != nil {
+		return nil, err
+	}
+	emailSink, err := smtpnotify.NewNotificationSink(smtpnotify.Config{
+		Host:        c.Config.Notifications.Email.SMTPHost,
+		Port:        c.Config.Notifications.Email.SMTPPort,
+		Username:    c.Config.Notifications.Email.Username,
+		Password:    c.Config.Notifications.Email.Password,
+		From:        c.Config.Notifications.Email.From,
+		To:          c.Config.Notifications.Email.To,
+		BaseURL:     c.Config.Notifications.PublicURL,
+		MinSeverity: c.Config.Notifications.Email.MinSeverity,
+		Events:      c.Config.Notifications.Email.Events,
+		Timeout:     c.Config.Notifications.Email.Timeout,
+	})
+	if err != nil {
+		return nil, err
+	}
+	pushSink, err := webpushnotify.NewNotificationSink(pushSubscriptions, webpushnotify.Config{
+		PublicKey:   c.Config.Notifications.Push.VAPIDPublicKey,
+		PrivateKey:  c.Config.Notifications.Push.VAPIDPrivateKey,
+		Subject:     c.Config.Notifications.Push.Subject,
+		BaseURL:     c.Config.Notifications.PublicURL,
+		MinSeverity: c.Config.Notifications.Push.MinSeverity,
+		Events:      c.Config.Notifications.Push.Events,
+		TTL:         c.Config.Notifications.Push.TTL,
+		Timeout:     c.Config.Notifications.Push.Timeout,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return notificationfanout.NewFanoutSink(webhookSink, emailSink, pushSink), nil
 }
 
 func (c *Container) HealthCheck(ctx context.Context) map[string]string {

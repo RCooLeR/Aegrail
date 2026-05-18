@@ -23,6 +23,8 @@ func TestDefaultRuleRegistryIncludesCurrentRuleMetadata(t *testing.T) {
 		"wordpress-admin-user-added",
 		"prestashop-payment-configuration-changed",
 		"browser-script-domain-new",
+		"web-admin-login-request",
+		"web-password-reset-request",
 		"web-admin-success-after-failures",
 		"web-request-volume-spike",
 		"web-tor-admin-request",

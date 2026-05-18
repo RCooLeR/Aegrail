@@ -43,6 +43,7 @@ type HubOptions struct {
 	WireTimestampSkew   time.Duration
 	DashboardDir        string
 	DashboardCSRFSecret string
+	PushVAPIDPublicKey  string
 	TrustedProxyCIDRs   []*net.IPNet
 	Now                 func() time.Time
 	HealthCheck         func(context.Context) map[string]string
@@ -109,6 +110,10 @@ func NewHubRouter(meta domain.AppMeta, hub *hubapp.Hub, options HubOptions) http
 	router.Post("/api/v1/auth/logout", logoutHubUserHandler(hub, options))
 	router.Post("/api/v1/auth/totp/start", startCurrentHubUserTOTPHandler(hub, options))
 	router.Post("/api/v1/auth/totp/verify", verifyCurrentHubUserTOTPHandler(hub, options))
+	router.Get("/api/v1/notifications/push/config", withHubAuth(hub, options, "viewer", getPushNotificationConfigHandler(options)))
+	router.Post("/api/v1/notifications/push/subscriptions", withHubAuth(hub, options, "viewer", savePushSubscriptionHandler(hub)))
+	router.Delete("/api/v1/notifications/push/subscriptions", withHubAuth(hub, options, "viewer", deletePushSubscriptionHandler(hub)))
+	router.Post("/api/v1/notifications/push/subscriptions/delete", withHubAuth(hub, options, "viewer", deletePushSubscriptionHandler(hub)))
 	router.Get("/api/v1/rules", withHubAuth(hub, options, "viewer", listRulesHandler(hub)))
 	router.Get("/api/v1/findings", withHubAuth(hub, options, "viewer", listFindingsHandler(hub)))
 	router.Post("/api/v1/findings/baseline", withHubAuth(hub, options, "operator", acceptFindingsBaselineHandler(hub)))
@@ -382,6 +387,21 @@ type hubUserTOTPEnrollmentResponse struct {
 	Secret        string `json:"secret"`
 }
 
+type pushNotificationConfigResponse struct {
+	Enabled   bool   `json:"enabled"`
+	PublicKey string `json:"public_key,omitempty"`
+}
+
+type pushSubscriptionResponse struct {
+	ID         string    `json:"id"`
+	Endpoint   string    `json:"endpoint"`
+	UserAgent  string    `json:"user_agent,omitempty"`
+	Status     string    `json:"status"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+	LastSeenAt time.Time `json:"last_seen_at"`
+}
+
 type hubAuthMeResponse struct {
 	Authenticated     bool             `json:"authenticated"`
 	AuthConfigured    bool             `json:"auth_configured"`
@@ -537,6 +557,14 @@ type generateHubUserTOTPRequest struct {
 
 type verifyHubUserTOTPRequest struct {
 	Code string `json:"code"`
+}
+
+type pushSubscriptionRequest struct {
+	Endpoint string `json:"endpoint"`
+	Keys     struct {
+		P256DH string `json:"p256dh"`
+		Auth   string `json:"auth"`
+	} `json:"keys"`
 }
 
 type createDeploymentMarkerRequest struct {
@@ -1559,6 +1587,79 @@ func verifyCurrentHubUserTOTPHandler(hub *hubapp.Hub, options HubOptions) http.H
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"user": hubUserRecord(result.User),
+		})
+	}
+}
+
+func getPushNotificationConfigHandler(options HubOptions) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		publicKey := strings.TrimSpace(options.PushVAPIDPublicKey)
+		writeJSON(w, http.StatusOK, pushNotificationConfigResponse{
+			Enabled:   publicKey != "",
+			PublicKey: publicKey,
+		})
+	}
+}
+
+func savePushSubscriptionHandler(hub *hubapp.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		user, ok := currentHubUser(r)
+		if !ok || user.ID == "" {
+			writeError(w, http.StatusUnauthorized, hubapp.ErrHubAuthRequired.Error())
+			return
+		}
+		var request pushSubscriptionRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		subscription, err := hub.SaveHubPushSubscription(r.Context(), hubapp.SaveHubPushSubscriptionInput{
+			UserID:    string(user.ID),
+			Endpoint:  request.Endpoint,
+			P256DH:    request.Keys.P256DH,
+			Auth:      request.Keys.Auth,
+			UserAgent: r.UserAgent(),
+		})
+		if err != nil {
+			writeHubError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"subscription": pushSubscriptionRecord(subscription),
+		})
+	}
+}
+
+func deletePushSubscriptionHandler(hub *hubapp.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		user, ok := currentHubUser(r)
+		if !ok || user.ID == "" {
+			writeError(w, http.StatusUnauthorized, hubapp.ErrHubAuthRequired.Error())
+			return
+		}
+		var request pushSubscriptionRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		deleted, err := hub.DeleteHubPushSubscription(r.Context(), hubapp.DeleteHubPushSubscriptionInput{
+			UserID:   string(user.ID),
+			Endpoint: request.Endpoint,
+		})
+		if err != nil {
+			writeHubError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"deleted": deleted,
 		})
 	}
 }
@@ -2758,6 +2859,18 @@ func hubUserRecord(user domain.HubUser) hubUserResponse {
 		LastLoginAt:          user.LastLoginAt,
 		CreatedAt:            user.CreatedAt,
 		UpdatedAt:            user.UpdatedAt,
+	}
+}
+
+func pushSubscriptionRecord(subscription domain.HubPushSubscription) pushSubscriptionResponse {
+	return pushSubscriptionResponse{
+		ID:         string(subscription.ID),
+		Endpoint:   subscription.Endpoint,
+		UserAgent:  subscription.UserAgent,
+		Status:     subscription.Status,
+		CreatedAt:  subscription.CreatedAt,
+		UpdatedAt:  subscription.UpdatedAt,
+		LastSeenAt: subscription.LastSeenAt,
 	}
 }
 

@@ -10,10 +10,12 @@ Current services:
 Docs:
 
 - [Install](install.md)
+- [Docker Examples](../../docker/examples/README.md)
 
 Code:
 
 ```text
 services/compose.yaml
 services/postgres18/initdb/001_extensions.sql
+docker/examples/
 ```

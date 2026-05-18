@@ -57,6 +57,7 @@ Rules:
 - The Browser Scripts page can allowlist a domain, inline SHA-256, or tag-manager ID. It updates Hub allowlist state; it does not edit agent YAML.
 - Users & 2FA uses a pending enrollment flow: generate QR, verify the current 6-digit TOTP code, then activate. Dashboard access stays locked until the current user has active 2FA.
 - Browser-to-Hub calls use `aegrail.dashboard.v1`: HttpOnly session cookie for authentication, `X-Aegrail-Dashboard-Protocol` on dashboard requests, and `X-Aegrail-CSRF` on mutating requests.
+- Profile settings can enable browser push notifications when the Hub has VAPID keys configured. The dashboard registers `aegrail-sw.js`, stores the current browser subscription in Hub, and can disable it again from the same panel.
 - File issues can create Hub ignore rules for a directory. The dashboard prompts for the path, the Hub suppresses future matching file findings, and the selected issue is marked false positive.
 - Node details show a safe agent config snapshot from config coverage, including collector state, database/log/browser counts, and sanitized file paths ignored by the agent.
 - Settings can create companies, sites, and nodes. Node creation generates an `aegrail.agent.wire.v1` node ID/secret pair and shows a ready-to-edit Agent YAML sample.

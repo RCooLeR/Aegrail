@@ -173,24 +173,34 @@ AEGRAIL_TOR_EXIT_LIST_CACHE=<path>   override the local cache file
 AEGRAIL_TOR_EXIT_LIST_TTL=6h         override cache freshness
 ```
 
+Admin/login and account-recovery paths are intentionally retained because they explain account activity:
+
+- WordPress: `/wp-login.php` login POSTs and reset actions such as `action=lostpassword`, `retrievepassword`, and `resetpass`.
+- PrestaShop: admin-login request hints such as `controller=AdminLogin`, `submitLogin`, and admin-login targets.
+- Mautic: `/s/...`, `/login`, `/passwordreset`, `/password/reset`, OAuth/API/admin paths, and server errors.
+- Yii2 RBAC: login/logout, admin/user/profile/RBAC/debug/Gii paths, plus `request-password-reset`, `reset-password`, and related user/site password-reset routes.
+- Laravel: login/logout, admin/dashboard/API/profile/users/roles/permissions/reports/import/shortener/Horizon/Telescope paths, plus `forgot-password`, `password/email`, `password/reset`, and `reset-password`.
+
+The access log can prove that a login or reset request was made. It cannot always prove the application accepted the credentials, because some frameworks return `200` for both success and failure. Hub reports redirect-style login POSTs as likely success; repeated non-redirect login attempts are handled by the existing burst rules.
+
 Mautic access-log filtering:
 
 - Routine email/campaign tracking traffic below `500` is dropped for paths such as `/r/...`, `/email/...`, `/mtracking.gif`, `/mtc/event`, `/mtc.js`, `/asset/...`, `/download/...`, `/page/...`, and `/form/submit...`.
 - Static assets are dropped for status codes below `500`, including noisy `404` CSS/image/font requests.
-- Admin, API, OAuth, installer, upgrade, login/logout, direct PHP probes, and server errors are kept.
+- Admin, API, OAuth, installer, upgrade, login/logout, password-reset, direct PHP probes, and server errors are kept.
 - The goal is to avoid turning email redirect volume into dashboard noise while still preserving request evidence that can validate compromise or operational errors.
 
 Yii2 RBAC access-log filtering:
 
 - Static assets under `/assets/`, `/app-assets/`, `/css/`, `/js/`, `/favicon/`, and common image/font/map suffixes are dropped below `500`.
 - `GET /`, `GET /robots.txt`, and `GET /favicon.ico` below `400` are dropped.
-- Login/logout, admin, user/profile, RBAC, Yii debug/Gii, direct PHP probes, and server errors are kept.
+- Login/logout, admin, user/profile, RBAC, password-reset, Yii debug/Gii, direct PHP probes, and server errors are kept.
 
 Laravel access-log filtering:
 
 - Static assets, Vite/build assets, public vendor assets, favicons, and common image/font/map suffixes are dropped below `500`.
 - `GET /`, `GET /robots.txt`, and favicon requests below `400` are dropped.
-- Login/logout, admin/dashboard/API/profile/users/roles/permissions/reports/import/shortener/Horizon/Telescope paths, direct PHP probes, and server errors are kept.
+- Login/logout, admin/dashboard/API/profile/users/roles/permissions/reports/import/shortener/Horizon/Telescope paths, password-reset paths, direct PHP probes, and server errors are kept.
 
 PHP error events are queued as `log.php_error` and contain:
 
@@ -727,7 +737,7 @@ Current rule families:
 - Suspicious file path changes, including PHP under writable paths and sensitive config changes.
 - Grouped plugin, theme, and module file changes so a new extension does not create a wall of separate issues.
 - Browser script drift, including new domains, URLs, inline hashes, and tag manager IDs.
-- Web/admin request anomalies from normalized logs.
+- Web/admin request anomalies from normalized logs, including single admin login POST observations and password-reset request observations.
 - Multi-host file baseline drift.
 - Correlated incident chains such as web activity followed by file and database changes.
 

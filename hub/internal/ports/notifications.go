@@ -20,3 +20,10 @@ type HubFindingNotification struct {
 type NotificationSink interface {
 	NotifyHubFinding(ctx context.Context, notification HubFindingNotification) error
 }
+
+type PushSubscriptionRepository interface {
+	SaveHubPushSubscription(ctx context.Context, subscription domain.HubPushSubscription) (domain.HubPushSubscription, error)
+	ListActiveHubPushSubscriptions(ctx context.Context) ([]domain.HubPushSubscription, error)
+	DisableHubPushSubscription(ctx context.Context, endpoint string) error
+	DeleteHubPushSubscription(ctx context.Context, userID domain.ID, endpoint string) (bool, error)
+}
