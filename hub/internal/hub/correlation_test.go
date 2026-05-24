@@ -2,6 +2,7 @@ package hub
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -55,6 +56,7 @@ func TestCorrelateEventsBuildsProbableIncidentChain(t *testing.T) {
 			Target:          "/wp-login.php",
 			Severity:        domain.SeverityInfo,
 			Payload: map[string]any{
+				"method":      "POST",
 				"path":        "/wp-login.php",
 				"status_code": 200,
 			},
@@ -122,11 +124,58 @@ func TestCorrelateEventsBuildsProbableIncidentChain(t *testing.T) {
 	}
 }
 
+func TestCorrelateEventsDoesNotPromoteRoutineExtensionChangesToIncidentChain(t *testing.T) {
+	now := time.Date(2026, 5, 12, 12, 30, 0, 0, time.UTC)
+	chains := correlateTimelineEvents([]domain.TimelineEvent{
+		{
+			ID:        "evt-login-page",
+			EventTime: now,
+			EventType: "log.access",
+			Target:    "access.log",
+			Severity:  domain.SeverityInfo,
+			HostSlug:  "web-01",
+			Payload: map[string]any{
+				"method":      "GET",
+				"path":        "/wp-login.php",
+				"status_code": 200,
+			},
+		},
+		{
+			ID:        "evt-plugin-file",
+			EventTime: now.Add(2 * time.Minute),
+			EventType: "file.modified",
+			Target:    "wp-content/plugins/shop/shop.php",
+			Severity:  domain.SeverityMedium,
+			HostSlug:  "web-01",
+			Payload: map[string]any{
+				"relative_path": "wp-content/plugins/shop/shop.php",
+			},
+		},
+		{
+			ID:        "evt-plugin-db",
+			EventTime: now.Add(3 * time.Minute),
+			EventType: "db.entity.changed",
+			Target:    "wordpress:wordpress_plugin:shop",
+			Severity:  domain.SeverityMedium,
+			HostSlug:  "web-01",
+			Message:   "WordPress plugin shop changed",
+			Payload:   map[string]any{},
+		},
+	}, 30*time.Minute)
+
+	for _, chain := range chains {
+		if chain.RuleID == "probable-incident-chain" {
+			t.Fatalf("chains = %#v, routine plugin activity should not become probable incident chain", chains)
+		}
+	}
+}
+
 func TestCorrelateEventsSavesAndDeduplicatesFindings(t *testing.T) {
 	inventory := newMemoryInventoryRepository()
 	ingest := &memoryIngestRepository{}
 	findings := newMemoryHubFindingRepository()
-	hub := New(Dependencies{Inventory: inventory, Ingest: ingest, Findings: findings})
+	notifications := &memoryNotificationSink{err: errors.New("web push failed")}
+	hub := New(Dependencies{Inventory: inventory, Ingest: ingest, Findings: findings, Notifications: notifications})
 	ctx := context.Background()
 
 	if _, err := hub.SaveOrganization(ctx, SaveOrganizationInput{Slug: "acme"}); err != nil {
@@ -167,6 +216,7 @@ func TestCorrelateEventsSavesAndDeduplicatesFindings(t *testing.T) {
 			Target:          "/wp-login.php",
 			Severity:        domain.SeverityInfo,
 			Payload: map[string]any{
+				"method":      "POST",
 				"path":        "/wp-login.php",
 				"status_code": 200,
 			},
@@ -222,6 +272,9 @@ func TestCorrelateEventsSavesAndDeduplicatesFindings(t *testing.T) {
 	}
 	if result.Findings[0].RuleID != "probable-incident-chain" || result.Findings[0].DedupeKey == "" {
 		t.Fatalf("saved finding = %#v", result.Findings[0])
+	}
+	if len(notifications.items) == 0 {
+		t.Fatalf("notifications = %#v, want attempted best-effort notification", notifications.items)
 	}
 
 	if _, err := hub.CorrelateEvents(ctx, input); err != nil {
@@ -375,6 +428,132 @@ func TestCorrelateEventsGroupsPluginFileChanges(t *testing.T) {
 	}
 }
 
+func TestCorrelateEventsSuppressesExpectedDeploymentFileFindings(t *testing.T) {
+	inventory := newMemoryInventoryRepository()
+	ingest := &memoryIngestRepository{}
+	findings := newMemoryHubFindingRepository()
+	hub := New(Dependencies{Inventory: inventory, Ingest: ingest, Findings: findings})
+	ctx := context.Background()
+
+	environment, app, host, agent := bootstrapDatabaseDiffInventory(t, ctx, hub, "wordpress")
+	now := time.Date(2026, 5, 12, 13, 18, 0, 0, time.UTC)
+	finishedAt := now.Add(5 * time.Minute)
+	if _, err := hub.SaveDeploymentMarker(ctx, SaveDeploymentMarkerInput{
+		OrganizationSlug: "acme",
+		ProjectSlug:      "customer-site",
+		EnvironmentSlug:  "production",
+		AppSlug:          "main-web",
+		Version:          "v1.8.3",
+		Actor:            "github-actions",
+		StartedAt:        now.Add(-time.Minute),
+		FinishedAt:       &finishedAt,
+	}); err != nil {
+		t.Fatalf("SaveDeploymentMarker returned error: %v", err)
+	}
+	ingest.timelineEvents = []domain.TimelineEvent{
+		deploymentFileEvent("evt-deploy-index", environment.ID, app.ID, host.ID, host.Slug, agent.ID, agent.AgentID, now, "file.modified", "public/index.php", domain.SeverityInfo),
+	}
+
+	result, err := hub.CorrelateEvents(ctx, CorrelateEventsInput{
+		OrganizationSlug: "acme",
+		ProjectSlug:      "customer-site",
+		EnvironmentSlug:  "production",
+		AppSlug:          "main-web",
+		Since:            now.Add(-time.Hour),
+		SaveFindings:     true,
+	})
+	if err != nil {
+		t.Fatalf("CorrelateEvents returned error: %v", err)
+	}
+	if len(result.Chains) != 1 {
+		t.Fatalf("chains = %#v, want one raw correlation chain before deployment suppression", result.Chains)
+	}
+	if len(result.Findings) != 0 {
+		t.Fatalf("findings = %#v, want expected deployment file finding suppressed", result.Findings)
+	}
+	stored, err := hub.ListHubFindings(ctx, ListHubFindingsInput{
+		OrganizationSlug: "acme",
+		ProjectSlug:      "customer-site",
+		EnvironmentSlug:  "production",
+		AppSlug:          "main-web",
+		Limit:            20,
+	})
+	if err != nil {
+		t.Fatalf("ListHubFindings returned error: %v", err)
+	}
+	if len(stored) != 0 {
+		t.Fatalf("stored findings = %#v, want no saved finding for expected deployment file change", stored)
+	}
+}
+
+func TestSaveDeploymentMarkerAcknowledgesExistingExpectedFileFindings(t *testing.T) {
+	inventory := newMemoryInventoryRepository()
+	ingest := &memoryIngestRepository{}
+	findings := newMemoryHubFindingRepository()
+	hub := New(Dependencies{Inventory: inventory, Ingest: ingest, Findings: findings})
+	ctx := context.Background()
+
+	environment, app, host, agent := bootstrapDatabaseDiffInventory(t, ctx, hub, "wordpress")
+	now := time.Date(2026, 5, 12, 13, 19, 0, 0, time.UTC)
+	ingest.timelineEvents = []domain.TimelineEvent{
+		deploymentFileEvent("evt-deploy-index", environment.ID, app.ID, host.ID, host.Slug, agent.ID, agent.AgentID, now, "file.modified", "public/index.php", domain.SeverityInfo),
+		deploymentFileEvent("evt-upload-php", environment.ID, app.ID, host.ID, host.Slug, agent.ID, agent.AgentID, now.Add(time.Minute), "file.created", "wp-content/uploads/avatar.php", domain.SeverityHigh),
+	}
+
+	result, err := hub.CorrelateEvents(ctx, CorrelateEventsInput{
+		OrganizationSlug: "acme",
+		ProjectSlug:      "customer-site",
+		EnvironmentSlug:  "production",
+		AppSlug:          "main-web",
+		Since:            now.Add(-time.Hour),
+		SaveFindings:     true,
+	})
+	if err != nil {
+		t.Fatalf("CorrelateEvents returned error: %v", err)
+	}
+	if len(result.Findings) != 2 {
+		t.Fatalf("findings = %#v, want expected and high-risk file findings before deployment marker", result.Findings)
+	}
+
+	finishedAt := now.Add(10 * time.Minute)
+	deploymentResult, err := hub.SaveDeploymentMarkerWithStatusUpdate(ctx, SaveDeploymentMarkerInput{
+		OrganizationSlug: "acme",
+		ProjectSlug:      "customer-site",
+		EnvironmentSlug:  "production",
+		AppSlug:          "main-web",
+		Version:          "v1.8.4",
+		Actor:            "github-actions",
+		StartedAt:        now.Add(-time.Minute),
+		FinishedAt:       &finishedAt,
+	})
+	if err != nil {
+		t.Fatalf("SaveDeploymentMarkerWithStatusUpdate returned error: %v", err)
+	}
+	if deploymentResult.Deployment.ID == "" || deploymentResult.AcknowledgedFindings != 1 {
+		t.Fatalf("deploymentResult=%#v, want one expected file finding acknowledged", deploymentResult)
+	}
+	stored, err := hub.ListHubFindings(ctx, ListHubFindingsInput{
+		OrganizationSlug: "acme",
+		ProjectSlug:      "customer-site",
+		EnvironmentSlug:  "production",
+		AppSlug:          "main-web",
+		Limit:            20,
+	})
+	if err != nil {
+		t.Fatalf("ListHubFindings returned error: %v", err)
+	}
+	statusByRule := map[string]string{}
+	for _, finding := range stored {
+		statusByRule[finding.RuleID] = finding.Status + ":" + finding.StatusReason
+	}
+	if statusByRule["file-php-changed"] != "acknowledged:deployment_window" {
+		t.Fatalf("statusByRule = %#v, want expected PHP change acknowledged by deployment marker", statusByRule)
+	}
+	if statusByRule["file-php-in-writable-path"] != "open:" {
+		t.Fatalf("statusByRule = %#v, want high-risk writable PHP finding left open", statusByRule)
+	}
+}
+
 func TestCorrelateEventsIgnoresRoutineDatabaseChecksAfterFileChange(t *testing.T) {
 	now := time.Date(2026, 5, 12, 13, 20, 0, 0, time.UTC)
 	chains := correlateTimelineEvents([]domain.TimelineEvent{
@@ -512,6 +691,9 @@ func TestCorrelateEventsBuildsAdminLoginRequestChain(t *testing.T) {
 	if len(loginChain.Events) != 1 || !strings.Contains(loginChain.Summary, "success likely") {
 		t.Fatalf("login chain = %#v, want one likely-success login event", loginChain)
 	}
+	if !strings.Contains(loginChain.Summary, "203.0.113.10") {
+		t.Fatalf("login chain summary = %q, want source IP", loginChain.Summary)
+	}
 	if _, ok := byRule["web-password-reset-request"]; ok {
 		t.Fatalf("chains = %#v, login should not be classified as password reset", chains)
 	}
@@ -545,6 +727,9 @@ func TestCorrelateEventsBuildsPasswordResetRequestChain(t *testing.T) {
 	if len(resetChain.Events) != 2 {
 		t.Fatalf("reset chain = %#v, want grouped reset events", resetChain)
 	}
+	if !strings.Contains(resetChain.Summary, "203.0.113.20") {
+		t.Fatalf("reset chain summary = %q, want source IP", resetChain.Summary)
+	}
 	if !strings.Contains(resetChain.Events[0].Target, "lostpassword") {
 		t.Fatalf("reset event target = %q, want reset action context", resetChain.Events[0].Target)
 	}
@@ -556,8 +741,8 @@ func TestCorrelateEventsBuildsPasswordResetRequestChain(t *testing.T) {
 func TestCorrelateEventsBuildsTrafficAndTorWebRequestChains(t *testing.T) {
 	now := time.Date(2026, 5, 12, 14, 30, 0, 0, time.UTC)
 	var events []domain.TimelineEvent
-	for index := range 20 {
-		events = append(events, accessEvent(fmt.Sprintf("evt-volume-%02d", index), now.Add(time.Duration(index)*10*time.Second), "GET", "/catalog?page=1", 200, "198.51.100.10", nil))
+	for index := range 100 {
+		events = append(events, accessEvent(fmt.Sprintf("evt-volume-%02d", index), now.Add(time.Duration(index)*5*time.Second), "GET", "/unknown-probe", 404, "198.51.100.10", nil))
 	}
 	for index := range 6 {
 		events = append(events, accessEvent(fmt.Sprintf("evt-error-%02d", index), now.Add(time.Minute+time.Duration(index)*10*time.Second), "GET", "/checkout", 500, fmt.Sprintf("198.51.100.%d", 20+index), nil))
@@ -593,8 +778,98 @@ func TestCorrelateEventsBuildsTrafficAndTorWebRequestChains(t *testing.T) {
 		byRule["web-tor-admin-request"].Severity != domain.SeverityMedium {
 		t.Fatalf("chains = %#v, want high-confidence errors and medium tor admin finding", chains)
 	}
-	if len(byRule["web-request-volume-spike"].Events) != 20 {
-		t.Fatalf("volume spike = %#v, want 20 events", byRule["web-request-volume-spike"])
+	if len(byRule["web-request-volume-spike"].Events) != 100 {
+		t.Fatalf("volume spike = %#v, want 100 events", byRule["web-request-volume-spike"])
+	}
+	if !strings.Contains(byRule["web-request-volume-spike"].Summary, "198.51.100.10") ||
+		!strings.Contains(byRule["web-tor-admin-request"].Summary, "203.0.113.200") {
+		t.Fatalf("chains = %#v, want web request summaries to show source IPs", chains)
+	}
+}
+
+func TestCorrelateEventsIgnoresRoutinePrestashopBackOfficePosts(t *testing.T) {
+	now := time.Date(2026, 5, 22, 6, 51, 0, 0, time.UTC)
+	requests := []struct {
+		path   string
+		status int
+		remote string
+	}{
+		{"/admin430oqyeka/index.php", 302, "198.51.100.41"},
+		{"/admin430oqyeka/index.php", 403, "198.51.100.41"},
+		{"/admin430oqyeka/ajax.php", 200, "198.51.100.41"},
+		{"/admin430oqyeka/ajax.php", 200, "198.51.100.41"},
+		{"/admin430oqyeka/index.php", 303, "198.51.100.41"},
+		{"/admin430oqyeka/ajax.php", 200, "198.51.100.42"},
+		{"/admin430oqyeka/ajax.php", 200, "198.51.100.42"},
+		{"/admin430oqyeka/ajax.php", 200, "198.51.100.43"},
+		{"/admin430oqyeka/ajax.php", 200, "198.51.100.42"},
+		{"/admin430oqyeka/ajax.php", 200, "198.51.100.43"},
+		{"/admin430oqyeka/ajax.php", 200, "198.51.100.41"},
+		{"/admin430oqyeka/ajax.php", 200, "198.51.100.42"},
+	}
+	events := make([]domain.TimelineEvent, 0, len(requests))
+	for index, request := range requests {
+		events = append(events, accessEvent(
+			fmt.Sprintf("evt-presta-admin-%02d", index),
+			now.Add(time.Duration(index)*25*time.Second),
+			"POST",
+			request.path,
+			request.status,
+			request.remote,
+			nil,
+		))
+	}
+
+	chains := correlateTimelineEvents(events, 30*time.Minute)
+	for _, chain := range chains {
+		if chain.RuleID == "web-admin-post-volume-spike" {
+			t.Fatalf("chains = %#v, want no spike for routine PrestaShop back-office POST activity", chains)
+		}
+	}
+}
+
+func TestCorrelateEventsIgnoresNormalPublicRequestVolume(t *testing.T) {
+	now := time.Date(2026, 5, 17, 15, 0, 0, 0, time.UTC)
+	var events []domain.TimelineEvent
+	for index := range 30 {
+		events = append(events, accessEvent(
+			fmt.Sprintf("evt-locale-%02d", index),
+			now.Add(time.Duration(index)*10*time.Second),
+			"GET",
+			"/fr",
+			200,
+			"198.51.100.10",
+			nil,
+		))
+	}
+	for index := range 30 {
+		events = append(events, accessEvent(
+			fmt.Sprintf("evt-api-%02d", index),
+			now.Add(time.Duration(index)*10*time.Second),
+			"GET",
+			"/api/catalog",
+			200,
+			"198.51.100.11",
+			nil,
+		))
+	}
+	for index := range 100 {
+		events = append(events, accessEvent(
+			fmt.Sprintf("evt-static-%02d", index),
+			now.Add(time.Duration(index)*5*time.Second),
+			"GET",
+			"/modules/sendinblue/views/js/back-in-stock.js",
+			404,
+			"198.51.100.12",
+			nil,
+		))
+	}
+
+	chains := correlateTimelineEvents(events, 30*time.Minute)
+	for _, chain := range chains {
+		if chain.RuleID == "web-request-volume-spike" {
+			t.Fatalf("chains = %#v, want no normal public/API volume spike", chains)
+		}
 	}
 }
 
@@ -689,6 +964,78 @@ func TestListTimelineEventsResolvesEnvironmentAndOptionalApp(t *testing.T) {
 	}
 	if len(events) != 1 || events[0].ID != "evt-current" {
 		t.Fatalf("events = %#v, want current app event", events)
+	}
+}
+
+func TestListTimelineEventsByIDHydratesLinkedFindingEvents(t *testing.T) {
+	inventory := newMemoryInventoryRepository()
+	ingest := &memoryIngestRepository{}
+	hub := New(Dependencies{Inventory: inventory, Ingest: ingest})
+	ctx := context.Background()
+
+	environment, app, host, agent := bootstrapDatabaseDiffInventory(t, ctx, hub, "wordpress")
+	otherApp, err := hub.SaveMonitoredApp(ctx, SaveMonitoredAppInput{
+		OrganizationSlug: "acme",
+		ProjectSlug:      "customer-site",
+		EnvironmentSlug:  "production",
+		Slug:             "api",
+		Kind:             "nodejs",
+	})
+	if err != nil {
+		t.Fatalf("SaveMonitoredApp api returned error: %v", err)
+	}
+	now := time.Date(2026, 5, 12, 14, 0, 0, 0, time.UTC)
+	ingest.timelineEvents = []domain.TimelineEvent{
+		{
+			ID:              "evt-linked-old",
+			EnvironmentID:   environment.ID,
+			AppID:           app.ID,
+			HostID:          host.ID,
+			HostSlug:        host.Slug,
+			AgentID:         agent.ID,
+			AgentExternalID: agent.AgentID,
+			EventTime:       now.Add(-72 * time.Hour),
+			EventType:       "file.modified",
+		},
+		{
+			ID:              "evt-linked-current",
+			EnvironmentID:   environment.ID,
+			AppID:           app.ID,
+			HostID:          host.ID,
+			HostSlug:        host.Slug,
+			AgentID:         agent.ID,
+			AgentExternalID: agent.AgentID,
+			EventTime:       now,
+			EventType:       "db.entity.changed",
+		},
+		{
+			ID:              "evt-other-app",
+			EnvironmentID:   environment.ID,
+			AppID:           otherApp.ID,
+			HostID:          host.ID,
+			HostSlug:        host.Slug,
+			AgentID:         agent.ID,
+			AgentExternalID: agent.AgentID,
+			EventTime:       now,
+			EventType:       "log.access",
+		},
+	}
+
+	events, err := hub.ListTimelineEventsByID(ctx, ListTimelineEventsByIDInput{
+		OrganizationSlug: "acme",
+		ProjectSlug:      "customer-site",
+		EnvironmentSlug:  "production",
+		AppSlug:          "main-web",
+		EventIDs:         []string{"evt-linked-current", "evt-missing", "evt-linked-old", "evt-other-app"},
+	})
+	if err != nil {
+		t.Fatalf("ListTimelineEventsByID returned error: %v", err)
+	}
+	if got, want := len(events), 2; got != want {
+		t.Fatalf("events = %#v, want %d linked app events", events, want)
+	}
+	if events[0].ID != "evt-linked-current" || events[1].ID != "evt-linked-old" {
+		t.Fatalf("events = %#v, want requested ID order", events)
 	}
 }
 
@@ -797,6 +1144,28 @@ func accessEvent(id string, eventTime time.Time, method string, path string, sta
 	}
 }
 
+func deploymentFileEvent(id string, environmentID domain.ID, appID domain.ID, hostID domain.ID, hostSlug string, agentID domain.ID, agentExternalID string, eventTime time.Time, eventType string, path string, severity domain.Severity) domain.TimelineEvent {
+	return domain.TimelineEvent{
+		ID:              domain.ID(id),
+		EnvironmentID:   environmentID,
+		AppID:           appID,
+		AppSlug:         "main-web",
+		HostID:          hostID,
+		HostSlug:        hostSlug,
+		AgentID:         agentID,
+		AgentExternalID: agentExternalID,
+		EventTime:       eventTime,
+		EventType:       eventType,
+		Target:          path,
+		Severity:        severity,
+		Message:         eventType + " " + path,
+		Payload: map[string]any{
+			"relative_path": path,
+			"sha256":        id + "-sha256",
+		},
+	}
+}
+
 func (r *memoryHubFindingRepository) UpdateHubFindingStatus(ctx context.Context, findingID domain.ID, environmentID domain.ID, update domain.HubFindingStatusUpdate) (domain.HubFinding, error) {
 	now := time.Now().UTC()
 	for key, finding := range r.byKey {
@@ -823,6 +1192,38 @@ func (r *memoryHubFindingRepository) UpdateOpenHubFindingStatuses(ctx context.Co
 			continue
 		}
 		if appID != "" && finding.AppID != appID {
+			continue
+		}
+		finding.Status = update.Status
+		finding.StatusReason = update.Reason
+		finding.StatusNote = update.Note
+		finding.StatusActor = update.Actor
+		finding.StatusUpdatedAt = now
+		finding.UpdatedAt = now
+		r.byKey[key] = finding
+		updated++
+	}
+	return updated, nil
+}
+
+func (r *memoryHubFindingRepository) UpdateOpenHubFindingStatusesForRulesInWindow(ctx context.Context, environmentID domain.ID, appID domain.ID, ruleIDs []string, windowStart time.Time, windowEnd time.Time, update domain.HubFindingStatusUpdate) (int, error) {
+	ruleSet := map[string]struct{}{}
+	for _, ruleID := range ruleIDs {
+		ruleSet[ruleID] = struct{}{}
+	}
+	now := time.Now().UTC()
+	updated := 0
+	for key, finding := range r.byKey {
+		if finding.EnvironmentID != environmentID || finding.Status != "open" {
+			continue
+		}
+		if appID != "" && finding.AppID != appID {
+			continue
+		}
+		if _, ok := ruleSet[finding.RuleID]; !ok {
+			continue
+		}
+		if finding.FirstEventAt.After(windowEnd) || finding.LastEventAt.Before(windowStart) {
 			continue
 		}
 		finding.Status = update.Status

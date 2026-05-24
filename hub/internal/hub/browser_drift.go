@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/rcooler/aegrail/hub/internal/domain"
+	"github.com/rcooler/aegrail/hub/internal/ports"
 )
 
 type AnalyzeBrowserScriptDriftInput struct {
@@ -80,7 +81,15 @@ func (h *Hub) AnalyzeBrowserScriptDrift(ctx context.Context, input AnalyzeBrowse
 		input.BaselineSince = input.ObserveSince.Add(-30 * 24 * time.Hour)
 	}
 
-	events, err := h.ingest.ListTimelineEvents(ctx, environment.ID, app.ID, input.BaselineSince, input.Limit)
+	if input.Limit <= 0 {
+		input.Limit = 10000
+	}
+	var events []domain.TimelineEvent
+	if typeRepository, ok := h.ingest.(ports.IngestTimelineEventTypeRepository); ok {
+		events, err = typeRepository.ListTimelineEventsByTypes(ctx, environment.ID, app.ID, input.BaselineSince, []string{"browser.script.observed", "browser.tag_manager.detected"}, input.Limit)
+	} else {
+		events, err = h.ingest.ListTimelineEvents(ctx, environment.ID, app.ID, input.BaselineSince, input.Limit)
+	}
 	if err != nil {
 		return BrowserScriptDriftResult{}, err
 	}
@@ -95,6 +104,7 @@ func (h *Hub) AnalyzeBrowserScriptDrift(ctx context.Context, input AnalyzeBrowse
 	if err != nil {
 		return BrowserScriptDriftResult{}, err
 	}
+	findings = filterDeploymentExpectedFindings(findings)
 	findings = applyRiskScoringToFindings(findings)
 	if input.SaveFindings && len(findings) > 0 {
 		if h.findings == nil {
@@ -355,6 +365,13 @@ func buildBrowserScriptDrift(kind string, event domain.TimelineEvent, value stri
 			"payload":    event.Payload,
 		},
 	}
+	inlinePreview := browserInlinePreviewSummary(payloadStringAny(event.Payload, "inline_preview", ""))
+	if inlinePreview != "" {
+		drift.Metadata["inline_preview"] = inlinePreview
+	}
+	if payloadBool(event.Payload, "inline_preview_truncated") {
+		drift.Metadata["inline_preview_truncated"] = true
+	}
 	switch kind {
 	case "domain":
 		drift.RuleID = "browser-script-domain-new"
@@ -365,7 +382,11 @@ func buildBrowserScriptDrift(kind string, event domain.TimelineEvent, value stri
 		drift.RuleID = "browser-inline-script-changed"
 		drift.Title = "New browser inline script hash"
 		drift.Severity = domain.SeverityMedium
-		drift.Description = fmt.Sprintf("Aegrail observed a new inline script hash on %s. Inline JavaScript drift can indicate page-builder, option, widget, or injection changes.", page)
+		if inlinePreview != "" {
+			drift.Description = fmt.Sprintf("Aegrail observed a new inline script on %s. Preview: %s", page, inlinePreview)
+		} else {
+			drift.Description = fmt.Sprintf("Aegrail observed a new inline script hash on %s. Inline JavaScript drift can indicate page-builder, option, widget, or injection changes.", page)
+		}
 	case "tag_manager_id":
 		drift.RuleID = "browser-tag-manager-id-new"
 		drift.Title = "New tag manager container"
@@ -408,7 +429,7 @@ func browserScriptDriftFindings(org domain.Organization, project domain.Project,
 			Severity:       drift.Severity,
 			Confidence:     drift.Confidence,
 			Title:          drift.Title,
-			Summary:        fmt.Sprintf("%s on %s: %s", drift.Title, drift.PageURL, drift.Value),
+			Summary:        browserScriptDriftSummary(drift),
 			Description:    drift.Description,
 			EventIDs:       eventIDs,
 			FirstEventAt:   drift.EventTime,
@@ -417,6 +438,35 @@ func browserScriptDriftFindings(org domain.Organization, project domain.Project,
 		})
 	}
 	return findings
+}
+
+func browserScriptDriftSummary(drift BrowserScriptDrift) string {
+	if drift.Kind == "inline_hash" {
+		if preview, ok := drift.Metadata["inline_preview"].(string); ok && strings.TrimSpace(preview) != "" {
+			return fmt.Sprintf("%s on %s: %s", drift.Title, drift.PageURL, preview)
+		}
+	}
+	return fmt.Sprintf("%s on %s: %s", drift.Title, drift.PageURL, drift.Value)
+}
+
+func browserInlinePreviewSummary(value string) string {
+	value = strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
+	if value == "" {
+		return ""
+	}
+	const maxSummaryBytes = 240
+	if len(value) <= maxSummaryBytes {
+		return value
+	}
+	var builder strings.Builder
+	for _, r := range value {
+		next := string(r)
+		if builder.Len()+len(next) > maxSummaryBytes {
+			break
+		}
+		builder.WriteString(next)
+	}
+	return strings.TrimSpace(builder.String()) + "..."
 }
 
 func browserPageKey(event domain.TimelineEvent) string {

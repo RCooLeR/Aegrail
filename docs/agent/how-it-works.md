@@ -8,8 +8,8 @@ Agents collect evidence from configured sites:
 
 - File scans: created, modified, deleted files. The agent sends path, relative path when possible, size, modification time, SHA-256 when hashed, and previous metadata for diffs. It does not send file contents.
 - Logs: access logs and PHP errors. The agent sends normalized request/error events with secret-bearing query values, cookies, authorization-like strings, tokens, and passwords redacted. Access log remotes are checked against a cached Tor exit list when Tor checking is enabled.
-- Databases: read-only WordPress, PrestaShop, Mautic, Yii2 RBAC, and Laravel snapshots. The agent sends counts, hashes/digests of selected option/config values, and entity observations such as users, employees, plugins, themes, modules, roles, permissions, RBAC assignments, integrations, webhooks, OAuth clients, cron entries, content-script indicators, and selected configuration keys.
-- Browser crawls: rendered or non-rendered page observations. The agent sends redacted page/final URLs, redacted script URL variants, script domains/paths, inline script hashes/byte sizes, tag manager IDs, site icon candidates, crawl warnings, and the crawler User-Agent that was used.
+- Databases: read-only WordPress, PrestaShop, Mautic, Yii2 RBAC, and Laravel snapshots. Static, React, and Node.js profiles do not collect database snapshots by default. The agent sends counts, hashes/digests of selected option/config values, and entity observations such as users, employees, plugins, themes, modules, roles, permissions, RBAC assignments, integrations, webhooks, OAuth clients, cron entries, content-script indicators, and selected configuration keys.
+- Browser crawls: rendered or non-rendered page observations. The agent sends redacted page/final URLs, redacted script URL variants, script domains/paths, inline script hashes/byte sizes, a redacted inline script preview capped at 4 KB, tag manager IDs, site icon candidates, crawl warnings, and the crawler User-Agent that was used.
 - Coverage: what collectors are enabled for each site and whether expected local collectors are intentionally disabled.
 
 Database account evidence:
@@ -42,7 +42,7 @@ Collector-specific schedules sit inside that loop:
 
 ## File Collector
 
-For each site with file monitoring enabled, the agent builds a path list from the site profile (`wordpress`, `prestashop`, `mautic`, `yii2-rbac`, `laravel`, etc.), `files.extra_paths`, and `files.exclude`.
+For each site with file monitoring enabled, the agent builds a path list from the site profile (`wordpress`, `prestashop`, `mautic`, `yii2-rbac`, `laravel`, `static`, `react`, `nodejs`, etc.), `files.extra_paths`, and `files.exclude`.
 
 It ignores obvious noise:
 
@@ -52,6 +52,7 @@ It ignores obvious noise:
 - cache/temp/tmp-style directories
 - common generated media under writable asset paths like `uploads`, `upload`, and `img`
 - low-signal binary assets under package/code trees such as plugin/theme images, fonts, maps, audio/video, and PDFs
+- dependency installs and generated frontend output such as `node_modules`, `bower_components`, `dist`, `build`, and `public/build` for low-signal static assets
 - Mautic runtime/cache/log/session/spool/temp directories
 
 The file scanner intentionally does not trust a parent directory timestamp as proof that the whole subtree is unchanged. On normal filesystems, editing an existing PHP file changes the file metadata, not necessarily the parent directory metadata. A pure "directory hash" shortcut would be fast, but it could miss timestomped or same-name file edits. Aegrail instead keeps a local state index, checks cheap file metadata every pass, reuses content hashes when metadata is unchanged, and periodically forces content rehashing.
@@ -63,6 +64,9 @@ Built-in profile paths:
 - `mautic`: `.env`, `app/config`, `config`, `media`, `plugins`, `themes`.
 - `yii2-rbac`: `composer.json`, `composer.lock`, `yii`, `requirements.php`, `firewall.php`, `config`, `components`, `controllers`, `helpers`, `models`, `migrations`, `traits`, `widgets`, `mail`, `mailer`, `views`, `commands`, and selected `web/*.php` entrypoints.
 - `laravel`: `.env`, `artisan`, Composer/npm lockfiles, Vite/Tailwind/PostCSS config, `app`, `bootstrap/app.php`, `bootstrap/providers.php`, `config`, `database/migrations`, `database/seeders`, `resources/views`, `resources/js`, `resources/css`, `routes`, and selected `public` entrypoints.
+- `static`: the configured site root. The scanner still skips obvious cache/dependency/generated noise and low-signal binary assets.
+- `react`: `.env`, package locks, Vite/Webpack/Next/Tailwind/PostCSS/TypeScript config, `src`, `app`, `pages`, `components`, `public`, and `index.html`.
+- `nodejs`: `.env`, package locks, common entrypoints (`server`, `index`, `app`), `src`, `app`, `config`, `routes`, `controllers`, `middleware`, `models`, `prisma`, and `migrations`.
 
 Mautic file severity rules:
 
@@ -84,6 +88,13 @@ Laravel file severity rules:
 - PHP/PHAR/PHTML in writable public/storage/cache-style paths is high risk.
 - Source changes in `app`, `routes`, `database/migrations`, `database/seeders`, `resources`, and selected public entrypoints are medium by default unless they are config-sensitive.
 - Vendor, node_modules, storage, bootstrap/cache, generated public build/vendor assets, and tests should usually be excluded in YAML.
+
+Static, React, and Node.js file monitoring notes:
+
+- Static sites are file/log/browser-first. They usually have no database collector; use browser crawls to catch script-domain drift and access logs to catch admin/tool probes.
+- React profiles focus on source and build configuration, not generated bundle churn. Generated `dist`, `build`, and `public/build` assets are low signal unless they affect entrypoints, service workers, or browser-observed scripts.
+- Node.js profiles focus on package locks, entrypoints, routes, middleware, config, and application source. They do not assume a safe generic database schema.
+- `.env`, service workers, web-server config added through `files.extra_paths`, package scripts/locks, auth/payment/account route code, and unexpected server-side executables are higher-signal review targets.
 
 For each watched file it records:
 
@@ -149,6 +160,11 @@ user_agent with secrets redacted
 line_sha256
 ```
 
+The Hub uses `remote_addr` from access logs when it describes web/admin
+findings, so the dashboard and reports show the actual source IP when the log
+line supplied one. Hashes are kept only as compatibility/correlation metadata
+when raw source data is unavailable.
+
 If `remote_addr` is currently present in the Tor exit list, the agent adds:
 
 ```text
@@ -183,6 +199,14 @@ Admin/login and account-recovery paths are intentionally retained because they e
 
 The access log can prove that a login or reset request was made. It cannot always prove the application accepted the credentials, because some frameworks return `200` for both success and failure. Hub reports redirect-style login POSTs as likely success; repeated non-redirect login attempts are handled by the existing burst rules.
 
+Global access-log filtering:
+
+- Routine successful public `GET`, `HEAD`, and `OPTIONS` requests below `400` are dropped for every platform. Routine successful public API `POST`, `PUT`, and `PATCH` requests below `400` for `/api`, `/rest`, and `/graphql` paths are also dropped. Aegrail is not a web analytics pipeline; paths like category pages, home pages, locale roots, public API polling, and ordinary public browsing should not become Hub timeline rows.
+- Routine static asset requests below `500` are dropped for every platform. This includes common CSS/JS/map/image/font/media suffixes, so PrestaShop `/modules/.../*.js` and `/modules/.../*.css` cache hits do not become log events or volume findings.
+- Static asset server errors are kept because they can explain broken deployments or infrastructure problems.
+- Non-API public `POST` requests, such as checkout or form flows, are kept unless a platform-specific filter identifies them as routine tracking noise.
+- Direct PHP probes, admin/login/account-recovery paths, Tor-marked requests, client errors, and application/server errors remain high-signal evidence.
+
 Mautic access-log filtering:
 
 - Routine email/campaign tracking traffic below `500` is dropped for paths such as `/r/...`, `/email/...`, `/mtracking.gif`, `/mtc/event`, `/mtc.js`, `/asset/...`, `/download/...`, `/page/...`, and `/form/submit...`.
@@ -216,6 +240,17 @@ file and line_number when present
 ## WordPress Database Collector
 
 The agent reads the DSN from `sites[].databases[].dsn_env`. It does not accept literal DSNs in config validation.
+
+While the agent process is running, database snapshots reuse a persistent
+`database/sql` connection pool per engine/DSN by default
+(`sites[].databases[].persistent: true`). The pool keeps one idle connection,
+allows up to two open connections, validates the handle with `PingContext` on
+each scheduled snapshot, and lets the SQL driver reconnect if the database
+closed an idle socket. Set `persistent: false` only for environments where a
+provider/proxy requires each scan to open a fresh connection.
+Config coverage reports whether all configured database collectors are using
+persistent connections, so the dashboard node view can show when an agent was
+changed to one-shot DB connections.
 
 For WordPress and WordPress multisite, the default table prefix is `wp_` unless `table_prefix` is configured. The prefix is sanitized to letters, numbers, and underscore before being used in SQL identifiers.
 
@@ -391,6 +426,11 @@ suspicious_reason
 value_bool when parseable
 signature
 ```
+
+Hub suppresses changed runtime token keys such as `ACCESS_TOKEN`, `REFRESH_TOKEN`,
+`OAUTH_TOKEN`, `BEARER_TOKEN`, and `ID_TOKEN` as normal credential rotation
+noise. Client secrets, API keys, debug/security toggles, mail config, shop URLs,
+module changes, and employee changes remain finding candidates.
 
 ## Mautic Database Collector
 
@@ -597,6 +637,7 @@ domain
 path
 sha256 for inline script content
 inline_bytes
+inline_preview / inline_preview_truncated for inline script content
 response_status
 content_type
 attributes
@@ -610,6 +651,7 @@ Browser URL privacy:
 - Query values with names like `token`, `session`, `password`, `secret`, `api_key`, and `access_token` are replaced with `[REDACTED]`.
 - Script attributes such as `src` are also redacted before sending.
 - The agent still emits `domain`, `path`, inline `sha256`, byte size, response status, content type, and tag-manager IDs so the Hub can detect drift without storing private query material.
+- Inline scripts also include `inline_preview`, which is the actual inline JavaScript after credential redaction and a 4 KB cap. The hash remains the stable identity for baseline/allowlist matching; the preview is there so operators can recognize what changed.
 
 For tag managers it also queues `browser.tag_manager.detected`. Crawl failures/timeouts/status problems become `browser.coverage.warning`.
 
@@ -734,12 +776,13 @@ Then run without `--bootstrap` for normal monitoring.
 Current rule families:
 
 - Database snapshot and entity changes for WordPress, PrestaShop, Mautic, Yii2 RBAC, and Laravel.
+- File/log/browser/config findings for static, React, and Node.js sites, including entrypoint drift, service-worker changes, suspicious executable files, admin/API request anomalies, and browser-visible script drift.
 - Suspicious file path changes, including PHP under writable paths and sensitive config changes.
 - Grouped plugin, theme, and module file changes so a new extension does not create a wall of separate issues.
 - Browser script drift, including new domains, URLs, inline hashes, and tag manager IDs.
 - Web/admin request anomalies from normalized logs, including single admin login POST observations and password-reset request observations.
 - Multi-host file baseline drift.
-- Correlated incident chains such as web activity followed by file and database changes.
+- Correlated incident chains. Broad two-step correlations stay specific, such as web activity followed by a file change or a file change followed by a DB security change. The high-severity "Probable incident chain" label is reserved for a stronger three-step sequence: suspicious web trigger, high-risk executable/config file change, and identity/security/persistence follow-up.
 
 Finding metadata should be operator-friendly:
 
@@ -823,6 +866,9 @@ Notes:
 - Mautic profiles include `.env`, app/config, config, media, plugins, and themes. Runtime cache/log/session/spool/temp directories are ignored.
 - Yii2 RBAC profiles include source/config/migration directories plus selected web entrypoints. Exclude vendor, runtime, generated assets, and tests unless there is a specific reason to monitor them.
 - Laravel profiles include source/config/routes/migrations/resources plus selected public entrypoints. Exclude vendor, node_modules, storage, bootstrap/cache, generated public build/vendor assets, and tests unless there is a specific reason to monitor them.
+- Static profiles monitor the site root and rely on skip rules for cache/dependency/generated asset noise.
+- React profiles include package/build config, source directories, public assets, and entrypoints; exclude `node_modules`, generated output, and test/coverage directories.
+- Node.js profiles include package/build config, entrypoints, source/routes/middleware/config/model directories, Prisma/migrations, and access logs; exclude dependency installs, logs, tmp, and coverage directories.
 - Database `schedule` controls how often a database snapshot runs; file/browser/config checks can run more frequently.
 - Provider-managed nodes can disable unavailable local collectors with `files.enabled: false` and can mark config coverage as intentionally disabled with `coverage.enabled: false`.
 - Config coverage emits a periodic heartbeat, even when unchanged, so dashboards can distinguish stale data from an intentionally quiet site.

@@ -807,7 +807,7 @@ func modelAnalysisPlatformContextText(appKind string, issueRuleID string) string
 	switch platform {
 	case "wordpress":
 		return "Application platform: WordPress. Prioritize normal admin actions, plugin/theme updates, media uploads, cron, and scheduled maintenance before flagging intrusion. Be careful with new admins, role/capability changes, script content in posts/options, and suspicious PHP uploads in writable paths."
-	case "wordpress-network":
+	case "wordpress-network", "wordpress-multisite":
 		return "Application platform: WordPress Network (multisite). Treat network-configuration, network admin users, cross-site plugin/theme activation, and multisite option changes as higher impact. Confirm whether the action was expected at network-admin level or isolated to one child site."
 	case "prestashop":
 		return "Application platform: PrestaShop. Expected behavior includes module uploads/updates, hook/tab changes, theme module assets, and back office admin operations. Distinguish module cache/log artifacts and vendor index.php redirect guards from newly introduced executable payloads, payment/mail/security configuration drift, or employee privilege changes."
@@ -817,6 +817,12 @@ func modelAnalysisPlatformContextText(appKind string, issueRuleID string) string
 		return "Application platform: Yii2 RBAC. Expected behavior includes deploys touching config, controllers, models, migrations, views, Yii entrypoints, and web assets. Treat user/role/RBAC changes, config/db.php or production config edits, unexpected PHP entrypoints, and executable files in writable web/runtime areas as higher-impact signals."
 	case "laravel":
 		return "Application platform: Laravel. Expected behavior includes deploys touching app, routes, config, database migrations/seeders, resources, composer files, npm/vite assets, and public/index.php. Treat user, role, Spatie permission, .env, auth/database/service config, Horizon/Telescope exposure, and unexpected executable public/storage files as higher-impact signals."
+	case "static":
+		return "Application platform: Static site. Expected behavior is mostly release-driven file changes, CDN/cache updates, access-log noise, and browser-visible script changes. Treat new server-side executable files, .htaccess/nginx config drift, service-worker changes, external script injections, and admin-like probe traffic as higher-impact signals."
+	case "react":
+		return "Application platform: React frontend. Expected behavior includes deploys touching package locks, build config, src/app/pages/components, public assets, and generated bundles. Treat package/build config drift, service-worker changes, unexpected external script hosts, auth/payment/account-flow script changes, and server-side executable files in public output as higher-impact signals."
+	case "nodejs":
+		return "Application platform: Node.js. Expected behavior includes deploys touching package locks, entrypoints, source, routes, middleware, config, and process-manager/reverse-proxy config. Treat package-lock drift, auth middleware/routes, .env/config changes, admin/API login traffic, and unexpected executable or uploaded server files as higher-impact signals."
 	default:
 		if strings.Contains(platform, "presta") {
 			return "Application platform: PrestaShop-like. Distinguish normal module/theme cache, module package files, and directory guard files from suspicious write activity or sensitive configuration drift."
@@ -829,6 +835,15 @@ func modelAnalysisPlatformContextText(appKind string, issueRuleID string) string
 		}
 		if strings.Contains(platform, "laravel") {
 			return "Application platform: Laravel-like. Focus on app code, routes, middleware, migrations, Spatie roles/permissions, .env/config changes, public entrypoints, queues, Horizon, and Telescope."
+		}
+		if strings.Contains(platform, "react") {
+			return "Application platform: React-like frontend. Focus on package/build config, source entrypoints, service workers, public assets, and browser-visible external scripts."
+		}
+		if strings.Contains(platform, "node") {
+			return "Application platform: Node.js-like. Focus on package locks, entrypoints, routes, middleware, auth/API behavior, config, and runtime process boundaries."
+		}
+		if strings.Contains(platform, "static") {
+			return "Application platform: static frontend. Focus on static entrypoints, service workers, web server config, access-log probes, and browser-visible script drift."
 		}
 		if issueRuleID != "" {
 			return "Application platform: detected from context/metadata. No explicit platform profile was provided; apply conservative, evidence-first judgments."
@@ -893,9 +908,9 @@ func modelAnalysisIssuePromptProfile(issueType string, appKind string, ruleID st
 	case "web_access_activity":
 		return `Web/access-log perspective:
 - Access logs show request behavior, not by themselves successful compromise.
-- For admin probes, login POST bursts, success-after-failures, Tor-marked traffic, or request/error spikes, explain whether the pattern looks like scanning, brute force, app instability, or a real admin session risk.
+- For admin probes, login POST bursts, success-after-failures, Tor-marked traffic, failed public request spikes, or server-error spikes, explain whether the pattern looks like scanning, brute force, app instability, or a real admin session risk.
 - Treat AegrailBot, local Docker bridge traffic, and clustered fallback browser user agents on public health/crawl URLs as self-monitoring noise when no admin/auth/file/database follow-up evidence exists.
-- Use remote fingerprints and path families from evidence; do not ask for raw IPs if Aegrail only supplied hashes.
+- Use source IPs/remote addresses and path families from evidence; if older evidence only supplied a hash, say that the raw source IP is unavailable for that event.
 - Recommend checking the same timeframe for successful admin sessions, file writes, database role/config changes, PHP errors, WAF/CDN logs, and planned load tests.`
 	case "platform_configuration_change":
 		return platformConfigurationPromptProfile(platform, rule)
@@ -1052,6 +1067,10 @@ func platformExtensionPromptProfile(platform string, rule string) string {
 		return base + `
 - For Laravel, deployment-like code changes usually touch app, routes, config, database/migrations, database/seeders, resources, composer/npm lockfiles, Vite config, and public/index.php; scrutinize executable files under public/storage, public/vendor, storage, or cache paths.`
 	}
+	if strings.Contains(platform, "react") || strings.Contains(platform, "static") || strings.Contains(platform, "node") {
+		return base + `
+- For static/React/Node.js sites, release-like changes usually touch package locks, build config, source entrypoints, public assets, service workers, or server entrypoints; scrutinize changes that introduce new executable server files, auth/payment/account-flow code, unexpected external script hosts, or deploy-time package drift.`
+	}
 	if strings.Contains(platform, "wordpress") || strings.Contains(rule, "wordpress") {
 		return base + `
 - For WordPress, plugin/theme activation usually appears in options plus file changes; network-wide activation on multisite is higher impact than one child site.`
@@ -1080,6 +1099,10 @@ func platformConfigurationPromptProfile(platform string, rule string) string {
 	if strings.Contains(platform, "laravel") || strings.Contains(rule, "laravel") {
 		return base + `
 - For Laravel, .env, config/database.php, config/auth.php, config/services.php, config/permission.php, Spatie role/permission tables, password reset tokens, sessions, queue/failed job tables, Horizon, and Telescope are security-relevant.`
+	}
+	if strings.Contains(platform, "react") || strings.Contains(platform, "static") || strings.Contains(platform, "node") {
+		return base + `
+- For static/React/Node.js sites, service-worker files, package scripts, build/deploy config, reverse-proxy rules, CSP/security headers, auth/API route config, and third-party script allowlists are security-relevant.`
 	}
 	if strings.Contains(platform, "wordpress") || strings.Contains(rule, "wordpress") {
 		return base + `

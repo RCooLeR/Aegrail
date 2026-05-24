@@ -806,6 +806,53 @@ td small {
   overflow-wrap: anywhere;
 }
 
+.bulk-action-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: var(--panel-soft);
+}
+
+.bulk-action-bar span {
+  margin-right: 4px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 820;
+}
+
+.select-cell {
+  width: 42px;
+  min-width: 42px;
+  text-align: center;
+}
+
+.select-cell input[type="checkbox"] {
+  vertical-align: middle;
+}
+
+.script-preview {
+  max-width: min(760px, 72vw);
+  max-height: 180px;
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  overflow: auto;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  color: #334155;
+  background: #f8fafc;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.76rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .table-edit-stack {
   display: grid;
   gap: 7px;
@@ -937,6 +984,11 @@ td small {
   font-size: 0.74rem;
   font-weight: 790;
   white-space: nowrap;
+}
+
+.timeline-signal-badges {
+  margin-top: 5px;
+  min-width: 0;
 }
 
 .signal-summary {
@@ -1477,6 +1529,40 @@ td small {
 .evidence-list.action-list {
   max-height: none;
   margin-top: 10px;
+}
+
+.signal-id-link,
+.signal-id-muted {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  border: 0;
+  color: #1d4ed8;
+  background: transparent;
+  font: inherit;
+  font-weight: 760;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.signal-id-link {
+  cursor: pointer;
+}
+
+.signal-id-link:hover {
+  text-decoration: underline;
+}
+
+.signal-id-link small,
+.signal-id-muted small {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.signal-id-muted {
+  color: #64748b;
 }
 
 .action-guidance {

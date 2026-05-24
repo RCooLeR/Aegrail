@@ -285,17 +285,17 @@ func inferRuleDefinition(id string) RuleDefinition {
 		definition.ActionHints = []RuleActionHint{RuleActionAcknowledge, RuleActionMarkFalsePositive, RuleActionInspectDeployment, RuleActionAllowBrowserScript}
 	case isWebRequestRuleID(id):
 		definition.Category = RuleCategoryWebRequest
-		definition.Platforms = []string{"generic_php", "wordpress", "prestashop", "mautic", "yii2-rbac", "laravel"}
+		definition.Platforms = []string{"generic_php", "wordpress", "prestashop", "mautic", "yii2-rbac", "laravel", "static", "react", "nodejs"}
 		definition.EvidenceTypes = []string{"log"}
 		definition.ActionHints = []RuleActionHint{RuleActionAcknowledge, RuleActionMarkFalsePositive, RuleActionInspectTimeline}
 	case id == "file-baseline-drift":
 		definition.Category = RuleCategoryFileBaseline
-		definition.Platforms = []string{"generic_php"}
+		definition.Platforms = []string{"generic_php", "static", "react", "nodejs"}
 		definition.EvidenceTypes = []string{"file"}
 		definition.ActionHints = []RuleActionHint{RuleActionAcknowledge, RuleActionMarkFalsePositive, RuleActionInspectTimeline, RuleActionInspectFiles, RuleActionInspectDeployment}
 	case isFilePathRuleID(id):
 		definition.Category = RuleCategoryFilePath
-		definition.Platforms = []string{"generic_php", "wordpress", "prestashop", "mautic", "yii2-rbac", "laravel"}
+		definition.Platforms = []string{"generic_php", "wordpress", "prestashop", "mautic", "yii2-rbac", "laravel", "static", "react", "nodejs"}
 		definition.EvidenceTypes = []string{"file"}
 		definition.ActionHints = []RuleActionHint{RuleActionAcknowledge, RuleActionMarkFalsePositive, RuleActionInspectTimeline, RuleActionInspectFiles, RuleActionInspectDeployment}
 	case strings.HasPrefix(id, "wordpress-"):

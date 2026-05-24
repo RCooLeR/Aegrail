@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -454,6 +455,51 @@ func (r *InventoryRepository) FindAgentByAgentID(ctx context.Context, agentID st
 	return item, ok, err
 }
 
+func (r *InventoryRepository) GetInventoryIngestScope(ctx context.Context, organizationSlug string, projectSlug string, environmentSlug string, hostSlug string, agentID string, appSlug string, serviceSlug string) (ports.InventoryIngestScopePath, bool, error) {
+	const query = `
+		SELECT
+			o.id::text, o.slug::text, o.name, o.created_at, o.updated_at,
+			p.id::text, p.organization_id::text, p.slug::text, p.name, p.created_at, p.updated_at,
+			e.id::text, e.project_id::text, e.slug::text, e.name, e.created_at, e.updated_at,
+			h.id::text, h.environment_id::text, h.slug::text, h.hostname, h.region, h.labels, h.created_at, h.updated_at,
+			a.id::text, a.host_id::text, a.agent_id::text, a.fingerprint, a.version, a.last_seen_at,
+				a.wire_protocol, a.node_public_key, a.created_at, a.updated_at,
+			coalesce(ma.id::text, ''), coalesce(ma.environment_id::text, ''), coalesce(ma.slug::text, ''),
+				coalesce(ma.name, ''), coalesce(ma.kind, ''), coalesce(ma.created_at, 'epoch'::timestamptz),
+				coalesce(ma.updated_at, 'epoch'::timestamptz),
+			coalesce(s.id::text, ''), coalesce(s.app_id::text, ''), coalesce(s.slug::text, ''),
+				coalesce(s.name, ''), coalesce(s.role, ''), coalesce(s.created_at, 'epoch'::timestamptz),
+				coalesce(s.updated_at, 'epoch'::timestamptz)
+		FROM organizations o
+		JOIN projects p ON p.organization_id = o.id
+		JOIN environments e ON e.project_id = p.id
+		JOIN hosts h ON h.environment_id = e.id
+		JOIN agents a ON a.host_id = h.id
+		LEFT JOIN monitored_apps ma ON ma.environment_id = e.id AND ma.slug = nullif($6::text, '')
+		LEFT JOIN services s ON s.app_id = ma.id AND s.slug = nullif($7::text, '')
+		WHERE o.slug = $1
+			AND p.slug = $2
+			AND e.slug = $3
+			AND h.slug = $4
+			AND a.agent_id = $5
+			AND ($6::text = '' OR ma.id IS NOT NULL)
+			AND ($7::text = '' OR s.id IS NOT NULL)
+	`
+	var scope ports.InventoryIngestScopePath
+	err := r.pool.QueryRow(ctx, query, organizationSlug, projectSlug, environmentSlug, hostSlug, agentID, appSlug, serviceSlug).Scan(
+		&scope.Organization.ID, &scope.Organization.Slug, &scope.Organization.Name, &scope.Organization.CreatedAt, &scope.Organization.UpdatedAt,
+		&scope.Project.ID, &scope.Project.OrganizationID, &scope.Project.Slug, &scope.Project.Name, &scope.Project.CreatedAt, &scope.Project.UpdatedAt,
+		&scope.Environment.ID, &scope.Environment.ProjectID, &scope.Environment.Slug, &scope.Environment.Name, &scope.Environment.CreatedAt, &scope.Environment.UpdatedAt,
+		&scope.Host.ID, &scope.Host.EnvironmentID, &scope.Host.Slug, &scope.Host.Hostname, &scope.Host.Region, &scope.Host.Labels, &scope.Host.CreatedAt, &scope.Host.UpdatedAt,
+		&scope.Agent.ID, &scope.Agent.HostID, &scope.Agent.AgentID, &scope.Agent.Fingerprint, &scope.Agent.Version, &scope.Agent.LastSeenAt,
+		&scope.Agent.WireProtocol, &scope.Agent.NodePublicKey, &scope.Agent.CreatedAt, &scope.Agent.UpdatedAt,
+		&scope.App.ID, &scope.App.EnvironmentID, &scope.App.Slug, &scope.App.Name, &scope.App.Kind, &scope.App.CreatedAt, &scope.App.UpdatedAt,
+		&scope.Service.ID, &scope.Service.AppID, &scope.Service.Slug, &scope.Service.Name, &scope.Service.Role, &scope.Service.CreatedAt, &scope.Service.UpdatedAt,
+	)
+	ok, err := found(err)
+	return scope, ok, err
+}
+
 func (r *InventoryRepository) SaveDeploymentMarker(ctx context.Context, marker domain.DeploymentMarker) (domain.DeploymentMarker, error) {
 	const query = `
 		INSERT INTO deployment_markers (environment_id, app_id, version, commit_sha, actor, started_at, finished_at)
@@ -468,15 +514,28 @@ func (r *InventoryRepository) SaveDeploymentMarker(ctx context.Context, marker d
 }
 
 func (r *InventoryRepository) ListDeploymentMarkers(ctx context.Context, environmentID domain.ID, appID domain.ID) ([]domain.DeploymentMarker, error) {
-	const query = `
+	const environmentQuery = `
 		SELECT id::text, environment_id::text, coalesce(app_id::text, ''), version, commit_sha, actor, started_at, finished_at, created_at
 		FROM deployment_markers
 		WHERE environment_id = $1
-			AND (nullif($2::text, '') IS NULL OR app_id = nullif($2::text, '')::uuid)
 		ORDER BY started_at DESC
 		LIMIT 100
 	`
-	rows, err := r.pool.Query(ctx, query, environmentID, string(appID))
+	const appQuery = `
+		SELECT id::text, environment_id::text, coalesce(app_id::text, ''), version, commit_sha, actor, started_at, finished_at, created_at
+		FROM deployment_markers
+		WHERE environment_id = $1
+			AND app_id = $2::uuid
+		ORDER BY started_at DESC
+		LIMIT 100
+	`
+	query := environmentQuery
+	args := []any{environmentID}
+	if strings.TrimSpace(string(appID)) != "" {
+		query = appQuery
+		args = []any{environmentID, string(appID)}
+	}
+	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

@@ -45,6 +45,8 @@ type BrowserScriptObservationRecord struct {
 	Path            string
 	SHA256          string
 	InlineBytes     int
+	InlinePreview   string
+	InlineTruncated bool
 	TagManager      bool
 	TagManagerIDs   []string
 	Labels          map[string]string
@@ -59,14 +61,13 @@ func (h *Hub) ListBrowserScriptObservations(ctx context.Context, input ListBrows
 	if timelineLimit <= 0 || timelineLimit < 10000 {
 		timelineLimit = 10000
 	}
-	events, err := h.ListTimelineEvents(ctx, ListTimelineEventsInput{
+	events, err := h.listTimelineEventsByTypes(ctx, ListTimelineEventsInput{
 		OrganizationSlug: input.OrganizationSlug,
 		ProjectSlug:      input.ProjectSlug,
 		EnvironmentSlug:  input.EnvironmentSlug,
 		AppSlug:          input.AppSlug,
 		Since:            input.Since,
-		Limit:            timelineLimit,
-	})
+	}, []string{"browser.script.observed", "browser.tag_manager.detected"}, timelineLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +92,7 @@ func (h *Hub) ListBrowserScriptObservations(ctx context.Context, input ListBrows
 		if a.EventTime.Equal(b.EventTime) {
 			return strings.Compare(string(a.EventID), string(b.EventID))
 		}
-		if a.EventTime.Before(b.EventTime) {
+		if a.EventTime.After(b.EventTime) {
 			return -1
 		}
 		return 1
@@ -128,6 +129,8 @@ func browserScriptObservationRecord(event domain.TimelineEvent) BrowserScriptObs
 		Path:            payloadStringAny(payload, "path", ""),
 		SHA256:          payloadStringAny(payload, "sha256", ""),
 		InlineBytes:     payloadInt(payload, "inline_bytes"),
+		InlinePreview:   payloadStringAny(payload, "inline_preview", ""),
+		InlineTruncated: payloadBool(payload, "inline_preview_truncated"),
 		TagManager:      payloadBool(payload, "tag_manager"),
 		TagManagerIDs:   payloadStringSlice(payload, "tag_manager_ids"),
 		Labels:          cloneStringMap(event.Labels),

@@ -111,6 +111,34 @@ func TestHubRouterDoesNotReplaceProvisionedNodeSecret(t *testing.T) {
 	}
 }
 
+func TestHubRouterGeneratedNodeConfigUsesExistingAppKind(t *testing.T) {
+	hubPrivateKey, _, err := wire.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("GenerateKeyPair returned error: %v", err)
+	}
+	repo := newHTTPTestInventoryRepository()
+	repo.apps[0].Slug = "frontend"
+	repo.apps[0].Name = "Frontend"
+	repo.apps[0].Kind = "react"
+	router := NewHubRouter(domain.AppMeta{Name: "Aegrail", Binary: "aegrail", Version: "test"}, hubapp.New(hubapp.Dependencies{Inventory: repo}), HubOptions{
+		WirePrivateKey: hubPrivateKey,
+	})
+
+	body := `{"org":"acme","project":"customer-site","environment":"production","app":"frontend","service":"frontend","host":"web-01","agent_id":"agt_react","version":"test"}`
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/inventory/nodes", strings.NewReader(body))
+	request.RemoteAddr = "127.0.0.1:12345"
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("status = %d body = %s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), `kind: \"react\"`) || !strings.Contains(response.Body.String(), `app: \"frontend\"`) || !strings.Contains(response.Body.String(), `- \"react\"`) {
+		t.Fatalf("sample config did not use react app kind/profile: %s", response.Body.String())
+	}
+}
+
 func TestHubRouterListsInventoryScopes(t *testing.T) {
 	repo := newHTTPTestInventoryRepository()
 	router := NewHubRouter(domain.AppMeta{Name: "Aegrail", Binary: "aegrail", Version: "test"}, hubapp.New(hubapp.Dependencies{Inventory: repo}), HubOptions{})

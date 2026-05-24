@@ -34,6 +34,12 @@ type Hub struct {
 	usersExist                 bool
 	totpReplayMu               sync.Mutex
 	totpReplay                 map[totpReplayKey]time.Time
+	notificationErrorMu        sync.Mutex
+	notificationErrorLast      map[string]time.Time
+	correlationEnqueueMu       sync.Mutex
+	correlationEnqueueLast     map[string]time.Time
+	correlationRunMu           sync.Mutex
+	correlationRunLast         map[string]time.Time
 	workersWG                  sync.WaitGroup
 	modelQueueFallbackWarnOnce sync.Once
 }
@@ -59,23 +65,26 @@ type Dependencies struct {
 
 func New(deps Dependencies) *Hub {
 	return &Hub{
-		meta:              deps.Meta,
-		inventory:         deps.Inventory,
-		ingest:            deps.Ingest,
-		findings:          deps.Findings,
-		fileIgnoreRules:   deps.FileIgnoreRules,
-		browserAllowlist:  deps.BrowserAllowlist,
-		modelReports:      deps.ModelReports,
-		model:             deps.Model,
-		jobs:              deps.Jobs,
-		locks:             deps.Locks,
-		rateLimiter:       deps.RateLimiter,
-		users:             deps.Users,
-		pushSubscriptions: deps.PushSubscriptions,
-		notifications:     deps.Notifications,
-		userSecretKey:     strings.TrimSpace(deps.UserSecretKey),
-		backgroundError:   deps.BackgroundError,
-		totpReplay:        map[totpReplayKey]time.Time{},
+		meta:                   deps.Meta,
+		inventory:              deps.Inventory,
+		ingest:                 deps.Ingest,
+		findings:               deps.Findings,
+		fileIgnoreRules:        deps.FileIgnoreRules,
+		browserAllowlist:       deps.BrowserAllowlist,
+		modelReports:           deps.ModelReports,
+		model:                  deps.Model,
+		jobs:                   deps.Jobs,
+		locks:                  deps.Locks,
+		rateLimiter:            deps.RateLimiter,
+		users:                  deps.Users,
+		pushSubscriptions:      deps.PushSubscriptions,
+		notifications:          deps.Notifications,
+		userSecretKey:          strings.TrimSpace(deps.UserSecretKey),
+		backgroundError:        deps.BackgroundError,
+		totpReplay:             map[totpReplayKey]time.Time{},
+		notificationErrorLast:  map[string]time.Time{},
+		correlationEnqueueLast: map[string]time.Time{},
+		correlationRunLast:     map[string]time.Time{},
 	}
 }
 
@@ -194,6 +203,11 @@ type SaveDeploymentMarkerInput struct {
 	Actor            string
 	StartedAt        time.Time
 	FinishedAt       *time.Time
+}
+
+type SaveDeploymentMarkerResult struct {
+	Deployment           domain.DeploymentMarker
+	AcknowledgedFindings int
 }
 
 func (h *Hub) SaveOrganization(ctx context.Context, input SaveOrganizationInput) (domain.Organization, error) {
@@ -454,7 +468,7 @@ func (h *Hub) SaveMonitoredApp(ctx context.Context, input SaveMonitoredAppInput)
 		EnvironmentID: environment.ID,
 		Slug:          slug,
 		Name:          defaultName(input.Name, slug),
-		Kind:          strings.TrimSpace(input.Kind),
+		Kind:          normalizeMonitoredAppKind(input.Kind),
 	})
 }
 
@@ -481,8 +495,20 @@ func (h *Hub) UpdateMonitoredApp(ctx context.Context, input UpdateMonitoredAppIn
 	return h.inventory.UpdateMonitoredApp(ctx, id, domain.MonitoredAppUpdate{
 		Slug: slug,
 		Name: defaultName(input.Name, slug),
-		Kind: strings.TrimSpace(input.Kind),
+		Kind: normalizeMonitoredAppKind(input.Kind),
 	})
+}
+
+func normalizeMonitoredAppKind(value string) string {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	switch normalized {
+	case "static-site", "static-html":
+		return "static"
+	case "node", "node.js", "node-js":
+		return "nodejs"
+	default:
+		return normalized
+	}
 }
 
 func (h *Hub) SaveService(ctx context.Context, input SaveServiceInput) (domain.Service, error) {
@@ -659,27 +685,35 @@ func (h *Hub) FindAgentByAgentID(ctx context.Context, agentID string) (domain.Ag
 }
 
 func (h *Hub) SaveDeploymentMarker(ctx context.Context, input SaveDeploymentMarkerInput) (domain.DeploymentMarker, error) {
-	environment, err := h.resolveEnvironmentPath(ctx, input.OrganizationSlug, input.ProjectSlug, input.EnvironmentSlug)
+	result, err := h.SaveDeploymentMarkerWithStatusUpdate(ctx, input)
 	if err != nil {
 		return domain.DeploymentMarker{}, err
+	}
+	return result.Deployment, nil
+}
+
+func (h *Hub) SaveDeploymentMarkerWithStatusUpdate(ctx context.Context, input SaveDeploymentMarkerInput) (SaveDeploymentMarkerResult, error) {
+	environment, err := h.resolveEnvironmentPath(ctx, input.OrganizationSlug, input.ProjectSlug, input.EnvironmentSlug)
+	if err != nil {
+		return SaveDeploymentMarkerResult{}, err
 	}
 	var appID domain.ID
 	if strings.TrimSpace(input.AppSlug) != "" {
 		app, err := h.resolveAppPath(ctx, input.OrganizationSlug, input.ProjectSlug, input.EnvironmentSlug, input.AppSlug)
 		if err != nil {
-			return domain.DeploymentMarker{}, err
+			return SaveDeploymentMarkerResult{}, err
 		}
 		appID = app.ID
 	}
 	version := strings.TrimSpace(input.Version)
 	if version == "" {
-		return domain.DeploymentMarker{}, errors.New("deployment version is required")
+		return SaveDeploymentMarkerResult{}, errors.New("deployment version is required")
 	}
 	startedAt := input.StartedAt
 	if startedAt.IsZero() {
 		startedAt = time.Now().UTC()
 	}
-	return h.inventory.SaveDeploymentMarker(ctx, domain.DeploymentMarker{
+	deployment, err := h.inventory.SaveDeploymentMarker(ctx, domain.DeploymentMarker{
 		EnvironmentID: environment.ID,
 		AppID:         appID,
 		Version:       version,
@@ -688,6 +722,17 @@ func (h *Hub) SaveDeploymentMarker(ctx context.Context, input SaveDeploymentMark
 		StartedAt:     startedAt.UTC(),
 		FinishedAt:    input.FinishedAt,
 	})
+	if err != nil {
+		return SaveDeploymentMarkerResult{}, err
+	}
+	acknowledged, err := h.acknowledgeDeploymentExpectedOpenFindings(ctx, deployment)
+	if err != nil {
+		return SaveDeploymentMarkerResult{}, err
+	}
+	return SaveDeploymentMarkerResult{
+		Deployment:           deployment,
+		AcknowledgedFindings: acknowledged,
+	}, nil
 }
 
 func (h *Hub) ListDeploymentMarkers(ctx context.Context, organizationSlug string, projectSlug string, environmentSlug string, appSlug string) ([]domain.DeploymentMarker, error) {

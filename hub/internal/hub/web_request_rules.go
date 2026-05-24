@@ -12,7 +12,7 @@ import (
 
 const (
 	webRequestSpikeWindow              = 10 * time.Minute
-	webRequestVolumeThreshold          = 20
+	webRequestVolumeThreshold          = 100
 	webErrorRateThreshold              = 6
 	webAdminPostVolumeThreshold        = 10
 	webAdminPostDistinctRemoteMinCount = 3
@@ -23,6 +23,7 @@ type webRequestObservation struct {
 	Key               string
 	RemoteFingerprint string
 	RemoteAddress     string
+	RemoteDisplay     string
 	RemoteKnown       bool
 	Method            string
 	Path              string
@@ -89,12 +90,14 @@ func webRequestObservationFromEvent(event domain.TimelineEvent) (webRequestObser
 	method := strings.ToUpper(payloadStringAny(event.Payload, "method", ""))
 	remoteFingerprint, remoteKnown := remoteAddressFingerprint(event.Payload)
 	remoteAddress := webRequestRemoteAddress(event.Payload)
+	remoteDisplay := remoteAddressDisplayLabel(event.Payload, remoteFingerprint)
 	status := payloadInt(event.Payload, "status_code")
 	return webRequestObservation{
 		Event:             event,
 		Key:               correlationEventKey(event),
 		RemoteFingerprint: remoteFingerprint,
 		RemoteAddress:     remoteAddress,
+		RemoteDisplay:     remoteDisplay,
 		RemoteKnown:       remoteKnown,
 		Method:            method,
 		Path:              path,
@@ -143,19 +146,101 @@ func webRequestVolumeSpikeChains(observations []webRequestObservation, covered m
 		threshold:  webRequestVolumeThreshold,
 		severity:   domain.SeverityMedium,
 		confidence: domain.ConfidenceMedium,
-		match: func(observation webRequestObservation) bool {
-			return observation.RemoteKnown &&
-				!isPrivateWebRequestRemote(observation.RemoteAddress) &&
-				!isAdminRequestPath(observation.Path)
-		},
+		match:      isWebRequestVolumeSpikeCandidate,
 		groupKey: func(observation webRequestObservation) string {
 			return observation.RemoteFingerprint + ":" + observation.PathFamily
 		},
 		summary: func(group []webRequestObservation) string {
 			first := group[0]
-			return fmt.Sprintf("%d request(s) from remote %s to %s within %s", len(group), first.RemoteFingerprint, first.PathFamily, webRequestSpikeWindow)
+			return fmt.Sprintf("%d request(s) from remote %s to %s within %s", len(group), first.RemoteDisplay, first.PathFamily, webRequestSpikeWindow)
 		},
 	})
+}
+
+func isWebRequestVolumeSpikeCandidate(observation webRequestObservation) bool {
+	if !observation.RemoteKnown ||
+		isPrivateWebRequestRemote(observation.RemoteAddress) ||
+		isAdminRequestPath(observation.Path) ||
+		isRoutinePublicPath(observation.Path, observation.PathFamily) {
+		return false
+	}
+	// Normal successful public/API traffic is volume, not an issue. Keep this rule
+	// for repeated denied/not-found/throttled traffic; 5xx spikes have their own rule.
+	return observation.Status >= 400 && observation.Status < 500
+}
+
+func isRoutinePublicPath(path string, family string) bool {
+	path = normalizedRequestPath(path)
+	family = normalizedRequestPath(family)
+	if path == "" {
+		return true
+	}
+	if family == "/" || isLocalePathFamily(family) {
+		return true
+	}
+	if isStaticAssetRequestPath(path) {
+		return true
+	}
+	for _, prefix := range []string{
+		"/api",
+		"/wp-json",
+		"/graphql",
+		"/assets",
+		"/asset",
+		"/static",
+		"/dist",
+		"/build",
+		"/media",
+		"/images",
+		"/image",
+		"/img",
+		"/css",
+		"/js",
+		"/fonts",
+		"/font",
+		"/uploads",
+		"/upload",
+		"/wp-content",
+		"/favicon",
+		"/robots.txt",
+		"/sitemap",
+		"/feed",
+	} {
+		if family == prefix || strings.HasPrefix(path, prefix+"/") || strings.HasPrefix(path, prefix+".") {
+			return true
+		}
+	}
+	return false
+}
+
+func isStaticAssetRequestPath(path string) bool {
+	clean := normalizedRequestPath(path)
+	clean, _, _ = strings.Cut(clean, "?")
+	clean, _, _ = strings.Cut(clean, "#")
+	for _, suffix := range []string{
+		".avif", ".bmp", ".css", ".eot", ".gif", ".ico", ".jpeg", ".jpg",
+		".js", ".map", ".mp3", ".mp4", ".ogg", ".otf", ".pdf", ".png",
+		".svg", ".ttf", ".txt", ".wav", ".webm", ".webp", ".woff", ".woff2",
+	} {
+		if strings.HasSuffix(clean, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+func isLocalePathFamily(family string) bool {
+	locale := strings.TrimPrefix(strings.TrimSpace(family), "/")
+	if len(locale) == 2 {
+		return locale[0] >= 'a' && locale[0] <= 'z' && locale[1] >= 'a' && locale[1] <= 'z'
+	}
+	if len(locale) == 5 && locale[2] == '-' {
+		return locale[0] >= 'a' && locale[0] <= 'z' &&
+			locale[1] >= 'a' && locale[1] <= 'z' &&
+			locale[3] >= 'a' && locale[3] <= 'z' &&
+			locale[4] >= 'a' && locale[4] <= 'z'
+	}
+	return false
 }
 
 func webErrorRateSpikeChains(observations []webRequestObservation, covered map[string]struct{}) []CorrelationChain {
@@ -184,9 +269,7 @@ func webAdminPostVolumeSpikeChains(observations []webRequestObservation, covered
 		threshold:  webAdminPostVolumeThreshold,
 		severity:   domain.SeverityMedium,
 		confidence: domain.ConfidenceHigh,
-		match: func(observation webRequestObservation) bool {
-			return observation.Method == "POST" && isAdminRequestPath(observation.Path)
-		},
+		match:      isAdminPostVolumeSpikeCandidate,
 		groupKey: func(observation webRequestObservation) string {
 			return observation.PathFamily
 		},
@@ -194,9 +277,51 @@ func webAdminPostVolumeSpikeChains(observations []webRequestObservation, covered
 			return countDistinctWebRequestRemotes(group) >= webAdminPostDistinctRemoteMinCount
 		},
 		summary: func(group []webRequestObservation) string {
-			return fmt.Sprintf("%d admin POST request(s) from %d remote fingerprint(s) to %s within %s", len(group), countDistinctWebRequestRemotes(group), group[0].PathFamily, webRequestSpikeWindow)
+			return fmt.Sprintf("%d admin POST request(s) from %d remote IP(s) to %s within %s", len(group), countDistinctWebRequestRemotes(group), group[0].PathFamily, webRequestSpikeWindow)
 		},
 	})
+}
+
+func isAdminPostVolumeSpikeCandidate(observation webRequestObservation) bool {
+	if observation.Method != "POST" ||
+		!observation.RemoteKnown ||
+		isPrivateWebRequestRemote(observation.RemoteAddress) ||
+		!isAdminRequestPath(observation.Path) {
+		return false
+	}
+	return !isRoutineSuccessfulBackOfficePost(observation)
+}
+
+func isRoutineSuccessfulBackOfficePost(observation webRequestObservation) bool {
+	if observation.Status < 200 || observation.Status >= 400 {
+		return false
+	}
+	path := normalizedRequestPath(observation.Path)
+	if path == "/wp-admin/admin-ajax.php" {
+		return true
+	}
+	if isPrestashopHiddenAdminBackOfficePath(path) {
+		return true
+	}
+	return false
+}
+
+func isPrestashopHiddenAdminBackOfficePath(path string) bool {
+	path = normalizedRequestPath(path)
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) < 2 {
+		return false
+	}
+	adminDir := parts[0]
+	if !strings.HasPrefix(adminDir, "admin") || adminDir == "admin" || adminDir == "administrator" {
+		return false
+	}
+	switch parts[1] {
+	case "ajax.php", "index.php":
+		return true
+	default:
+		return false
+	}
 }
 
 type webRequestWindowRule struct {
@@ -290,7 +415,7 @@ func webTorNetworkChains(observations []webRequestObservation, covered map[strin
 			Title:      title,
 			Severity:   severity,
 			Confidence: confidence,
-			Summary:    fmt.Sprintf("Tor-marked request observed on %s from remote %s", observation.PathFamily, observation.RemoteFingerprint),
+			Summary:    fmt.Sprintf("Tor-marked request observed on %s from remote %s", observation.PathFamily, observation.RemoteDisplay),
 			Events:     []webRequestObservation{observation},
 		}))
 	}

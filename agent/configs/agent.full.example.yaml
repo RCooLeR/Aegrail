@@ -90,7 +90,7 @@ sites:
     domain: example.com
 
     # Site kind. Known values: wordpress, wordpress-multisite, prestashop,
-    # generic-php, mautic, yii2-rbac, laravel.
+    # generic-php, mautic, yii2-rbac, laravel, static, react, nodejs.
     kind: wordpress
 
     # Hub app slug. Defaults to slug when omitted.
@@ -115,9 +115,12 @@ sites:
       enabled: true
 
       # Built-in watch profiles. Known values: wordpress, wp, woocommerce,
-      # prestashop, ps, mautic, yii2-rbac, laravel. If omitted and files are enabled, the agent
+      # prestashop, ps, mautic, yii2-rbac, laravel, static, react, nodejs.
+      # If omitted and files are enabled, the agent
       # auto-picks wordpress for WordPress kinds, prestashop for PrestaShop
-      # kinds, mautic for Mautic sites, yii2-rbac for Yii2 RBAC sites, and laravel for Laravel sites.
+      # kinds, mautic for Mautic sites, yii2-rbac for Yii2 RBAC sites,
+      # laravel for Laravel sites, static for static sites, react for React
+      # frontends, and nodejs for Node.js services.
       profiles:
         - wordpress
 
@@ -172,6 +175,7 @@ sites:
 
         # Snapshot profile. Known values: wordpress, wp, woocommerce,
         # prestashop, ps, mautic, yii2-rbac, laravel. Defaults to site kind when omitted.
+        # Static, React, and Node.js do not define a database profile by default.
         profile: wordpress
 
         # CMS table prefix, such as wp_ or ps_.
@@ -182,6 +186,11 @@ sites:
 
         # Minimum time between database snapshots. Empty or 0 runs each loop.
         schedule: 5m
+
+        # Reuse one database/sql connection pool for this database while the
+        # agent process is running. Defaults to true. Set false only when a
+        # provider/proxy requires every scan to open a fresh connection.
+        persistent: true
 
     browser_crawl:
       # Enable browser/page crawl collection.

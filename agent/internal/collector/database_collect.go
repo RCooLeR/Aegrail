@@ -26,6 +26,7 @@ type DatabaseCollectInput struct {
 	TablePrefix string
 	Timeout     time.Duration
 	PIIKey      string
+	Persistent  bool
 }
 
 type DatabaseCollectResult struct {
@@ -128,13 +129,13 @@ func (r *Runtime) CollectDatabaseSnapshot(ctx context.Context, input DatabaseCol
 	queryCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	db, err := sql.Open(databaseSQLDriver(result.Engine), dsn)
+	db, release, err := r.databaseConnection(result.Engine, dsn, input.Persistent)
 	if err != nil {
 		result.Warnings = append(result.Warnings, fmt.Sprintf("database connection could not be opened: %v", err))
 		result.FinishedAt = time.Now().UTC()
 		return result, nil
 	}
-	defer db.Close()
+	defer release()
 	if err := db.PingContext(queryCtx); err != nil {
 		result.Warnings = append(result.Warnings, fmt.Sprintf("database ping failed: %v", err))
 		result.FinishedAt = time.Now().UTC()
@@ -197,6 +198,42 @@ func (r *Runtime) CollectDatabaseSnapshot(ctx context.Context, input DatabaseCol
 
 	result.FinishedAt = time.Now().UTC()
 	return result, nil
+}
+
+func (r *Runtime) databaseConnection(engine string, dsn string, persistent bool) (*sql.DB, func(), error) {
+	driver := databaseSQLDriver(engine)
+	if !persistent {
+		db, err := sql.Open(driver, dsn)
+		if err != nil {
+			return nil, func() {}, err
+		}
+		configureDatabaseConnectionPool(db)
+		return db, func() { _ = db.Close() }, nil
+	}
+
+	key := driver + "\x00" + dsn
+	r.databaseMu.Lock()
+	defer r.databaseMu.Unlock()
+	if r.databasePool == nil {
+		r.databasePool = map[string]*sql.DB{}
+	}
+	if db := r.databasePool[key]; db != nil {
+		return db, func() {}, nil
+	}
+	db, err := sql.Open(driver, dsn)
+	if err != nil {
+		return nil, func() {}, err
+	}
+	configureDatabaseConnectionPool(db)
+	r.databasePool[key] = db
+	return db, func() {}, nil
+}
+
+func configureDatabaseConnectionPool(db *sql.DB) {
+	db.SetMaxOpenConns(2)
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxIdleTime(5 * time.Minute)
+	db.SetConnMaxLifetime(30 * time.Minute)
 }
 
 func collectDatabaseEntities(ctx context.Context, db *sql.DB, profile string, engine string, tablePrefix string, pii databasePIIProtector) ([]DatabaseEntityObservation, []string) {
@@ -425,14 +462,9 @@ func wordpressTrackedSiteOptionNames(prefix string) []string {
 	return []string{
 		"active_plugins",
 		"admin_email",
-		"blog_public",
-		"cron",
 		"default_role",
 		"home",
-		"permalink_structure",
 		"siteurl",
-		"stylesheet",
-		"template",
 		"users_can_register",
 		prefix + "user_roles",
 	}
@@ -445,7 +477,6 @@ func wordpressTrackedNetworkOptionNames() []string {
 		"registration",
 		"site_admins",
 		"siteurl",
-		"upload_space_check_disabled",
 	}
 }
 
@@ -752,16 +783,11 @@ func isWordPressSensitiveOption(name string) bool {
 	case "active_plugins",
 		"active_sitewide_plugins",
 		"admin_email",
-		"blog_public",
-		"cron",
 		"default_role",
 		"home",
 		"registration",
 		"site_admins",
 		"siteurl",
-		"stylesheet",
-		"template",
-		"upload_space_check_disabled",
 		"users_can_register":
 		return true
 	default:
@@ -3294,7 +3320,6 @@ func wordpressDatabaseCheckSpecs(tablePrefix string) ([]databaseCheckSpec, []str
 	prefix, warning := sanitizeDatabasePrefix(tablePrefix, "wp_")
 	users := quoteDatabaseIdentifier(prefix + "users")
 	usermeta := quoteDatabaseIdentifier(prefix + "usermeta")
-	options := quoteDatabaseIdentifier(prefix + "options")
 	specs := []databaseCheckSpec{
 		{
 			Name:   "wordpress.users.count",
@@ -3311,17 +3336,7 @@ func wordpressDatabaseCheckSpecs(tablePrefix string) ([]databaseCheckSpec, []str
 			Query:  "SELECT COUNT(DISTINCT user_id) FROM " + usermeta + " WHERE meta_key REGEXP ? AND meta_value LIKE ?",
 			Args:   []any{wordpressCapabilityMetaKeyRegexp(prefix), "%administrator%"},
 		},
-		{
-			Name:   "wordpress.options.count",
-			Kind:   databaseCheckCount,
-			Metric: "options",
-			Table:  prefix + "options",
-			Query:  "SELECT COUNT(*) FROM " + options,
-		},
 		wordpressOptionDigestSpec(prefix, "active_plugins", "wordpress.active_plugins.digest"),
-		wordpressOptionDigestSpec(prefix, "cron", "wordpress.cron.digest"),
-		wordpressOptionDigestSpec(prefix, "stylesheet", "wordpress.theme_stylesheet.digest"),
-		wordpressOptionDigestSpec(prefix, "template", "wordpress.theme_template.digest"),
 	}
 	return specs, optionalWarning(warning)
 }

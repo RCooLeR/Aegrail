@@ -76,6 +76,7 @@ export default function App() {
           actionLoading={dashboard.actionLoading}
           issueRows={dashboard.issueRows}
           onIssue={dashboard.selectIssue}
+          onBulkStatus={dashboard.setIssueStatuses}
           onStatus={dashboard.setIssueStatus}
           ruleByID={dashboard.ruleByID}
           selectedIssue={dashboard.selectedIssue}
@@ -104,6 +105,8 @@ export default function App() {
           actionLoading={dashboard.actionLoading}
           allowlistRows={dashboard.allowlistRows}
           onAllowScript={dashboard.allowBrowserScript}
+          onAllowScripts={dashboard.allowBrowserScripts}
+          onUpdateEntries={dashboard.updateAllowlistEntries}
           onUpdateEntry={dashboard.updateAllowlistEntry}
           scriptRows={dashboard.browserScriptRows}
         />

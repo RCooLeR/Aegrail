@@ -54,8 +54,22 @@ type InventoryEnvironmentScopeRepository interface {
 	GetInventoryScopeForEnvironment(ctx context.Context, organizationSlug string, projectSlug string, environmentSlug string) (InventoryEnvironmentScopePath, bool, error)
 }
 
+type InventoryIngestScopeRepository interface {
+	GetInventoryIngestScope(ctx context.Context, organizationSlug string, projectSlug string, environmentSlug string, hostSlug string, agentID string, appSlug string, serviceSlug string) (InventoryIngestScopePath, bool, error)
+}
+
 type InventoryScopeTree struct {
 	Organizations []InventoryOrganizationScope
+}
+
+type InventoryIngestScopePath struct {
+	Organization domain.Organization
+	Project      domain.Project
+	Environment  domain.Environment
+	Host         domain.Host
+	Agent        domain.Agent
+	App          domain.MonitoredApp
+	Service      domain.Service
 }
 
 type InventoryEnvironmentScopePath struct {

@@ -39,6 +39,11 @@ changing the API.
 
 Redis is optional but recommended when monitoring many sites. Hub uses it for short-lived ingest-correlation jobs, distributed worker locks, and shared auth rate limiting. Durable evidence, findings, users, sessions, and reports stay in PostgreSQL.
 
+Correlation workers use a purpose-built timeline query for candidate evidence:
+database diffs, file mutations, PHP errors, and security-relevant access logs.
+Normal browsing timeline rows remain available to dashboard APIs, but Hub does
+not reread them for every correlation pass.
+
 The Hub process validates required security secrets at startup in `serve` mode.
 `AEGRAIL_DATABASE_URL` is required so production does not silently fall back to
 local insecure credentials. `AEGRAIL_HUB_WIRE_PRIVATE_KEY` is required before
@@ -81,9 +86,9 @@ URLs.
 
 Rules are deterministic and versioned in Hub code. They evaluate event streams and snapshots, then create or refresh findings by dedupe key.
 
-Current platform-aware database rules cover WordPress, PrestaShop, Mautic, Yii2 RBAC, and Laravel. For Mautic, Hub turns user/role access changes, plugin version drift, published integrations with API keys, OAuth client changes, and webhook secret/publish changes into operator-facing findings. For Yii2 RBAC, Hub turns user, role, RBAC, and migration changes into operator-facing findings, with admin-like role changes treated as high risk. For Laravel, Hub turns user, Spatie role/permission, reset-token, session, and migration changes into operator-facing findings, with admin-like role or sensitive permission changes treated as high risk. Mautic plugin/integration/OAuth/webhook count-only snapshot diffs are suppressed when entity-level evidence is available, so the dashboard does not show both a count warning and the real changed object.
+Current platform-aware database rules cover WordPress, PrestaShop, Mautic, Yii2 RBAC, and Laravel. Static, React, and Node.js sites normally rely on file, log, browser-script, and config-coverage rules instead of database rules. Browser inline-script findings keep the inline hash as the deterministic identity, but summaries include the redacted script preview when the Agent supplied one. For PrestaShop, Hub suppresses normal runtime access-token rotations while still reporting client-secret/API-key/security-toggle, module, theme, and employee changes. For Mautic, Hub turns user/role access changes, plugin version drift, published integrations with API keys, OAuth client changes, and webhook secret/publish changes into operator-facing findings. For Yii2 RBAC, Hub turns user, role, RBAC, and migration changes into operator-facing findings, with admin-like role changes treated as high risk. For Laravel, Hub turns user, Spatie role/permission, reset-token, session, and migration changes into operator-facing findings, with admin-like role or sensitive permission changes treated as high risk. Mautic plugin/integration/OAuth/webhook count-only snapshot diffs are suppressed when entity-level evidence is available, so the dashboard does not show both a count warning and the real changed object.
 
-Normalized access-log rules cover admin and account-recovery activity. Hub reports single redirect-style admin login POST observations as likely success, groups repeated password-reset requests inside the same short window, and still keeps the higher-severity anomaly rules for failures followed by success, login bursts, admin tool probes, Tor-marked admin requests, and traffic/error spikes.
+Normalized access-log rules cover admin and account-recovery activity. Hub reports single redirect-style admin login POST observations as likely success, groups repeated password-reset requests inside the same short window, and still keeps the higher-severity anomaly rules for failures followed by success, login bursts, admin tool probes, Tor-marked admin requests, failed public request spikes, and server-error spikes. Normal successful public/API/locale traffic and static asset traffic, including PrestaShop module/theme CSS and JavaScript assets, are intentionally not treated as issues.
 
 Each finding is enriched with `operator_action` metadata. That block explains the primary human action, when it is safe to acknowledge, when to escalate, and which final status to choose after review. Reports and dashboard APIs expose the same guidance instead of leaving warnings as unexplained labels.
 
@@ -100,7 +105,7 @@ The Hub can also accept the current open findings as baseline. Baseline acceptan
 
 - File ignore rules suppress future matching file findings for a scoped app/environment.
 - Browser script allowlists approve known domains, inline hashes, or tag-manager IDs.
-- Deployment markers give expected rollout context to lower-risk drift during a confirmed time window.
+- Deployment markers acknowledge open expected file/browser findings inside the confirmed time window and prevent future expected file/browser drift findings for that window. High-risk findings still stay open.
 - Config coverage records what the Agent says is enabled/disabled, including sanitized ignore paths.
 
 ## Model Analysis
@@ -140,7 +145,11 @@ the Hub waits briefly for them during graceful shutdown.
 
 Findings publish internal notification events after deterministic correlation:
 
-- `finding.observed`: a new or refreshed finding was created from Agent evidence.
+- `finding.observed`: an open finding was created or refreshed from Agent
+  evidence. Findings that an operator already marked `acknowledged`,
+  `resolved`, or `false_positive` are still refreshed in storage when matching
+  evidence appears again, but Hub does not send another observed notification
+  for those closed/non-open statuses.
 - `finding.status_updated`: an operator changed a finding status.
 
 Hub fans those events out to every configured sink. Notification delivery
@@ -152,12 +161,13 @@ Hub posts JSON containing the event type, send time, finding, and metadata. If
 `AEGRAIL_NOTIFICATION_WEBHOOK_SECRET` is set, each request includes
 `X-Aegrail-Signature: sha256=<hmac>` over the request body.
 
-Email notifications are enabled by setting Mailjet SMTP credentials:
+Email notifications are enabled by setting SMTP credentials:
 `AEGRAIL_NOTIFICATION_EMAIL_USERNAME`,
 `AEGRAIL_NOTIFICATION_EMAIL_PASSWORD`,
 `AEGRAIL_NOTIFICATION_EMAIL_FROM`, and
-`AEGRAIL_NOTIFICATION_EMAIL_TO`. Defaults target Mailjet's SMTP host
-`in-v3.mailjet.com:587`. The SMTP adapter uses STARTTLS when advertised, applies
+`AEGRAIL_NOTIFICATION_EMAIL_TO`. Configure
+`AEGRAIL_NOTIFICATION_EMAIL_SMTP_HOST` and
+`AEGRAIL_NOTIFICATION_EMAIL_SMTP_PORT` for your provider. The SMTP adapter uses STARTTLS when advertised, applies
 event/severity filters, and sends escaped HTML summaries with dashboard links
 when `AEGRAIL_HUB_PUBLIC_URL` is set.
 

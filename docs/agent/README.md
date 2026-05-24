@@ -7,9 +7,9 @@ The Agent runs near a monitored site or hosting account. It reads a YAML config,
 | Area | What the Agent collects | What it sends |
 | --- | --- | --- |
 | Files | Profile paths, configured extra paths, file metadata, mtime, size, and SHA-256 when hashed. | File created/modified/deleted events with relative paths and hashes. No file contents. |
-| Database | Read-only platform snapshots for WordPress, PrestaShop, Mautic, Yii2 RBAC, and Laravel. | Counts, entity signatures, safe account identifiers, masked hints, optional HMAC identifiers, and hashes of selected values. No DSNs, password hashes, raw tokens, or raw secrets. |
-| Logs | New access/PHP/generic log lines since the saved offset. Admin login, password-reset, privileged/admin, server-error, and platform-specific security paths are kept while routine campaign/static noise can be dropped. | Normalized request/error events with query strings, cookies, auth headers, passwords, sessions, and tokens redacted. |
-| Browser | Static or rendered pages from configured URLs only. | Redacted page/script URLs, script domains/paths, inline script hashes, tag-manager IDs, favicons, status/warnings, and the crawler User-Agent. |
+| Database | Read-only platform snapshots for WordPress, PrestaShop, Mautic, Yii2 RBAC, and Laravel. Static, React, and Node.js profiles do not collect database snapshots by default. | Counts, entity signatures, safe account identifiers, masked hints, optional HMAC identifiers, and hashes of selected values. No DSNs, password hashes, raw tokens, or raw secrets. |
+| Logs | New access/PHP/generic log lines since the saved offset. Routine successful public, API, and static traffic is dropped; admin login, password-reset, privileged/admin, Tor-marked, client-error, server-error, and platform-specific security paths are kept. | Normalized request/error events with query strings, cookies, auth headers, passwords, sessions, and tokens redacted. |
+| Browser | Static or rendered pages from configured URLs only. | Redacted page/script URLs, script domains/paths, inline script hashes, redacted inline script preview capped at 4 KB, tag-manager IDs, favicons, status/warnings, and the crawler User-Agent. |
 | Coverage | Enabled collectors and safe config posture. | Collector state, disabled/optional coverage, DSN-env presence, and sanitized ignore paths. No local roots or env values. |
 
 All normal traffic to Hub uses `aegrail.agent.wire.v1`: the queued JSON batch is encrypted with X25519-derived AES-256-GCM using the node secret and Hub public key before it leaves the node. The Hub stores the node public key/fingerprint, decrypts with its wire private key, stores events in PostgreSQL, then runs deterministic rules.
@@ -27,7 +27,7 @@ agent/cmd/agent/             Agent app entrypoint.
 agent/configs/               Example YAML configs.
 agent/internal/agent/        Runtime, config, queue, file watch, log watch.
 agent/internal/collector/    Database and browser collectors.
-agent/internal/modules/      WordPress, PrestaShop, Mautic, Yii2 RBAC, and Laravel source logic.
+agent/internal/modules/      WordPress, PrestaShop, Mautic, Yii2 RBAC, Laravel, static, React, and Node.js source logic.
 agent/internal/redaction/    Secret and token redaction.
 ```
 

@@ -14,10 +14,11 @@ import {
   XCircle
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { loadTimelineEventsByID } from "../../api";
 import type { RuleDefinition } from "../../types";
 import { modelPresetLabel } from "../config/modelPresets";
-import { collectorLabel, issueStatusLabel, nodeLabel, recommendedAction, signalTypeLabel } from "../model/viewModels";
+import { collectorLabel, issueStatusLabel, nodeLabel, recommendedAction, serviceForEvent, signalTypeLabel } from "../model/viewModels";
 import type { IssueRow, ReportRow, SignalRow } from "../types";
 import { fileIgnorePathCandidate, firstMetadataString, metadataNumber, metadataString, metadataStringList, operatorActionGuidance } from "../utils/metadata";
 import { copyIssueBrief, exportIssueBrief } from "../utils/reports";
@@ -73,6 +74,59 @@ export function IssueDetailPage({
   signalRows: SignalRow[];
 }) {
   const [activeTab, setActiveTab] = useState<IssueDetailTab>("overview");
+  const [hydratedLinkedSignals, setHydratedLinkedSignals] = useState<SignalRow[]>([]);
+  const [linkedTimelineLoading, setLinkedTimelineLoading] = useState(false);
+  const [linkedTimelineError, setLinkedTimelineError] = useState("");
+
+  useEffect(() => {
+    if (!row) {
+      setHydratedLinkedSignals([]);
+      setLinkedTimelineLoading(false);
+      setLinkedTimelineError("");
+      return;
+    }
+    const cachedIDs = new Set(
+      signalRows
+        .filter((signal) => signal.instance.key === row.instance.key)
+        .map((signal) => signal.event.id)
+    );
+    const missingEventIDs = row.finding.event_ids.filter((eventID) => !cachedIDs.has(eventID));
+    setHydratedLinkedSignals([]);
+    setLinkedTimelineError("");
+    if (!missingEventIDs.length) {
+      setLinkedTimelineLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setLinkedTimelineLoading(true);
+    loadTimelineEventsByID(row.instance.scope, missingEventIDs)
+      .then((events) => {
+        if (cancelled) {
+          return;
+        }
+        setHydratedLinkedSignals(events.map((event) => ({
+          event,
+          instance: row.instance,
+          issue: row.finding,
+          service: serviceForEvent(event)
+        })));
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setLinkedTimelineError(error instanceof Error ? error.message : String(error));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLinkedTimelineLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [row, signalRows]);
 
   if (!row) {
     return (
@@ -89,7 +143,11 @@ export function IssueDetailPage({
   const { finding, instance, service } = row;
   const ignorePath = fileIgnorePathCandidate(finding.metadata);
   const linkedEventIDs = new Set(finding.event_ids);
-  const linkedSignals = signalRows.filter((signal) => signal.instance.key === instance.key && linkedEventIDs.has(signal.event.id));
+  const linkedSignals = mergeLinkedSignals(
+    signalRows.filter((signal) => signal.instance.key === instance.key && linkedEventIDs.has(signal.event.id)),
+    hydratedLinkedSignals,
+    finding.event_ids
+  );
   const relatedIssues = issueRows
     .filter((candidate) => candidate.finding.id !== finding.id)
     .filter((candidate) =>
@@ -133,8 +191,8 @@ export function IssueDetailPage({
       </nav>
 
       {activeTab === "overview" && <OverviewTab row={row} rule={rule} />}
-      {activeTab === "evidence" && <EvidenceTab row={row} rule={rule} />}
-      {activeTab === "timeline" && <TimelineTab linkedSignals={linkedSignals} />}
+      {activeTab === "evidence" && <EvidenceTab linkedSignals={linkedSignals} loading={linkedTimelineLoading} onSignal={() => setActiveTab("timeline")} row={row} rule={rule} />}
+      {activeTab === "timeline" && <TimelineTab error={linkedTimelineError} linkedSignals={linkedSignals} loading={linkedTimelineLoading} totalLinkedSignals={finding.event_ids.length} />}
       {activeTab === "comments" && <CommentsTab row={row} />}
       {activeTab === "related" && <RelatedIssuesTab onIssue={onIssue} rows={relatedIssues} />}
       {activeTab === "report" && <ReportTab actionLoading={actionLoading} modelValue={selectedModel} onGenerate={() => onGenerateAnalysis(row)} reports={matchingReports} row={row} rule={rule} />}
@@ -207,13 +265,32 @@ function OperatorActionPanel({ row, rule }: { row: IssueRow; rule?: RuleDefiniti
   );
 }
 
-function EvidenceTab({ row, rule }: { row: IssueRow; rule?: RuleDefinition }) {
+function EvidenceTab({
+  linkedSignals,
+  loading,
+  onSignal,
+  row,
+  rule
+}: {
+  linkedSignals: SignalRow[];
+  loading: boolean;
+  onSignal: (eventID: string) => void;
+  row: IssueRow;
+  rule?: RuleDefinition;
+}) {
   const { finding } = row;
   const account = firstMetadataString(finding.metadata, ["email", "account_display", "login", "email_masked", "login_masked"]);
   const changedFiles = metadataStringList(finding.metadata, "files");
   const omittedFiles = metadataNumber(finding.metadata, "omitted_file_count");
   const visibleEventIDs = finding.event_ids.slice(0, 50);
   const omittedEventIDs = Math.max(0, finding.event_ids.length - visibleEventIDs.length);
+  const linkedSignalByID = new Map(linkedSignals.map((signal) => [signal.event.id, signal]));
+  const handleSignal = (eventID: string) => {
+    onSignal(eventID);
+    window.setTimeout(() => {
+      document.getElementById(signalAnchorID(eventID))?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 0);
+  };
   return (
     <div className="issue-tab-grid">
       <Panel title="Evidence summary" icon={FileText}>
@@ -234,7 +311,21 @@ function EvidenceTab({ row, rule }: { row: IssueRow; rule?: RuleDefinition }) {
       )}
       <Panel title={`Signal IDs (${finding.event_ids.length})`} icon={Activity}>
         <ul className="evidence-list tall">
-          {visibleEventIDs.map((eventID) => <li key={eventID}>{eventID}</li>)}
+          {visibleEventIDs.map((eventID) => (
+            <li key={eventID}>
+              {linkedSignalByID.has(eventID) ? (
+                <button className="signal-id-link" type="button" onClick={() => handleSignal(eventID)}>
+                  {eventID}
+                  <small>{signalTypeLabel(linkedSignalByID.get(eventID)!.event)} / {formatRelative(linkedSignalByID.get(eventID)!.event.event_time)}</small>
+                </button>
+              ) : (
+                <span className="signal-id-muted">
+                  {eventID}
+                  <small>{loading ? "Loading signal details..." : "Signal was not returned by Hub for this scope"}</small>
+                </span>
+              )}
+            </li>
+          ))}
           {omittedEventIDs > 0 && <li>+ {omittedEventIDs} more linked signal(s)</li>}
           {finding.event_ids.length === 0 && <li>No linked signal IDs.</li>}
         </ul>
@@ -243,12 +334,30 @@ function EvidenceTab({ row, rule }: { row: IssueRow; rule?: RuleDefinition }) {
   );
 }
 
-function TimelineTab({ linkedSignals }: { linkedSignals: SignalRow[] }) {
+function TimelineTab({
+  error,
+  linkedSignals,
+  loading,
+  totalLinkedSignals
+}: {
+  error: string;
+  linkedSignals: SignalRow[];
+  loading: boolean;
+  totalLinkedSignals: number;
+}) {
   if (!linkedSignals.length) {
-    return <Panel title="Linked timeline" icon={Activity}><EmptyState title="No linked timeline signals" /></Panel>;
+    return (
+      <Panel title="Linked timeline" icon={Activity}>
+        {loading ? <EmptyState title="Loading linked timeline signals" /> : <EmptyState title={totalLinkedSignals ? "No linked timeline signals returned" : "No linked timeline signals"} />}
+        {error && <p className="muted-line">{error}</p>}
+      </Panel>
+    );
   }
+  const timelineSignals = [...linkedSignals].sort((left, right) => new Date(left.event.event_time).getTime() - new Date(right.event.event_time).getTime());
   return (
     <Panel title="Linked timeline" icon={Activity}>
+      {loading && <p className="muted-line">Loading older linked signals...</p>}
+      {error && <p className="muted-line">{error}</p>}
       <ResponsiveTable>
         <thead>
           <tr>
@@ -260,19 +369,69 @@ function TimelineTab({ linkedSignals }: { linkedSignals: SignalRow[] }) {
           </tr>
         </thead>
         <tbody>
-          {linkedSignals.map((signal) => (
+          {timelineSignals.map((signal) => (
             <tr key={`${signal.instance.key}:${signal.event.id}`}>
-              <td>{formatRelative(signal.event.event_time)}</td>
+              <td id={signalAnchorID(signal.event.id)}>{formatRelative(signal.event.event_time)}</td>
               <td>{signalTypeLabel(signal.event)}</td>
               <td>{collectorLabel(signal.event)}</td>
               <td>{signal.service}</td>
-              <td><strong>{signal.event.message || signal.event.type}</strong><small>{signal.event.target}</small></td>
+              <td><TimelineSummaryCell signal={signal} /></td>
             </tr>
           ))}
         </tbody>
       </ResponsiveTable>
     </Panel>
   );
+}
+
+function TimelineSummaryCell({ signal }: { signal: SignalRow }) {
+  const remote = timelineRemoteLabel(signal);
+  return (
+    <>
+      <strong>{signal.event.message || signal.event.type}</strong>
+      {remote && (
+        <div className="signal-badges timeline-signal-badges">
+          <span className="signal-badge">IP {remote}</span>
+        </div>
+      )}
+      <small>{signal.event.target}</small>
+    </>
+  );
+}
+
+function mergeLinkedSignals(cached: SignalRow[], hydrated: SignalRow[], eventIDs: string[]) {
+  const wanted = new Set(eventIDs);
+  const byID = new Map<string, SignalRow>();
+  for (const signal of cached) {
+    if (wanted.has(signal.event.id)) {
+      byID.set(signal.event.id, signal);
+    }
+  }
+  for (const signal of hydrated) {
+    if (wanted.has(signal.event.id) && !byID.has(signal.event.id)) {
+      byID.set(signal.event.id, signal);
+    }
+  }
+  return eventIDs.map((eventID) => byID.get(eventID)).filter((signal): signal is SignalRow => Boolean(signal));
+}
+
+function signalAnchorID(eventID: string) {
+  return `signal-${eventID}`;
+}
+
+function timelineRemoteLabel(signal: SignalRow) {
+  if (signal.event.type !== "log.access" && signal.event.type !== "log.php_error") {
+    return "";
+  }
+  return payloadText(signal.event.payload, "remote_addr") || payloadText(signal.event.payload, "remote_addr_sha256");
+}
+
+function payloadText(payload: Record<string, unknown>, key: string) {
+  const value = payload[key];
+  if (typeof value !== "string") {
+    return "";
+  }
+  return value.trim();
 }
 
 function CommentsTab({ row }: { row: IssueRow }) {

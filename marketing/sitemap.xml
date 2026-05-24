@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://aegrail.com/</loc></url>
+  <url><loc>https://aegrail.com/docs/getting-started.html</loc></url>
+  <url><loc>https://aegrail.com/docs/installation.html</loc></url>
+  <url><loc>https://aegrail.com/docs/configuration.html</loc></url>
+  <url><loc>https://aegrail.com/docs/cli-reference.html</loc></url>
+  <url><loc>https://aegrail.com/docs/agents-and-collectors.html</loc></url>
+  <url><loc>https://aegrail.com/docs/evidence-model.html</loc></url>
+  <url><loc>https://aegrail.com/docs/incident-timeline.html</loc></url>
+  <url><loc>https://aegrail.com/docs/reports.html</loc></url>
+  <url><loc>https://aegrail.com/docs/deployment.html</loc></url>
+</urlset>

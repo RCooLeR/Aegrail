@@ -90,6 +90,7 @@ type HubConfig struct {
 	ModelAnalysisEvery time.Duration
 	ModelAnalysisLimit int
 	CorrelationWorkers int
+	IngestDebug        bool
 }
 
 type LoggingConfig struct {
@@ -158,7 +159,8 @@ func LoadConfig() Config {
 			ModelAnalysisAuto:  envBool("AEGRAIL_MODEL_ANALYSIS_AUTO", true),
 			ModelAnalysisEvery: envDuration("AEGRAIL_MODEL_ANALYSIS_INTERVAL", time.Minute),
 			ModelAnalysisLimit: envInt("AEGRAIL_MODEL_ANALYSIS_LIMIT", 5),
-			CorrelationWorkers: envInt("AEGRAIL_CORRELATION_WORKERS", 2),
+			CorrelationWorkers: envInt("AEGRAIL_CORRELATION_WORKERS", 1),
+			IngestDebug:        envBool("AEGRAIL_INGEST_DEBUG", false),
 		},
 		Logging: LoggingConfig{
 			Level:  envString("AEGRAIL_LOG_LEVEL", "info"),

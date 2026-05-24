@@ -194,6 +194,8 @@ export type BrowserScript = {
   path?: string;
   sha256?: string;
   inline_bytes?: number;
+  inline_preview?: string;
+  inline_preview_truncated?: boolean;
   tag_manager: boolean;
   tag_manager_ids?: string[];
   labels: Record<string, string>;

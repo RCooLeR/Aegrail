@@ -554,6 +554,120 @@ func TestCorrelateEventsBuildsWordPressCronAndScriptContentEntityChains(t *testi
 	}
 }
 
+func TestCorrelateEventsIgnoresNormalWordPressCronChanges(t *testing.T) {
+	now := time.Date(2026, 5, 12, 12, 53, 0, 0, time.UTC)
+	chains := correlateTimelineEvents([]domain.TimelineEvent{
+		{
+			ID:        "evt-wp-cron-normal",
+			EventTime: now,
+			EventType: "db.entity.removed",
+			Target:    "wordpress:wordpress_cron:purge-lockouts",
+			Severity:  domain.SeverityMedium,
+			HostSlug:  "web-01",
+			Labels: map[string]string{
+				"db_profile":     "wordpress",
+				"db_entity_type": "wordpress_cron",
+			},
+			Payload: map[string]any{
+				"profile":     "wordpress",
+				"entity_type": "wordpress_cron",
+				"entity_key":  "wordpress_cron:purge-lockouts",
+				"previous": map[string]any{
+					"type":      "wordpress_cron",
+					"key":       "wordpress_cron:purge-lockouts",
+					"label":     "purge-lockouts",
+					"signature": "sig-cron",
+					"attributes": map[string]any{
+						"hook_name":  "purge-lockouts",
+						"suspicious": false,
+					},
+				},
+			},
+		},
+	}, 30*time.Minute)
+	if len(chains) != 0 {
+		t.Fatalf("chains = %#v, want normal WordPress cron changes ignored", chains)
+	}
+}
+
+func TestCorrelateEventsIgnoresWordPressThemeEntityChanges(t *testing.T) {
+	now := time.Date(2026, 5, 12, 12, 54, 0, 0, time.UTC)
+	chains := correlateTimelineEvents([]domain.TimelineEvent{
+		{
+			ID:        "evt-wp-theme-normal",
+			EventTime: now,
+			EventType: "db.entity.removed",
+			Target:    "wordpress:wordpress_theme:murkotilka",
+			Severity:  domain.SeverityMedium,
+			HostSlug:  "web-01",
+			Labels: map[string]string{
+				"db_profile":     "wordpress",
+				"db_entity_type": "wordpress_theme",
+			},
+			Payload: map[string]any{
+				"profile":     "wordpress",
+				"entity_type": "wordpress_theme",
+				"entity_key":  "wordpress_theme:murkotilka",
+			},
+		},
+	}, 30*time.Minute)
+	if len(chains) != 0 {
+		t.Fatalf("chains = %#v, want WordPress theme entity changes ignored", chains)
+	}
+}
+
+func TestCorrelateEventsIgnoresWordPressNoisyOptionChanges(t *testing.T) {
+	now := time.Date(2026, 5, 12, 12, 55, 0, 0, time.UTC)
+	chains := correlateTimelineEvents([]domain.TimelineEvent{
+		{
+			ID:        "evt-wp-cron-option",
+			EventTime: now,
+			EventType: "db.entity.changed",
+			Target:    "wordpress:wordpress_option:site:cron",
+			Severity:  domain.SeverityHigh,
+			HostSlug:  "web-01",
+			Labels: map[string]string{
+				"db_profile":     "wordpress",
+				"db_entity_type": "wordpress_option",
+			},
+			Payload: map[string]any{
+				"profile":     "wordpress",
+				"entity_type": "wordpress_option",
+				"entity_key":  "wordpress_option:cron",
+				"current": map[string]any{
+					"type":      "wordpress_option",
+					"key":       "wordpress_option:cron",
+					"label":     "site:cron",
+					"signature": "sig-cron",
+					"attributes": map[string]any{
+						"option_name": "cron",
+					},
+				},
+			},
+		},
+		{
+			ID:        "evt-wp-cron-digest",
+			EventTime: now.Add(time.Minute),
+			EventType: "db.snapshot.check_changed",
+			Target:    "wordpress:wp_options:cron",
+			Severity:  domain.SeverityMedium,
+			HostSlug:  "web-01",
+			Labels: map[string]string{
+				"db_profile": "wordpress",
+				"db_check":   "wordpress.cron.digest",
+			},
+			Payload: map[string]any{
+				"profile": "wordpress",
+				"check":   "wordpress.cron.digest",
+				"metric":  "cron",
+			},
+		},
+	}, 30*time.Minute)
+	if len(chains) != 0 {
+		t.Fatalf("chains = %#v, want noisy WordPress option changes ignored", chains)
+	}
+}
+
 func TestCorrelateEventsSuppressesPrestaShopModuleCountDiffChain(t *testing.T) {
 	now := time.Date(2026, 5, 12, 13, 0, 0, 0, time.UTC)
 	chains := correlateTimelineEvents([]domain.TimelineEvent{
@@ -789,6 +903,56 @@ func TestCorrelateEventsBuildsPrestaShopConfigurationEntityChains(t *testing.T) 
 	}
 	if byRule["prestashop-payment-configuration-changed"].Severity != domain.SeverityHigh {
 		t.Fatalf("payment config chain = %#v, want high severity payment config", byRule["prestashop-payment-configuration-changed"])
+	}
+}
+
+func TestCorrelateEventsSuppressesPrestaShopAccessTokenRotation(t *testing.T) {
+	now := time.Date(2026, 5, 24, 12, 10, 0, 0, time.UTC)
+	chains := correlateTimelineEvents([]domain.TimelineEvent{
+		{
+			ID:        "evt-paypal-token",
+			EventTime: now,
+			EventType: "db.entity.changed",
+			Target:    "prestashop:prestashop_configuration:PAYPAL_ACCESS_TOKEN",
+			Severity:  domain.SeverityMedium,
+			HostSlug:  "shop-prod",
+			Labels: map[string]string{
+				"db_profile":     "prestashop",
+				"db_entity_type": "prestashop_configuration",
+			},
+			Payload: map[string]any{
+				"profile":     "prestashop",
+				"entity_type": "prestashop_configuration",
+				"entity_key":  "prestashop_configuration:PAYPAL_ACCESS_TOKEN",
+				"previous": map[string]any{
+					"type":      "prestashop_configuration",
+					"key":       "prestashop_configuration:PAYPAL_ACCESS_TOKEN",
+					"signature": "sig-token-old",
+					"attributes": map[string]any{
+						"category":     "payment",
+						"config_name":  "PAYPAL_ACCESS_TOKEN",
+						"sensitive":    true,
+						"suspicious":   true,
+						"value_sha256": "old",
+					},
+				},
+				"current": map[string]any{
+					"type":      "prestashop_configuration",
+					"key":       "prestashop_configuration:PAYPAL_ACCESS_TOKEN",
+					"signature": "sig-token-new",
+					"attributes": map[string]any{
+						"category":     "payment",
+						"config_name":  "PAYPAL_ACCESS_TOKEN",
+						"sensitive":    true,
+						"suspicious":   true,
+						"value_sha256": "new",
+					},
+				},
+			},
+		},
+	}, 30*time.Minute)
+	if len(chains) != 0 {
+		t.Fatalf("chains = %#v, want PayPal access token rotation suppressed", chains)
 	}
 }
 

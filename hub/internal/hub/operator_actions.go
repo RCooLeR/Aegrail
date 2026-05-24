@@ -35,7 +35,7 @@ func operatorPrimaryAction(finding domain.HubFinding, category RuleCategory) str
 	case category == RuleCategoryBrowserScript:
 		return "Verify the script domain/hash/tag-manager ID owner; allowlist it only after confirming it belongs to an expected deployment or approved integration."
 	case category == RuleCategoryWebRequest:
-		return "Review access logs around the window for source fingerprint, admin path, status codes, and whether the traffic matches your monitoring/CDN/WAF behavior."
+		return "Review access logs around the window for source IP, admin path, status codes, and whether the traffic matches your monitoring/CDN/WAF behavior."
 	case category == RuleCategoryFilePath || category == RuleCategoryFileBaseline:
 		return "Inspect the changed file set and compare it with the expected release; ignore only generated/runtime paths that are safe for this node."
 	case category == RuleCategoryDatabaseSnapshot:
@@ -103,7 +103,7 @@ func operatorActionSteps(finding domain.HubFinding, category RuleCategory) []str
 	case RuleCategoryBrowserScript:
 		steps = append(steps, "Verify script ownership and deployment source.", "Allowlist only after confirming the script is expected.")
 	case RuleCategoryWebRequest:
-		steps = append(steps, "Inspect access log context around the event window.", "Compare source fingerprint and path against known admin, monitoring, CDN, and WAF traffic.")
+		steps = append(steps, "Inspect access log context around the event window.", "Compare source IP and path against known admin, monitoring, CDN, and WAF traffic.")
 	case RuleCategoryFilePath, RuleCategoryFileBaseline:
 		steps = append(steps, "Inspect changed files or compare them with release artifacts.", "Use a file ignore only for safe generated/runtime paths.")
 	case RuleCategoryDatabaseSnapshot:

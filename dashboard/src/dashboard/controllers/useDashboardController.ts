@@ -200,6 +200,30 @@ export function useDashboardController() {
     }
   }
 
+  async function setIssueStatuses(rows: IssueRow[], status: string) {
+    if (rows.length === 0) {
+      return;
+    }
+    setActionError("");
+    setActionMessage("");
+    setActionLoading(true);
+    try {
+      const actor = actionState.actor.trim() || auth?.user?.email || "dashboard";
+      const reason = actionState.reason.trim() || defaultStatusReason(status);
+      const note = actionState.note.trim() || defaultStatusNote(status);
+      for (const row of rows) {
+        await updateFindingStatus(row.instance.scope, row.finding, status, actor, reason, note);
+      }
+      setActionMessage(`Updated ${rows.length} issue${rows.length === 1 ? "" : "s"}.`);
+      await refresh();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error));
+      throw error;
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
   async function allowScript(row: IssueRow) {
     setActionError("");
     setActionMessage("");
@@ -244,6 +268,51 @@ export function useDashboardController() {
     }
   }
 
+  async function allowBrowserScripts(rows: BrowserScriptRow[]) {
+    const pending = rows.filter((row) => !row.allowlisted);
+    if (pending.length === 0) {
+      return;
+    }
+    setActionError("");
+    setActionMessage("");
+    setActionLoading(true);
+    try {
+      const actor = actionState.actor.trim() || auth?.user?.email || "dashboard";
+      const reason = actionState.reason.trim() || "approved_browser_script";
+      let created = 0;
+      const seen = new Set<string>();
+      for (const row of pending) {
+        const script = row.script;
+        const kind = script.domain ? "domain" : script.sha256 ? "inline_hash" : script.tag_manager_ids?.length ? "tag_manager_id" : "";
+        const value = script.domain ?? script.sha256 ?? script.tag_manager_ids?.[0] ?? "";
+        if (!kind || !value) {
+          continue;
+        }
+        const pageURL = script.page_url || script.final_url || "";
+        const key = [row.instance.scope.org, row.instance.scope.project, row.instance.scope.environment, row.instance.scope.app, kind, value, pageURL].join("\u0000");
+        if (seen.has(key)) {
+          continue;
+        }
+        seen.add(key);
+        await createBrowserScriptAllowlistEntry(row.instance.scope, {
+          approved_by: actor,
+          kind,
+          page_url: pageURL,
+          reason,
+          value
+        });
+        created += 1;
+      }
+      setActionMessage(`Allow-listed ${created} browser script${created === 1 ? "" : "s"}.`);
+      await refresh();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error));
+      throw error;
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
   async function updateAllowlistEntry(row: AllowlistRow, status: string) {
     setActionError("");
     setActionMessage("");
@@ -253,6 +322,29 @@ export function useDashboardController() {
       const reason = actionState.reason.trim() || "operator_updated_allowlist";
       await updateBrowserAllowlistEntryStatus(row.instance.scope, row.entry, status, reason, actor);
       setActionMessage(`${status === "active" ? "Reinstated" : "Revoked"} ${row.entry.value}.`);
+      await refresh();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error));
+      throw error;
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  async function updateAllowlistEntries(rows: AllowlistRow[], status: string) {
+    if (rows.length === 0) {
+      return;
+    }
+    setActionError("");
+    setActionMessage("");
+    setActionLoading(true);
+    try {
+      const actor = actionState.actor.trim() || auth?.user?.email || "dashboard";
+      const reason = actionState.reason.trim() || "operator_updated_allowlist";
+      for (const row of rows) {
+        await updateBrowserAllowlistEntryStatus(row.instance.scope, row.entry, status, reason, actor);
+      }
+      setActionMessage(`${status === "active" ? "Reinstated" : "Revoked"} ${rows.length} allowlist entr${rows.length === 1 ? "y" : "ies"}.`);
       await refresh();
     } catch (error) {
       setActionError(error instanceof Error ? error.message : String(error));
@@ -274,14 +366,15 @@ export function useDashboardController() {
     setActionMessage("");
     setActionLoading(true);
     try {
-      await createDeployment(input.instance.scope, {
+      const result = await createDeployment(input.instance.scope, {
         actor: input.actor || actionState.actor || auth?.user?.email || "dashboard",
         commit_sha: input.commitSha,
         finished_at: input.finishedAt,
         started_at: input.startedAt,
         version: input.version
       });
-      setActionMessage(`Recorded deployment ${input.version}.`);
+      const acknowledged = result.acknowledged_findings ?? 0;
+      setActionMessage(`Recorded deployment ${input.version}. Acknowledged ${acknowledged} expected finding${acknowledged === 1 ? "" : "s"}.`);
       await refresh();
     } catch (error) {
       setActionError(error instanceof Error ? error.message : String(error));
@@ -431,15 +524,18 @@ export function useDashboardController() {
     setDraftScope,
     setFilters,
     setIssueStatus,
+    setIssueStatuses,
     setSelectedIssueID,
     signalRows,
     signOut: () => void signOut(),
     allowBrowserScript,
+    allowBrowserScripts,
     allowScript,
     generateAnalysis,
     ignoreFilePath,
     recordDeployment,
     updateAllowlistEntry,
+    updateAllowlistEntries,
     updateFilters,
     view,
     visibleCompanies,

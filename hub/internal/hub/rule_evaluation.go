@@ -382,9 +382,9 @@ func evaluateAdminAccountRequestFixture(now time.Time) []RuleEvaluationSignal {
 }
 
 func evaluateWebRequestTrafficAndTorFixture(now time.Time) []RuleEvaluationSignal {
-	events := make([]domain.TimelineEvent, 0, 38)
-	for index := range 20 {
-		events = append(events, evaluationAccessEvent(fmt.Sprintf("evt-volume-%02d", index), now.Add(time.Duration(index)*10*time.Second), "GET", "/catalog?page=1", 200, "198.51.100.10", nil))
+	events := make([]domain.TimelineEvent, 0, 118)
+	for index := range 100 {
+		events = append(events, evaluationAccessEvent(fmt.Sprintf("evt-volume-%02d", index), now.Add(time.Duration(index)*5*time.Second), "GET", "/unknown-probe", 404, "198.51.100.10", nil))
 	}
 	for index := range 6 {
 		events = append(events, evaluationAccessEvent(fmt.Sprintf("evt-error-%02d", index), now.Add(time.Minute+time.Duration(index)*10*time.Second), "GET", "/checkout", 500, fmt.Sprintf("198.51.100.%d", 20+index), nil))

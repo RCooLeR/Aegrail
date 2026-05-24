@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Install Aegrail Hub and Agent with Docker, Postgres, Redis, and optional browser rendering support.">
+  <meta name="theme-color" content="#0B0F1A">
+  <title>Installation - Aegrail Docs</title>
+  <link rel="icon" href="../assets/favicon/favicon.ico">
+  <link rel="apple-touch-icon" href="../assets/favicon/apple-touch-icon.png">
+  <link rel="manifest" href="../site.webmanifest">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="../assets/vendor/bootstrap/bootstrap.min.css" rel="stylesheet">
+  <link href="../assets/css/aegrail-docs.css" rel="stylesheet">
+</head>
+<body data-base-path="docs"><nav class="navbar navbar-expand-lg docs-navbar sticky-top"><div class="container-xxl"><a class="navbar-brand d-flex align-items-center gap-2" href="../index.html" aria-label="Aegrail home"><img src="../assets/img/aegrail-horizontal-white.png" class="brand-logo brand-logo-full" alt="Aegrail"><span class="brand-word d-lg-none">Aegrail</span></a><button class="navbar-toggler btn-ghost" type="button" data-bs-toggle="collapse" data-bs-target="#docsNav" aria-controls="docsNav" aria-expanded="false" aria-label="Toggle navigation"><span class="navbar-toggler-icon"></span></button><div class="collapse navbar-collapse" id="docsNav"><ul class="navbar-nav me-auto mb-2 mb-lg-0"><li class="nav-item"><a class="nav-link" href="../index.html">Overview</a></li><li class="nav-item"><a class="nav-link" href="../docs/getting-started.html">Docs</a></li><li class="nav-item"><a class="nav-link" href="../docs/agents-and-collectors.html">Agents</a></li><li class="nav-item"><a class="nav-link" href="../docs/evidence-model.html">Security model</a></li></ul><div class="search-box me-lg-3 mb-3 mb-lg-0" style="min-width:min(420px, 100%);"><input id="docsSearch" class="form-control" type="search" placeholder="Search docs..." autocomplete="off" aria-label="Search docs"><div id="docsSearchResults" class="search-results"></div></div><a class="btn btn-aegrail px-3" href="../docs/configuration.html">Configure</a></div></div></nav>
+<main class="container-xxl docs-layout"><div class="row g-4"><div class="col-lg-3 col-xl-2"><aside class="docs-sidebar p-2">
+  <div class="section-title">Start</div><nav class="nav flex-column pb-2"><a class="nav-link" data-doc-link href="../docs/getting-started.html">Getting started</a><a class="nav-link" data-doc-link href="../docs/installation.html">Installation</a><a class="nav-link" data-doc-link href="../docs/configuration.html">Configuration</a></nav>
+  <div class="section-title">Product</div><nav class="nav flex-column pb-2"><a class="nav-link" data-doc-link href="../docs/cli-reference.html">Command reference</a><a class="nav-link" data-doc-link href="../docs/agents-and-collectors.html">Agents and collectors</a><a class="nav-link" data-doc-link href="../docs/evidence-model.html">Evidence model</a><a class="nav-link" data-doc-link href="../docs/incident-timeline.html">Dashboard workflow</a><a class="nav-link" data-doc-link href="../docs/reports.html">Reports</a></nav>
+  <div class="section-title">Operations</div><nav class="nav flex-column pb-2"><a class="nav-link" data-doc-link href="../docs/deployment.html">Deployment</a></nav>
+</aside></div><div class="col-lg-9 col-xl-8"><article class="docs-main overflow-hidden"><header class="doc-header p-4 p-lg-5"><span class="eyebrow mb-3"><span class="pulse"></span>Install</span><h1 class="display-5 mb-3">Installation</h1><p class="lead mb-0">Run the Hub centrally and one Agent per site, instance, or service boundary.</p></header><div class="p-4 p-lg-5">
+<section id="hub"><h2>Hub</h2><p>The Hub needs PostgreSQL for durable data and Redis for queues, notifications, and rate-limit coordination. In production it should be behind HTTPS, with dashboard and API hostnames split if desired.</p><pre><code>AEGRAIL_HTTP_ADDR=0.0.0.0:1001
+AEGRAIL_DATABASE_URL=postgres://user:password@postgres:5432/aegrail?sslmode=require
+AEGRAIL_REDIS_URL=redis://:password@redis:6379/4
+AEGRAIL_HUB_USER_SECRET=change-to-random-secret
+AEGRAIL_HUB_WIRE_PRIVATE_KEY=change-to-generated-private-key</code></pre></section>
+<section id="migrate"><h2>Migrations</h2><p>Run migrations before starting the Hub API. The container examples include a tool profile for this so schema changes can be applied without opening a shell inside a minimal image.</p><pre><code>docker compose --profile tools run --rm aegrail-hub-migrate</code></pre></section>
+<section id="agent"><h2>Agent</h2><p>The Agent needs read access to the site root, selected config files, logs, and a state directory it can write. Database credentials should come from environment variables, not the YAML file.</p><pre><code>aegrail-agent run --config /etc/aegrail/agent.yaml</code></pre></section>
+<section id="browser"><h2>Browser rendering</h2><p>Rendered crawling is optional. Most servers and NAS boxes should keep <code>rendered: false</code>. If JavaScript-rendered script discovery matters, use an agent image that includes Chrome or set <code>AEGRAIL_BROWSER_CHROME_PATH</code> to a working browser binary.</p></section>
+</div></article></div><div class="col-xl-2"><aside class="toc d-none d-xl-block"><div class="small text-uppercase fw-bold mb-2" style="letter-spacing:.12em;color:#8EA0BE;">On this page</div><a href="#hub">Hub</a><a href="#migrate">Migrations</a><a href="#agent">Agent</a><a href="#browser">Browser rendering</a></aside></div></div></main>
+<footer class="footer py-4 mt-5"><div class="container-xxl d-flex flex-column flex-lg-row align-items-start align-items-lg-center justify-content-between gap-3"><div class="d-flex align-items-center gap-2"><img src="../assets/img/icon.png" alt="Aegrail" width="34" height="34"><div><strong class="text-white">Aegrail</strong><div class="small">Practical website monitoring for client projects.</div></div></div><div class="small">(c) 2026 Aegrail. Hub, agents, evidence, and reports.</div></div></footer>
+<script src="../assets/vendor/bootstrap/bootstrap.bundle.min.js"></script><script src="../assets/js/aegrail-docs.js"></script>
+</body>
+</html>

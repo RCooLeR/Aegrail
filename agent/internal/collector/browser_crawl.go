@@ -65,6 +65,8 @@ type BrowserScriptObservation struct {
 	Path              string            `json:"path,omitempty"`
 	SHA256            string            `json:"sha256,omitempty"`
 	InlineBytes       int               `json:"inline_bytes,omitempty"`
+	InlinePreview     string            `json:"inline_preview,omitempty"`
+	InlineTruncated   bool              `json:"inline_preview_truncated,omitempty"`
 	Initiator         string            `json:"initiator,omitempty"`
 	ResponseStatus    int               `json:"response_status,omitempty"`
 	ContentType       string            `json:"content_type,omitempty"`
@@ -78,6 +80,7 @@ type BrowserScriptObservation struct {
 const (
 	browserCrawlModeStatic   = "static"
 	browserCrawlModeRendered = "rendered"
+	maxInlineScriptPreview   = 4096
 
 	AegrailCrawlerUserAgent = "AegrailBot/0.1 (+https://aegrail.com/monitoring; Aegrail bot)"
 )
@@ -375,6 +378,7 @@ func buildScriptObservation(node *html.Node, baseURL *url.URL) BrowserScriptObse
 			sum := sha256.Sum256([]byte(text))
 			observation.SHA256 = hex.EncodeToString(sum[:])
 			observation.InlineBytes = len([]byte(text))
+			observation.InlinePreview, observation.InlineTruncated = inlineScriptPreview(text)
 			observation.TagManagerIDs = tagManagerIDs(text)
 		}
 	}
@@ -452,6 +456,40 @@ func nodeText(node *html.Node) string {
 	}
 	visit(node)
 	return builder.String()
+}
+
+func inlineScriptPreview(text string) (string, bool) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return "", false
+	}
+	redacted := redaction.RedactText(normalizeInlineScriptWhitespace(text))
+	return truncateUTF8Bytes(redacted, maxInlineScriptPreview)
+}
+
+func normalizeInlineScriptWhitespace(text string) string {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	lines := strings.Split(text, "\n")
+	for index, line := range lines {
+		lines[index] = strings.TrimRight(line, " \t")
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+func truncateUTF8Bytes(value string, limit int) (string, bool) {
+	if limit <= 0 || len(value) <= limit {
+		return value, false
+	}
+	var builder strings.Builder
+	for _, r := range value {
+		next := string(r)
+		if builder.Len()+len(next) > limit {
+			break
+		}
+		builder.WriteString(next)
+	}
+	return strings.TrimSpace(builder.String()) + "...", true
 }
 
 func resolveURL(baseURL *url.URL, value string) *url.URL {

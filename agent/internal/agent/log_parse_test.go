@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +20,9 @@ func TestParseNginxCombinedAccessLog(t *testing.T) {
 	}
 	if event.Payload["method"] != "GET" || event.Payload["path"] != "/wp-login.php" || event.Payload["status_code"] != 500 {
 		t.Fatalf("payload = %#v", event.Payload)
+	}
+	if !strings.Contains(event.Message, "from 203.0.113.10") {
+		t.Fatalf("message = %q, want remote address", event.Message)
 	}
 	query, _ := event.Payload["query_redacted"].(string)
 	if strings.Contains(query, "super-secret") || !strings.Contains(query, "%5BREDACTED%5D") {
@@ -72,6 +76,16 @@ func TestParseApachePHPFPMErrorLog(t *testing.T) {
 	}
 	if event.Payload["file"] != "/var/www/html/index.php" || event.Payload["line_number"] != 22 {
 		t.Fatalf("payload = %#v", event.Payload)
+	}
+}
+
+func TestParsePHPErrorLogWithoutLeadingBracketsDoesNotPanic(t *testing.T) {
+	event, ok := parseStructuredLogEvent("/var/log/nginx/site.error.log", `PHP Warning: Undefined array key "token" in /var/www/html/index.php on line 22`)
+	if !ok {
+		t.Fatal("expected PHP error event without leading Apache/PHP brackets")
+	}
+	if event.Type != "log.php_error" || event.Payload["file"] != "/var/www/html/index.php" || event.Payload["line_number"] != 22 {
+		t.Fatalf("event = %#v, want parsed PHP error without panic", event)
 	}
 }
 
@@ -168,6 +182,68 @@ func TestMauticAccessLogFilterDropsStaticClientNoiseButKeepsServerErrors(t *test
 	static500.Labels = mergeStringMaps(static500.Labels, map[string]string{"site_kind": "mautic"})
 	if shouldDropNoisyLogEvent(static500) {
 		t.Fatalf("event = %#v, want static Mautic server error kept", static500)
+	}
+}
+
+func TestAccessLogFilterDropsRoutineStaticAssetsForAnySite(t *testing.T) {
+	cases := []struct {
+		name   string
+		target string
+		status int
+		drop   bool
+	}{
+		{name: "prestashop module js cache hit", target: "/modules/sendinblue/views/js/back-in-stock.js", status: 304, drop: true},
+		{name: "prestashop module css success", target: "/modules/hicarouselspack/views/css/custom.css", status: 200, drop: true},
+		{name: "wordpress static asset not found", target: "/wp-content/plugins/shop/assets/missing.css", status: 404, drop: true},
+		{name: "static server error kept", target: "/modules/sendinblue/views/js/back-in-stock.js", status: 500, drop: false},
+		{name: "module php probe kept", target: "/modules/payment/callback.php", status: 404, drop: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			event := logLineEvent("/var/log/nginx/access.log", logLine{
+				Text: fmt.Sprintf(`203.0.113.10 - - [12/May/2026:09:10:11 +0000] "GET %s HTTP/1.1" %d 42 "-" "Mozilla/5.0"`, tc.target, tc.status),
+			})
+			event.Labels = mergeStringMaps(event.Labels, map[string]string{"site_kind": "prestashop"})
+			if got := shouldDropNoisyLogEvent(event); got != tc.drop {
+				t.Fatalf("shouldDropNoisyLogEvent() = %t, want %t for %#v", got, tc.drop, event)
+			}
+		})
+	}
+}
+
+func TestAccessLogFilterDropsRoutineSuccessfulPublicRequests(t *testing.T) {
+	cases := []struct {
+		name   string
+		method string
+		target string
+		status int
+		extra  map[string]any
+		drop   bool
+	}{
+		{name: "prestashop public category", method: "GET", target: "/2-accueil", status: 200, drop: true},
+		{name: "prestashop public redirect", method: "GET", target: "/fr", status: 302, drop: true},
+		{name: "public head request", method: "HEAD", target: "/catalog", status: 200, drop: true},
+		{name: "public options request", method: "OPTIONS", target: "/api/products", status: 204, drop: true},
+		{name: "public post kept", method: "POST", target: "/checkout", status: 200, drop: false},
+		{name: "public api post dropped", method: "POST", target: "/api/catalog", status: 200, drop: true},
+		{name: "public not found kept", method: "GET", target: "/maybe-probe", status: 404, drop: false},
+		{name: "admin success kept", method: "GET", target: "/admin430oqyeka/index.php", status: 200, drop: false},
+		{name: "php script success kept", method: "GET", target: "/modules/payment/callback.php", status: 200, drop: false},
+		{name: "tor public success kept", method: "GET", target: "/", status: 200, extra: map[string]any{"remote_is_tor": true}, drop: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			event := logLineEvent("/var/log/nginx/access.log", logLine{
+				Text: fmt.Sprintf(`203.0.113.10 - - [12/May/2026:09:10:11 +0000] "%s %s HTTP/1.1" %d 42 "-" "Mozilla/5.0"`, tc.method, tc.target, tc.status),
+			})
+			event.Labels = mergeStringMaps(event.Labels, map[string]string{"site_kind": "prestashop"})
+			for key, value := range tc.extra {
+				event.Payload[key] = value
+			}
+			if got := shouldDropNoisyLogEvent(event); got != tc.drop {
+				t.Fatalf("shouldDropNoisyLogEvent() = %t, want %t for %#v", got, tc.drop, event)
+			}
+		})
 	}
 }
 

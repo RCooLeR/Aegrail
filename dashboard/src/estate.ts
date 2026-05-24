@@ -351,13 +351,26 @@ function collectorState(
   if (!event) {
     return { detail: "No signal in window", key, label, status: "missing" };
   }
-  if (["critical", "high", "medium"].includes(event.severity)) {
+  if (collectorHealthProblemEvent(event)) {
     return { detail: event.message || event.type, key, label, lastSeenAt: event.event_time, status: "warning" };
   }
   if (options.stale !== false && !isFresh(event.event_time)) {
     return { detail: "Last signal is stale", key, label, lastSeenAt: event.event_time, status: "stale" };
   }
   return { detail: event.type, key, label, lastSeenAt: event.event_time, status: "fresh" };
+}
+
+function collectorHealthProblemEvent(event: TimelineEvent) {
+  if (!["critical", "high", "medium"].includes(event.severity)) {
+    return false;
+  }
+  if (event.type.endsWith(".coverage.warning")) {
+    return true;
+  }
+  if (event.type === "db.snapshot.observed" && payloadNumber(event.payload, "warning_count") > 0) {
+    return true;
+  }
+  return false;
 }
 
 function companyStatus(instances: InstanceModel[]): EstateStatus {
@@ -583,6 +596,11 @@ function payloadIconURLs(payload: Record<string, unknown>) {
 function payloadString(payload: Record<string, unknown>, key: string) {
   const value = payload[key];
   return typeof value === "string" ? value : "";
+}
+
+function payloadNumber(payload: Record<string, unknown>, key: string) {
+  const value = payload[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 function uniqueStrings(values: string[]) {

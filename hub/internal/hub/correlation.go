@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/rcooler/aegrail/hub/internal/domain"
+	"github.com/rcooler/aegrail/hub/internal/ports"
 )
 
 type CorrelateEventsInput struct {
@@ -84,7 +85,7 @@ func (h *Hub) CorrelateEvents(ctx context.Context, input CorrelateEventsInput) (
 		window = 30 * time.Minute
 	}
 
-	events, err := h.ingest.ListTimelineEvents(ctx, environment.ID, appID, input.Since, input.Limit)
+	events, err := h.listCorrelationTimelineEvents(ctx, environment.ID, appID, input.Since, input.Limit)
 	if err != nil {
 		return CorrelateEventsResult{}, err
 	}
@@ -101,6 +102,7 @@ func (h *Hub) CorrelateEvents(ctx context.Context, input CorrelateEventsInput) (
 	if err != nil {
 		return CorrelateEventsResult{}, err
 	}
+	findings = filterDeploymentExpectedFindings(findings)
 	findings = applyRiskScoringToFindings(findings)
 	if input.SaveFindings && len(findings) > 0 {
 		if h.findings == nil {
@@ -127,6 +129,56 @@ func (h *Hub) CorrelateEvents(ctx context.Context, input CorrelateEventsInput) (
 	}, nil
 }
 
+func (h *Hub) listCorrelationTimelineEvents(ctx context.Context, environmentID domain.ID, appID domain.ID, since time.Time, limit int) ([]domain.TimelineEvent, error) {
+	if repository, ok := h.ingest.(ports.IngestCorrelationTimelineRepository); ok {
+		return repository.ListCorrelationTimelineEvents(ctx, environmentID, appID, since, limit)
+	}
+	events, err := h.ingest.ListTimelineEvents(ctx, environmentID, appID, since, limit)
+	if err != nil {
+		return nil, err
+	}
+	return filterCorrelationCandidateTimelineEvents(events), nil
+}
+
+func filterCorrelationCandidateTimelineEvents(events []domain.TimelineEvent) []domain.TimelineEvent {
+	if len(events) == 0 {
+		return events
+	}
+	filtered := events[:0]
+	for _, event := range events {
+		if isCorrelationCandidateTimelineEvent(event) {
+			filtered = append(filtered, event)
+		}
+	}
+	return filtered
+}
+
+func isCorrelationCandidateTimelineEvent(event domain.TimelineEvent) bool {
+	eventType := strings.ToLower(strings.TrimSpace(event.EventType))
+	if strings.HasPrefix(eventType, "db.") ||
+		isFileMutationEventType(eventType) ||
+		eventType == "log.php_error" {
+		return true
+	}
+	if eventType != "log.access" {
+		return false
+	}
+	status := payloadInt(event.Payload, "status_code")
+	method := strings.ToUpper(strings.TrimSpace(payloadStringAny(event.Payload, "method", "")))
+	path := strings.ToLower(payloadStringAny(event.Payload, "path", event.Target))
+	remoteNetwork := strings.ToLower(payloadStringAny(event.Payload, "remote_network", ""))
+	if remoteNetwork == "tor_exit" || payloadBoolAny(event.Payload, "remote_is_tor") {
+		return true
+	}
+	if status >= 400 {
+		return true
+	}
+	if isAdminLikePath(path) {
+		return true
+	}
+	return method == "POST" && (strings.Contains(path, "login") || strings.Contains(path, "password") || strings.Contains(path, "reset"))
+}
+
 func correlateTimelineEvents(events []domain.TimelineEvent, window time.Duration) []CorrelationChain {
 	var chains []CorrelationChain
 	seen := map[string]struct{}{}
@@ -139,15 +191,15 @@ func correlateTimelineEvents(events []domain.TimelineEvent, window time.Duration
 		}
 
 		if isSuspiciousWebEvent(event) {
-			fileEvent, ok := findNextEvent(events, i+1, event.EventTime.Add(window), func(candidate domain.TimelineEvent) bool {
+			fileEvent, fileIndex, ok := findNextEventAt(events, i+1, event.EventTime.Add(window), func(candidate domain.TimelineEvent) bool {
 				return isHighSignalFileEvent(candidate) && sameHostOrApp(event, candidate)
 			})
 			if ok {
-				tail, hasTail := findIncidentTail(events, fileEvent, window)
 				chainEvents := []domain.TimelineEvent{event, fileEvent}
 				ruleID := "web-to-file-change"
 				title := "Suspicious web activity followed by file change"
-				if hasTail {
+				tail, hasTail := findIncidentEscalationTail(events, fileIndex+1, fileEvent, window)
+				if hasTail && isIncidentWebTrigger(event) && isIncidentFileEvent(fileEvent) {
 					chainEvents = append(chainEvents, tail)
 					ruleID = "probable-incident-chain"
 					title = "Probable incident chain"
@@ -161,7 +213,7 @@ func correlateTimelineEvents(events []domain.TimelineEvent, window time.Duration
 		}
 
 		if isHighSignalFileEvent(event) {
-			if next, ok := findIncidentTail(events, event, window); ok {
+			if next, ok := findIncidentTail(events, i+1, event, window); ok {
 				if _, suppressed := suppressedFollowups[correlationPairKey(event, next)]; suppressed {
 					continue
 				}
@@ -224,8 +276,8 @@ func correlationEventKey(event domain.TimelineEvent) string {
 	return event.EventTime.Format(time.RFC3339Nano) + ":" + event.EventType + ":" + event.Target
 }
 
-func findIncidentTail(events []domain.TimelineEvent, fileEvent domain.TimelineEvent, window time.Duration) (domain.TimelineEvent, bool) {
-	return findNextEvent(events, 0, fileEvent.EventTime.Add(window), func(candidate domain.TimelineEvent) bool {
+func findIncidentTail(events []domain.TimelineEvent, start int, fileEvent domain.TimelineEvent, window time.Duration) (domain.TimelineEvent, bool) {
+	return findNextEvent(events, start, fileEvent.EventTime.Add(window), func(candidate domain.TimelineEvent) bool {
 		if !candidate.EventTime.After(fileEvent.EventTime) {
 			return false
 		}
@@ -233,17 +285,51 @@ func findIncidentTail(events []domain.TimelineEvent, fileEvent domain.TimelineEv
 	})
 }
 
+func findIncidentEscalationTail(events []domain.TimelineEvent, start int, fileEvent domain.TimelineEvent, window time.Duration) (domain.TimelineEvent, bool) {
+	return findNextEvent(events, start, fileEvent.EventTime.Add(window), func(candidate domain.TimelineEvent) bool {
+		if !candidate.EventTime.After(fileEvent.EventTime) {
+			return false
+		}
+		return isDatabaseIdentitySecurityEvent(candidate) || isPersistenceEvent(candidate)
+	})
+}
+
 func findNextEvent(events []domain.TimelineEvent, start int, until time.Time, match func(domain.TimelineEvent) bool) (domain.TimelineEvent, bool) {
+	event, _, ok := findNextEventAt(events, start, until, match)
+	return event, ok
+}
+
+func findNextEventAt(events []domain.TimelineEvent, start int, until time.Time, match func(domain.TimelineEvent) bool) (domain.TimelineEvent, int, bool) {
 	for index := start; index < len(events); index++ {
 		candidate := events[index]
 		if candidate.EventTime.After(until) {
 			break
 		}
 		if match(candidate) {
-			return candidate, true
+			return candidate, index, true
 		}
 	}
-	return domain.TimelineEvent{}, false
+	return domain.TimelineEvent{}, -1, false
+}
+
+func isIncidentWebTrigger(event domain.TimelineEvent) bool {
+	switch event.EventType {
+	case "log.php_error":
+		return severityRank(event.Severity) >= severityRank(domain.SeverityMedium)
+	case "log.access":
+		status := payloadInt(event.Payload, "status_code")
+		method := strings.ToUpper(strings.TrimSpace(payloadStringAny(event.Payload, "method", "")))
+		path := strings.ToLower(payloadStringAny(event.Payload, "path", event.Target))
+		if status >= 500 {
+			return true
+		}
+		if status == 401 || status == 403 {
+			return isAdminLikePath(path)
+		}
+		return method == "POST" && status >= 200 && status < 400 && isAdminLikePath(path)
+	default:
+		return false
+	}
 }
 
 func isSuspiciousWebEvent(event domain.TimelineEvent) bool {
@@ -256,12 +342,16 @@ func isSuspiciousWebEvent(event domain.TimelineEvent) bool {
 		return status >= 500 ||
 			status == 401 ||
 			status == 403 ||
-			strings.Contains(path, "wp-login") ||
-			strings.Contains(path, "admin") ||
-			strings.Contains(path, "login")
+			isAdminLikePath(path)
 	default:
 		return false
 	}
+}
+
+func isAdminLikePath(path string) bool {
+	return strings.Contains(path, "wp-login") ||
+		strings.Contains(path, "admin") ||
+		strings.Contains(path, "login")
 }
 
 func isHighSignalFileEvent(event domain.TimelineEvent) bool {
@@ -280,6 +370,53 @@ func isHighSignalFileEvent(event domain.TimelineEvent) bool {
 		strings.Contains(path, "plugins/") ||
 		strings.Contains(path, "themes/") ||
 		strings.Contains(path, "modules/")
+}
+
+func isIncidentFileEvent(event domain.TimelineEvent) bool {
+	if !isFileMutationEventType(event.EventType) {
+		return false
+	}
+	path := strings.ToLower(payloadStringAny(event.Payload, "relative_path", event.Target))
+	if path == "" {
+		path = strings.ToLower(event.Target)
+	}
+	if severityRank(event.Severity) >= severityRank(domain.SeverityHigh) {
+		return true
+	}
+	return (looksPHP(path) && isWritableWebPath(path)) ||
+		isSensitiveConfigPath(path) ||
+		isSuspiciousExecutablePath(path)
+}
+
+func isWritableWebPath(path string) bool {
+	normalized := strings.Trim(strings.ReplaceAll(path, "\\", "/"), "/")
+	return strings.Contains(normalized, "/upload") ||
+		strings.Contains(normalized, "uploads/") ||
+		strings.Contains(normalized, "/media/") ||
+		strings.Contains(normalized, "/cache/") ||
+		strings.Contains(normalized, "/tmp/") ||
+		strings.Contains(normalized, "/temp/")
+}
+
+func isSensitiveConfigPath(path string) bool {
+	normalized := strings.ToLower(strings.ReplaceAll(path, "\\", "/"))
+	return strings.Contains(normalized, "wp-config.php") ||
+		strings.Contains(normalized, "wp-config-local.php") ||
+		strings.Contains(normalized, "settings.inc.php") ||
+		strings.Contains(normalized, "/.env") ||
+		strings.HasSuffix(normalized, ".env")
+}
+
+func isSuspiciousExecutablePath(path string) bool {
+	normalized := strings.ToLower(strings.ReplaceAll(path, "\\", "/"))
+	if !looksPHP(normalized) {
+		return false
+	}
+	return strings.Contains(normalized, "shell") ||
+		strings.Contains(normalized, "backdoor") ||
+		strings.Contains(normalized, "wso") ||
+		strings.Contains(normalized, "c99") ||
+		strings.Contains(normalized, "r57")
 }
 
 func isDatabaseSecurityEvent(event domain.TimelineEvent) bool {
@@ -310,6 +447,27 @@ func isDatabaseSecurityEvent(event domain.TimelineEvent) bool {
 		strings.Contains(lower, "webhook") ||
 		strings.Contains(lower, "payment") ||
 		strings.Contains(lower, "email")
+}
+
+func isDatabaseIdentitySecurityEvent(event domain.TimelineEvent) bool {
+	if !strings.HasPrefix(event.EventType, "db.") {
+		return false
+	}
+	if !isDatabaseChangeEventType(event.EventType) {
+		return false
+	}
+	lower := strings.ToLower(event.EventType + " " + event.Message + " " + event.Target)
+	return strings.Contains(lower, "role") ||
+		strings.Contains(lower, "privilege") ||
+		strings.Contains(lower, "permission") ||
+		strings.Contains(lower, "admin") ||
+		strings.Contains(lower, "user") ||
+		strings.Contains(lower, "capabilities") ||
+		strings.Contains(lower, "employee") ||
+		strings.Contains(lower, "access") ||
+		strings.Contains(lower, "oauth") ||
+		strings.Contains(lower, "webhook") ||
+		strings.Contains(lower, "api key")
 }
 
 func isDatabaseChangeEventType(eventType string) bool {

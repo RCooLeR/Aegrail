@@ -91,6 +91,12 @@ func BuildBrowserCrawlEvents(result BrowserCrawlResult, baseLabels map[string]st
 				"initial_html":       script.InitialHTML,
 				"dynamically_loaded": script.DynamicallyLoaded,
 			}
+			if script.InlinePreview != "" {
+				payload["inline_preview"] = script.InlinePreview
+			}
+			if script.InlineTruncated {
+				payload["inline_preview_truncated"] = true
+			}
 			events = append(events, BrowserCrawlEvent{
 				EventTime: eventTime,
 				Type:      "browser.script.observed",

@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	webpush "github.com/SherClockHolmes/webpush-go"
@@ -35,7 +37,12 @@ type NotificationSink struct {
 	events      map[string]struct{}
 	ttl         int
 	client      *http.Client
+	cacheMu     sync.Mutex
+	cacheAt     time.Time
+	cache       []domain.HubPushSubscription
 }
+
+const activeSubscriptionCacheTTL = 30 * time.Second
 
 func NewNotificationSink(repository ports.PushSubscriptionRepository, config Config) (*NotificationSink, error) {
 	publicKey := strings.TrimSpace(config.PublicKey)
@@ -92,7 +99,7 @@ func (s *NotificationSink) NotifyHubFinding(ctx context.Context, notification po
 	if s == nil || !s.shouldSend(notification) {
 		return nil
 	}
-	subscriptions, err := s.repository.ListActiveHubPushSubscriptions(ctx)
+	subscriptions, err := s.activeSubscriptions(ctx)
 	if err != nil {
 		return err
 	}
@@ -140,18 +147,65 @@ func (s *NotificationSink) send(ctx context.Context, subscription domain.HubPush
 		VAPIDPrivateKey: s.privateKey,
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("push provider %s request failed: %s", pushEndpointLabel(subscription.Endpoint), sanitizePushError(err.Error(), subscription.Endpoint))
 	}
 	defer response.Body.Close()
 	if response.StatusCode == http.StatusNotFound || response.StatusCode == http.StatusGone {
 		_ = s.repository.DisableHubPushSubscription(ctx, subscription.Endpoint)
+		s.invalidateSubscriptionCache()
 		return nil
 	}
 	if response.StatusCode >= 200 && response.StatusCode < 300 {
 		return nil
 	}
 	content, _ := io.ReadAll(io.LimitReader(response.Body, 1024))
-	return fmt.Errorf("%s returned HTTP %d: %s", subscription.Endpoint, response.StatusCode, strings.TrimSpace(string(content)))
+	return fmt.Errorf("push provider %s returned HTTP %d: %s", pushEndpointLabel(subscription.Endpoint), response.StatusCode, strings.TrimSpace(string(content)))
+}
+
+func (s *NotificationSink) activeSubscriptions(ctx context.Context) ([]domain.HubPushSubscription, error) {
+	now := time.Now()
+	s.cacheMu.Lock()
+	if !s.cacheAt.IsZero() && now.Sub(s.cacheAt) < activeSubscriptionCacheTTL {
+		items := append([]domain.HubPushSubscription(nil), s.cache...)
+		s.cacheMu.Unlock()
+		return items, nil
+	}
+	s.cacheMu.Unlock()
+
+	subscriptions, err := s.repository.ListActiveHubPushSubscriptions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	s.cacheMu.Lock()
+	s.cacheAt = now
+	s.cache = append(s.cache[:0], subscriptions...)
+	items := append([]domain.HubPushSubscription(nil), s.cache...)
+	s.cacheMu.Unlock()
+	return items, nil
+}
+
+func (s *NotificationSink) invalidateSubscriptionCache() {
+	s.cacheMu.Lock()
+	s.cacheAt = time.Time{}
+	s.cache = nil
+	s.cacheMu.Unlock()
+}
+
+func sanitizePushError(message string, endpoint string) string {
+	message = strings.TrimSpace(message)
+	label := pushEndpointLabel(endpoint)
+	if endpoint != "" {
+		message = strings.ReplaceAll(message, endpoint, label)
+	}
+	return message
+}
+
+func pushEndpointLabel(endpoint string) string {
+	parsed, err := url.Parse(strings.TrimSpace(endpoint))
+	if err != nil || parsed.Host == "" {
+		return "unknown"
+	}
+	return parsed.Host
 }
 
 func (s *NotificationSink) payload(notification ports.HubFindingNotification) map[string]any {

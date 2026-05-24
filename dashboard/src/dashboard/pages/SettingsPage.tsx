@@ -61,6 +61,19 @@ const tabs: Array<{ key: SettingsTab; label: string }> = [
   { key: "inventory", label: "Inventory" }
 ];
 
+const appKindOptions = [
+  { value: "wordpress", label: "WordPress" },
+  { value: "wordpress-multisite", label: "WordPress network" },
+  { value: "prestashop", label: "PrestaShop" },
+  { value: "mautic", label: "Mautic" },
+  { value: "yii2-rbac", label: "Yii2 RBAC" },
+  { value: "laravel", label: "Laravel" },
+  { value: "static", label: "Static site" },
+  { value: "react", label: "React" },
+  { value: "nodejs", label: "Node.js" },
+  { value: "generic-php", label: "Generic PHP" }
+];
+
 export function SettingsPage({
   actionState,
   allInstances,
@@ -411,7 +424,7 @@ function CompanyProvisioner({ onRefresh, scope }: { onRefresh: () => void; scope
 
 function SiteProvisioner({ onRefresh, scope }: { onRefresh: () => void; scope: ApiScope }) {
   const [form, setForm] = useState({
-    app: scope.app || "main-web",
+    app: scope.app || scope.project || "frontend",
     app_name: "",
     environment: scope.environment || "production",
     kind: "wordpress",
@@ -451,13 +464,7 @@ function SiteProvisioner({ onRefresh, scope }: { onRefresh: () => void; scope: A
         <TextInput label="Environment" value={form.environment} onChange={(environment) => setForm((current) => ({ ...current, environment }))} />
         <TextInput label="App slug" value={form.app} onChange={(app) => setForm((current) => ({ ...current, app }))} />
         <label>Kind<select value={form.kind} onChange={(event) => setForm((current) => ({ ...current, kind: event.target.value }))}>
-          <option value="wordpress">WordPress</option>
-          <option value="wordpress-multisite">WordPress network</option>
-          <option value="prestashop">PrestaShop</option>
-          <option value="mautic">Mautic</option>
-          <option value="yii2-rbac">Yii2 RBAC</option>
-          <option value="laravel">Laravel</option>
-          <option value="generic-php">Generic PHP</option>
+          {appKindOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
         </select></label>
         <TextInput label="Service" value={form.service} onChange={(service) => setForm((current) => ({ ...current, service }))} />
         <button className="primary-button" type="submit" disabled={saving}>{saving ? <Loader2 size={15} className="spin" /> : <Save size={15} />} Create</button>
@@ -469,7 +476,7 @@ function SiteProvisioner({ onRefresh, scope }: { onRefresh: () => void; scope: A
 function NodeProvisioner({ onRefresh, scope }: { onRefresh: () => void; scope: ApiScope }) {
   const [form, setForm] = useState({
     agent_id: "",
-    app: scope.app || "main-web",
+    app: scope.app || scope.project || "frontend",
     environment: scope.environment || "production",
     host: "",
     hostname: "",
@@ -781,13 +788,7 @@ function EditableSiteRow({
           <TextInput label="App name" value={appForm.name} onChange={(name) => setAppForm((current) => ({ ...current, name }))} />
           <TextInput label="App slug" value={appForm.slug} onChange={(slug) => setAppForm((current) => ({ ...current, slug }))} />
           <label>Kind<select value={appForm.kind} onChange={(event) => setAppForm((current) => ({ ...current, kind: event.target.value }))}>
-            <option value="wordpress">WordPress</option>
-            <option value="wordpress-multisite">WordPress network</option>
-            <option value="prestashop">PrestaShop</option>
-            <option value="mautic">Mautic</option>
-            <option value="yii2-rbac">Yii2 RBAC</option>
-            <option value="laravel">Laravel</option>
-            <option value="generic-php">Generic PHP</option>
+            {appKindOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
           </select></label>
         </div>
       </td>

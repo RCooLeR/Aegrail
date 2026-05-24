@@ -61,11 +61,11 @@ func TestListBrowserScriptObservationsFiltersBrowserEvents(t *testing.T) {
 	if len(records) != 2 {
 		t.Fatalf("records = %#v, want two browser observations", records)
 	}
-	if records[0].EventID != "evt-script" || records[0].Domain != "cdn.example.net" || records[0].SHA256 != "script-hash" {
-		t.Fatalf("first record = %#v, want external script observation", records[0])
+	if records[0].EventID != "evt-tag-manager" || !records[0].TagManager || len(records[0].TagManagerIDs) != 1 || records[0].TagManagerIDs[0] != "GTM-TEST" {
+		t.Fatalf("first record = %#v, want newest tag manager observation", records[0])
 	}
-	if records[1].EventID != "evt-tag-manager" || !records[1].TagManager || len(records[1].TagManagerIDs) != 1 || records[1].TagManagerIDs[0] != "GTM-TEST" {
-		t.Fatalf("second record = %#v, want tag manager observation", records[1])
+	if records[1].EventID != "evt-script" || records[1].Domain != "cdn.example.net" || records[1].SHA256 != "script-hash" {
+		t.Fatalf("second record = %#v, want external script observation", records[1])
 	}
 
 	filtered, err := hub.ListBrowserScriptObservations(ctx, ListBrowserScriptObservationsInput{
@@ -95,8 +95,8 @@ func TestListBrowserScriptObservationsFiltersBrowserEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListBrowserScriptObservations with limit returned error: %v", err)
 	}
-	if len(limited) != 1 || limited[0].EventID != "evt-script" {
-		t.Fatalf("limited records = %#v, want first browser observation", limited)
+	if len(limited) != 1 || limited[0].EventID != "evt-tag-manager" {
+		t.Fatalf("limited records = %#v, want newest browser observation", limited)
 	}
 }
 

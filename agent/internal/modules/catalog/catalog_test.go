@@ -23,4 +23,13 @@ func TestDefaultRegistryIncludesPriorityTargets(t *testing.T) {
 	if _, ok := registry.Find("laravel"); !ok {
 		t.Fatal("laravel module is not registered")
 	}
+	if _, ok := registry.Find("static"); !ok {
+		t.Fatal("static module is not registered")
+	}
+	if _, ok := registry.Find("react"); !ok {
+		t.Fatal("react module is not registered")
+	}
+	if _, ok := registry.Find("nodejs"); !ok {
+		t.Fatal("nodejs module is not registered")
+	}
 }

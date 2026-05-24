@@ -3,6 +3,8 @@ package postgres
 import (
 	"context"
 	"errors"
+	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -16,6 +18,10 @@ type HubFindingRepository struct {
 
 type hubFindingQuerier interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+type hubFindingScanner interface {
+	Scan(dest ...any) error
 }
 
 func NewHubFindingRepository(pool *pgxpool.Pool) *HubFindingRepository {
@@ -85,12 +91,9 @@ func (r *HubFindingRepository) SaveHubFindings(ctx context.Context, findings []d
 			status_updated_at, metadata, created_at, updated_at
 	`
 
-	saved := make([]domain.HubFinding, 0, len(findings))
+	batch := &pgx.Batch{}
 	for _, finding := range findings {
-		var item domain.HubFinding
-		var eventIDs []string
-		if err := tx.QueryRow(
-			ctx,
+		batch.Queue(
 			query,
 			finding.OrganizationID,
 			finding.ProjectID,
@@ -108,45 +111,39 @@ func (r *HubFindingRepository) SaveHubFindings(ctx context.Context, findings []d
 			finding.FirstEventAt,
 			finding.LastEventAt,
 			nonNilAnyMap(finding.Metadata),
-		).Scan(
-			&item.ID,
-			&item.OrganizationID,
-			&item.ProjectID,
-			&item.EnvironmentID,
-			&item.AppID,
-			&item.RuleID,
-			&item.RuleVersion,
-			&item.DedupeKey,
-			&item.Severity,
-			&item.Confidence,
-			&item.Title,
-			&item.Summary,
-			&item.Description,
-			&eventIDs,
-			&item.FirstEventAt,
-			&item.LastEventAt,
-			&item.Status,
-			&item.StatusReason,
-			&item.StatusNote,
-			&item.StatusActor,
-			&item.StatusUpdatedAt,
-			&item.Metadata,
-			&item.CreatedAt,
-			&item.UpdatedAt,
-		); err != nil {
+		)
+	}
+	results := tx.SendBatch(ctx, batch)
+	saved := make([]domain.HubFinding, len(findings))
+	missing := make([]int, 0)
+	var scanErr error
+	for index := range findings {
+		item, err := scanHubFinding(results.QueryRow())
+		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				item, err = r.getHubFindingByDedupeKey(ctx, tx, finding.EnvironmentID, finding.AppID, finding.RuleID, finding.DedupeKey)
-				if err != nil {
-					return nil, err
-				}
-				saved = append(saved, item)
+				missing = append(missing, index)
 				continue
-			} else {
-				return nil, err
 			}
+			if scanErr == nil {
+				scanErr = err
+			}
+			continue
 		}
-		item.EventIDs = domainIDs(eventIDs)
-		saved = append(saved, item)
+		saved[index] = item
+	}
+	if err := results.Close(); scanErr == nil && err != nil {
+		scanErr = err
+	}
+	if scanErr != nil {
+		return nil, scanErr
+	}
+	for _, index := range missing {
+		finding := findings[index]
+		item, err := r.getHubFindingByDedupeKey(ctx, tx, finding.EnvironmentID, finding.AppID, finding.RuleID, finding.DedupeKey)
+		if err != nil {
+			return nil, err
+		}
+		saved[index] = item
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -209,6 +206,44 @@ func (r *HubFindingRepository) getHubFindingByDedupeKey(ctx context.Context, row
 	return item, nil
 }
 
+func scanHubFinding(row hubFindingScanner) (domain.HubFinding, error) {
+	var item domain.HubFinding
+	var eventIDs []string
+	if err := row.Scan(
+		&item.ID,
+		&item.OrganizationID,
+		&item.ProjectID,
+		&item.EnvironmentID,
+		&item.AppID,
+		&item.RuleID,
+		&item.RuleVersion,
+		&item.DedupeKey,
+		&item.Severity,
+		&item.Confidence,
+		&item.Title,
+		&item.Summary,
+		&item.Description,
+		&eventIDs,
+		&item.FirstEventAt,
+		&item.LastEventAt,
+		&item.Status,
+		&item.StatusReason,
+		&item.StatusNote,
+		&item.StatusActor,
+		&item.StatusUpdatedAt,
+		&item.Metadata,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+	); err != nil {
+		return domain.HubFinding{}, err
+	}
+	item.EventIDs = domainIDs(eventIDs)
+	if item.Metadata == nil {
+		item.Metadata = map[string]any{}
+	}
+	return item, nil
+}
+
 func (r *HubFindingRepository) ListHubFindings(ctx context.Context, environmentID domain.ID, appID domain.ID, limit int) ([]domain.HubFinding, error) {
 	if limit <= 0 {
 		limit = 20
@@ -216,7 +251,7 @@ func (r *HubFindingRepository) ListHubFindings(ctx context.Context, environmentI
 	if limit > 500 {
 		limit = 500
 	}
-	const query = `
+	const environmentQuery = `
 		SELECT id::text, organization_id::text, project_id::text, environment_id::text,
 			coalesce(app_id::text, ''), rule_id, rule_version, dedupe_key, severity,
 			confidence, title, summary, description, event_ids, first_event_at,
@@ -224,11 +259,28 @@ func (r *HubFindingRepository) ListHubFindings(ctx context.Context, environmentI
 			status_updated_at, metadata, created_at, updated_at
 		FROM hub_findings
 		WHERE environment_id = $1
-			AND ($2::text = '' OR app_id = nullif($2::text, '')::uuid)
+		ORDER BY first_event_at DESC, created_at DESC
+		LIMIT $2
+	`
+	const appQuery = `
+		SELECT id::text, organization_id::text, project_id::text, environment_id::text,
+			coalesce(app_id::text, ''), rule_id, rule_version, dedupe_key, severity,
+			confidence, title, summary, description, event_ids, first_event_at,
+			last_event_at, status, status_reason, status_note, status_actor,
+			status_updated_at, metadata, created_at, updated_at
+		FROM hub_findings
+		WHERE environment_id = $1
+			AND app_id = $2::uuid
 		ORDER BY first_event_at DESC, created_at DESC
 		LIMIT $3
 	`
-	rows, err := r.pool.Query(ctx, query, environmentID, string(appID), limit)
+	query := environmentQuery
+	args := []any{environmentID, limit}
+	if strings.TrimSpace(string(appID)) != "" {
+		query = appQuery
+		args = []any{environmentID, string(appID), limit}
+	}
+	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -273,7 +325,7 @@ func (r *HubFindingRepository) ListHubFindings(ctx context.Context, environmentI
 }
 
 func (r *HubFindingRepository) GetHubFinding(ctx context.Context, findingID domain.ID, environmentID domain.ID, appID domain.ID) (domain.HubFinding, error) {
-	const query = `
+	const environmentQuery = `
 		SELECT id::text, organization_id::text, project_id::text, environment_id::text,
 			coalesce(app_id::text, ''), rule_id, rule_version, dedupe_key, severity,
 			confidence, title, summary, description, event_ids, first_event_at,
@@ -282,42 +334,31 @@ func (r *HubFindingRepository) GetHubFinding(ctx context.Context, findingID doma
 		FROM hub_findings
 		WHERE id = $1
 			AND environment_id = $2
-			AND ($3::text = '' OR app_id = nullif($3::text, '')::uuid)
 	`
-	var item domain.HubFinding
-	var eventIDs []string
-	if err := r.pool.QueryRow(ctx, query, findingID, environmentID, string(appID)).Scan(
-		&item.ID,
-		&item.OrganizationID,
-		&item.ProjectID,
-		&item.EnvironmentID,
-		&item.AppID,
-		&item.RuleID,
-		&item.RuleVersion,
-		&item.DedupeKey,
-		&item.Severity,
-		&item.Confidence,
-		&item.Title,
-		&item.Summary,
-		&item.Description,
-		&eventIDs,
-		&item.FirstEventAt,
-		&item.LastEventAt,
-		&item.Status,
-		&item.StatusReason,
-		&item.StatusNote,
-		&item.StatusActor,
-		&item.StatusUpdatedAt,
-		&item.Metadata,
-		&item.CreatedAt,
-		&item.UpdatedAt,
-	); err != nil {
+	const appQuery = `
+		SELECT id::text, organization_id::text, project_id::text, environment_id::text,
+			coalesce(app_id::text, ''), rule_id, rule_version, dedupe_key, severity,
+			confidence, title, summary, description, event_ids, first_event_at,
+			last_event_at, status, status_reason, status_note, status_actor,
+			status_updated_at, metadata, created_at, updated_at
+		FROM hub_findings
+		WHERE id = $1
+			AND environment_id = $2
+			AND app_id = $3::uuid
+	`
+	query := environmentQuery
+	args := []any{findingID, environmentID}
+	if strings.TrimSpace(string(appID)) != "" {
+		query = appQuery
+		args = []any{findingID, environmentID, string(appID)}
+	}
+	item, err := scanHubFinding(r.pool.QueryRow(ctx, query, args...))
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.HubFinding{}, ports.ErrHubNotFound
 		}
 		return domain.HubFinding{}, err
 	}
-	item.EventIDs = domainIDs(eventIDs)
 	return item, nil
 }
 
@@ -330,9 +371,9 @@ func (r *HubFindingRepository) ListModelAnalysisQueueScopes(ctx context.Context,
 	}
 	const query = `
 		SELECT DISTINCT
-			o.id::text, o.slug::text, o.name, o.created_at, o.updated_at,
-			p.id::text, p.organization_id::text, p.slug::text, p.name, p.created_at, p.updated_at,
-			e.id::text, e.project_id::text, e.slug::text, e.name, e.created_at, e.updated_at
+			o.id::text, o.slug::text AS organization_slug, o.name, o.created_at, o.updated_at,
+			p.id::text, p.organization_id::text, p.slug::text AS project_slug, p.name, p.created_at, p.updated_at,
+			e.id::text, e.project_id::text, e.slug::text AS environment_slug, e.name, e.created_at, e.updated_at
 		FROM hub_findings f
 		JOIN organizations o ON o.id = f.organization_id
 		JOIN projects p ON p.id = f.project_id
@@ -347,7 +388,7 @@ func (r *HubFindingRepository) ListModelAnalysisQueueScopes(ctx context.Context,
 					AND r.source_finding_ids @> ARRAY[f.id::text]::text[]
 					AND r.status = 'completed'
 			)
-		ORDER BY o.slug, p.slug, e.slug
+		ORDER BY organization_slug, project_slug, environment_slug
 		LIMIT $1
 	`
 	rows, err := r.pool.Query(ctx, query, limit)
@@ -434,7 +475,18 @@ func (r *HubFindingRepository) UpdateHubFindingStatus(ctx context.Context, findi
 }
 
 func (r *HubFindingRepository) UpdateOpenHubFindingStatuses(ctx context.Context, environmentID domain.ID, appID domain.ID, update domain.HubFindingStatusUpdate) (int, error) {
-	const query = `
+	const environmentQuery = `
+		UPDATE hub_findings
+		SET status = $2,
+			status_reason = $3,
+			status_note = $4,
+			status_actor = $5,
+			status_updated_at = now(),
+			updated_at = now()
+		WHERE environment_id = $1
+			AND status = 'open'
+	`
+	const appQuery = `
 		UPDATE hub_findings
 		SET status = $3,
 			status_reason = $4,
@@ -443,19 +495,62 @@ func (r *HubFindingRepository) UpdateOpenHubFindingStatuses(ctx context.Context,
 			status_updated_at = now(),
 			updated_at = now()
 		WHERE environment_id = $1
-			AND ($2::text = '' OR app_id = nullif($2::text, '')::uuid)
+			AND app_id = $2::uuid
 			AND status = 'open'
 	`
-	commandTag, err := r.pool.Exec(
-		ctx,
-		query,
-		environmentID,
-		string(appID),
-		update.Status,
-		update.Reason,
-		update.Note,
-		update.Actor,
-	)
+	query := environmentQuery
+	args := []any{environmentID, update.Status, update.Reason, update.Note, update.Actor}
+	if strings.TrimSpace(string(appID)) != "" {
+		query = appQuery
+		args = []any{environmentID, string(appID), update.Status, update.Reason, update.Note, update.Actor}
+	}
+	commandTag, err := r.pool.Exec(ctx, query, args...)
+	if err != nil {
+		return 0, err
+	}
+	return int(commandTag.RowsAffected()), nil
+}
+
+func (r *HubFindingRepository) UpdateOpenHubFindingStatusesForRulesInWindow(ctx context.Context, environmentID domain.ID, appID domain.ID, ruleIDs []string, windowStart time.Time, windowEnd time.Time, update domain.HubFindingStatusUpdate) (int, error) {
+	if len(ruleIDs) == 0 || windowStart.IsZero() || windowEnd.IsZero() {
+		return 0, nil
+	}
+	const environmentQuery = `
+		UPDATE hub_findings
+		SET status = $2,
+			status_reason = $3,
+			status_note = $4,
+			status_actor = $5,
+			status_updated_at = now(),
+			updated_at = now()
+		WHERE environment_id = $1
+			AND status = 'open'
+			AND rule_id = ANY($6::text[])
+			AND first_event_at <= $8
+			AND last_event_at >= $7
+	`
+	const appQuery = `
+		UPDATE hub_findings
+		SET status = $3,
+			status_reason = $4,
+			status_note = $5,
+			status_actor = $6,
+			status_updated_at = now(),
+			updated_at = now()
+		WHERE environment_id = $1
+			AND app_id = $2::uuid
+			AND status = 'open'
+			AND rule_id = ANY($7::text[])
+			AND first_event_at <= $9
+			AND last_event_at >= $8
+	`
+	query := environmentQuery
+	args := []any{environmentID, update.Status, update.Reason, update.Note, update.Actor, ruleIDs, windowStart.UTC(), windowEnd.UTC()}
+	if strings.TrimSpace(string(appID)) != "" {
+		query = appQuery
+		args = []any{environmentID, string(appID), update.Status, update.Reason, update.Note, update.Actor, ruleIDs, windowStart.UTC(), windowEnd.UTC()}
+	}
+	commandTag, err := r.pool.Exec(ctx, query, args...)
 	if err != nil {
 		return 0, err
 	}

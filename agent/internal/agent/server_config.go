@@ -92,6 +92,7 @@ type ServerDatabaseConfig struct {
 	TablePrefix string `yaml:"table_prefix"`
 	Timeout     string `yaml:"timeout"`
 	Schedule    string `yaml:"schedule"`
+	Persistent  *bool  `yaml:"persistent"`
 }
 
 type ServerBrowserCrawlConfig struct {
@@ -198,7 +199,7 @@ func NormalizeServerConfig(config ServerConfig) ServerConfig {
 		site.Slug = strings.TrimSpace(site.Slug)
 		site.Name = strings.TrimSpace(site.Name)
 		site.Domain = strings.TrimSpace(site.Domain)
-		site.Kind = strings.ToLower(strings.TrimSpace(site.Kind))
+		site.Kind = normalizeSiteKind(site.Kind)
 		site.App = strings.TrimSpace(site.App)
 		if site.App == "" {
 			site.App = site.Slug
@@ -222,6 +223,12 @@ func NormalizeServerConfig(config ServerConfig) ServerConfig {
 				site.Files.Profiles = []string{"yii2-rbac"}
 			case "laravel":
 				site.Files.Profiles = []string{"laravel"}
+			case "static":
+				site.Files.Profiles = []string{"static"}
+			case "react":
+				site.Files.Profiles = []string{"react"}
+			case "nodejs":
+				site.Files.Profiles = []string{"nodejs"}
 			}
 		}
 		site.Files.ExtraPaths = normalizePathSlice(site.Files.ExtraPaths)
@@ -363,7 +370,7 @@ func ValidateServerConfig(config ServerConfig) error {
 			if db.DSNEnv == "" {
 				issues = append(issues, dbPrefix+".dsn_env is required")
 			}
-			if db.Profile != "" && !isKnownWatchProfile(db.Profile) {
+			if db.Profile != "" && !isKnownDatabaseProfile(db.Profile) {
 				issues = append(issues, dbPrefix+".profile is unknown")
 			}
 			if db.TablePrefix != "" && !isSafeDBTablePrefix(db.TablePrefix) {
@@ -620,8 +627,8 @@ func isAbsoluteConfigPath(value string) bool {
 }
 
 func isKnownSiteKind(kind string) bool {
-	switch kind {
-	case "wordpress", "wordpress-multisite", "woocommerce", "prestashop", "generic-php", "mautic", "yii2-rbac", "laravel":
+	switch normalizeSiteKind(kind) {
+	case "wordpress", "wordpress-multisite", "woocommerce", "prestashop", "generic-php", "mautic", "yii2-rbac", "laravel", "static", "react", "nodejs":
 		return true
 	default:
 		return false
@@ -629,11 +636,31 @@ func isKnownSiteKind(kind string) bool {
 }
 
 func isKnownWatchProfile(profile string) bool {
-	switch profile {
+	switch strings.ToLower(strings.TrimSpace(profile)) {
+	case "wordpress", "wp", "woocommerce", "prestashop", "ps", "mautic", "yii2-rbac", "laravel", "static", "static-site", "static-html", "react", "node", "nodejs", "node.js":
+		return true
+	default:
+		return false
+	}
+}
+
+func isKnownDatabaseProfile(profile string) bool {
+	switch strings.ToLower(strings.TrimSpace(profile)) {
 	case "wordpress", "wp", "woocommerce", "prestashop", "ps", "mautic", "yii2-rbac", "laravel":
 		return true
 	default:
 		return false
+	}
+}
+
+func normalizeSiteKind(kind string) string {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "static-site", "static-html":
+		return "static"
+	case "node", "node.js", "node-js":
+		return "nodejs"
+	default:
+		return strings.ToLower(strings.TrimSpace(kind))
 	}
 }
 

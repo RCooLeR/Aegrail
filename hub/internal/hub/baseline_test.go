@@ -204,3 +204,23 @@ func (r *memoryIngestRepository) ListTimelineEvents(ctx context.Context, environ
 	}
 	return events, nil
 }
+
+func (r *memoryIngestRepository) ListTimelineEventsByID(ctx context.Context, environmentID domain.ID, appID domain.ID, eventIDs []domain.ID) ([]domain.TimelineEvent, error) {
+	byID := map[domain.ID]domain.TimelineEvent{}
+	for _, event := range r.timelineEvents {
+		if event.EnvironmentID != environmentID {
+			continue
+		}
+		if appID != "" && event.AppID != appID {
+			continue
+		}
+		byID[event.ID] = event
+	}
+	events := make([]domain.TimelineEvent, 0, len(eventIDs))
+	for _, eventID := range eventIDs {
+		if event, ok := byID[eventID]; ok {
+			events = append(events, event)
+		}
+	}
+	return events, nil
+}

@@ -85,6 +85,17 @@ func TestNotificationSinkNotifyNoopWithNoSubscriptions(t *testing.T) {
 	}
 }
 
+func TestSanitizePushErrorRemovesEndpointToken(t *testing.T) {
+	endpoint := "https://fcm.googleapis.com/fcm/send/subscription-token"
+	message := sanitizePushError(`Post "https://fcm.googleapis.com/fcm/send/subscription-token": tls: failed`, endpoint)
+	if strings.Contains(message, "subscription-token") {
+		t.Fatalf("message = %q, want subscription token removed", message)
+	}
+	if !strings.Contains(message, "fcm.googleapis.com") {
+		t.Fatalf("message = %q, want provider host retained", message)
+	}
+}
+
 type memoryPushSubscriptions struct{}
 
 func (memoryPushSubscriptions) SaveHubPushSubscription(context.Context, domain.HubPushSubscription) (domain.HubPushSubscription, error) {

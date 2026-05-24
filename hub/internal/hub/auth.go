@@ -31,6 +31,7 @@ const (
 	hubPasswordKeyLength     = 32
 	hubPasswordSaltLength    = 16
 	HubSessionTTL            = 12 * time.Hour
+	HubSessionTouchInterval  = time.Minute
 )
 
 var (
@@ -174,15 +175,18 @@ func (h *Hub) HubUserForSession(ctx context.Context, token string, now time.Time
 		now = time.Now().UTC()
 	}
 	tokenHash := hashHubSessionToken(token)
-	user, _, ok, err := h.users.FindHubUserBySessionTokenHash(ctx, tokenHash, now.UTC())
+	now = now.UTC()
+	user, session, ok, err := h.users.FindHubUserBySessionTokenHash(ctx, tokenHash, now)
 	if err != nil || !ok {
 		return domain.HubUser{}, false, err
 	}
 	if user.Status != "active" {
 		return domain.HubUser{}, false, nil
 	}
-	if err := h.users.TouchHubUserSession(ctx, tokenHash, now.UTC()); err != nil {
-		return domain.HubUser{}, false, err
+	if session.LastSeenAt.IsZero() || now.Sub(session.LastSeenAt.UTC()) >= HubSessionTouchInterval {
+		if err := h.users.TouchHubUserSession(ctx, tokenHash, now); err != nil {
+			return domain.HubUser{}, false, err
+		}
 	}
 	return user, true, nil
 }

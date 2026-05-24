@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -96,7 +97,7 @@ func (r *ModelAnalysisReportRepository) ListModelAnalysisReports(ctx context.Con
 	if limit > 500 {
 		limit = 500
 	}
-	const query = `
+	const environmentQuery = `
 		SELECT id::text, organization_id::text, project_id::text, environment_id::text,
 			coalesce(app_id::text, ''), report_schema, status, model_provider, model_name,
 			prompt_template_id, prompt_template_version, prompt_template_sha256, prompt_sha256,
@@ -105,11 +106,29 @@ func (r *ModelAnalysisReportRepository) ListModelAnalysisReports(ctx context.Con
 			prompt_eval_count, eval_count, generated_at, metadata, created_at
 		FROM hub_model_analysis_reports
 		WHERE environment_id = $1
-			AND ($2::text = '' OR app_id = nullif($2::text, '')::uuid)
+		ORDER BY generated_at DESC, created_at DESC
+		LIMIT $2
+	`
+	const appQuery = `
+		SELECT id::text, organization_id::text, project_id::text, environment_id::text,
+			coalesce(app_id::text, ''), report_schema, status, model_provider, model_name,
+			prompt_template_id, prompt_template_version, prompt_template_sha256, prompt_sha256,
+			evidence_bundle_schema, evidence_bundle_sha256, evidence_bundle_redaction_version,
+			evidence_bundle_generated_at, source_finding_ids, analysis, error, total_duration_millis,
+			prompt_eval_count, eval_count, generated_at, metadata, created_at
+		FROM hub_model_analysis_reports
+		WHERE environment_id = $1
+			AND app_id = $2::uuid
 		ORDER BY generated_at DESC, created_at DESC
 		LIMIT $3
 	`
-	rows, err := r.pool.Query(ctx, query, environmentID, string(appID), limit)
+	query := environmentQuery
+	args := []any{environmentID, limit}
+	if strings.TrimSpace(string(appID)) != "" {
+		query = appQuery
+		args = []any{environmentID, string(appID), limit}
+	}
+	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -133,7 +152,7 @@ func (r *ModelAnalysisReportRepository) ListModelAnalysisReportsForFinding(ctx c
 	if limit > 500 {
 		limit = 500
 	}
-	const query = `
+	const environmentQuery = `
 		SELECT id::text, organization_id::text, project_id::text, environment_id::text,
 			coalesce(app_id::text, ''), report_schema, status, model_provider, model_name,
 			prompt_template_id, prompt_template_version, prompt_template_sha256, prompt_sha256,
@@ -142,12 +161,31 @@ func (r *ModelAnalysisReportRepository) ListModelAnalysisReportsForFinding(ctx c
 			prompt_eval_count, eval_count, generated_at, metadata, created_at
 		FROM hub_model_analysis_reports
 		WHERE environment_id = $1
-			AND ($2::text = '' OR app_id = nullif($2::text, '')::uuid)
+			AND source_finding_ids @> ARRAY[$2]::text[]
+		ORDER BY generated_at DESC, created_at DESC
+		LIMIT $3
+	`
+	const appQuery = `
+		SELECT id::text, organization_id::text, project_id::text, environment_id::text,
+			coalesce(app_id::text, ''), report_schema, status, model_provider, model_name,
+			prompt_template_id, prompt_template_version, prompt_template_sha256, prompt_sha256,
+			evidence_bundle_schema, evidence_bundle_sha256, evidence_bundle_redaction_version,
+			evidence_bundle_generated_at, source_finding_ids, analysis, error, total_duration_millis,
+			prompt_eval_count, eval_count, generated_at, metadata, created_at
+		FROM hub_model_analysis_reports
+		WHERE environment_id = $1
+			AND app_id = $2::uuid
 			AND source_finding_ids @> ARRAY[$3]::text[]
 		ORDER BY generated_at DESC, created_at DESC
 		LIMIT $4
 	`
-	rows, err := r.pool.Query(ctx, query, environmentID, string(appID), string(findingID), limit)
+	query := environmentQuery
+	args := []any{environmentID, string(findingID), limit}
+	if strings.TrimSpace(string(appID)) != "" {
+		query = appQuery
+		args = []any{environmentID, string(appID), string(findingID), limit}
+	}
+	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -165,7 +203,7 @@ func (r *ModelAnalysisReportRepository) ListModelAnalysisReportsForFinding(ctx c
 }
 
 func (r *ModelAnalysisReportRepository) GetModelAnalysisReport(ctx context.Context, reportID domain.ID, environmentID domain.ID, appID domain.ID) (domain.ModelAnalysisReport, error) {
-	const query = `
+	const environmentQuery = `
 		SELECT id::text, organization_id::text, project_id::text, environment_id::text,
 			coalesce(app_id::text, ''), report_schema, status, model_provider, model_name,
 			prompt_template_id, prompt_template_version, prompt_template_sha256, prompt_sha256,
@@ -175,9 +213,26 @@ func (r *ModelAnalysisReportRepository) GetModelAnalysisReport(ctx context.Conte
 		FROM hub_model_analysis_reports
 		WHERE id = $1
 			AND environment_id = $2
-			AND ($3::text = '' OR app_id = nullif($3::text, '')::uuid)
 	`
-	report, err := r.scanModelAnalysisReport(r.pool.QueryRow(ctx, query, reportID, environmentID, string(appID)))
+	const appQuery = `
+		SELECT id::text, organization_id::text, project_id::text, environment_id::text,
+			coalesce(app_id::text, ''), report_schema, status, model_provider, model_name,
+			prompt_template_id, prompt_template_version, prompt_template_sha256, prompt_sha256,
+			evidence_bundle_schema, evidence_bundle_sha256, evidence_bundle_redaction_version,
+			evidence_bundle_generated_at, source_finding_ids, analysis, error, total_duration_millis,
+			prompt_eval_count, eval_count, generated_at, metadata, created_at
+		FROM hub_model_analysis_reports
+		WHERE id = $1
+			AND environment_id = $2
+			AND app_id = $3::uuid
+	`
+	query := environmentQuery
+	args := []any{reportID, environmentID}
+	if strings.TrimSpace(string(appID)) != "" {
+		query = appQuery
+		args = []any{reportID, environmentID, string(appID)}
+	}
+	report, err := r.scanModelAnalysisReport(r.pool.QueryRow(ctx, query, args...))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.ModelAnalysisReport{}, ports.ErrHubNotFound
 	}
@@ -185,7 +240,7 @@ func (r *ModelAnalysisReportRepository) GetModelAnalysisReport(ctx context.Conte
 }
 
 func (r *ModelAnalysisReportRepository) FindModelAnalysisReportByEvidence(ctx context.Context, environmentID domain.ID, appID domain.ID, findingID domain.ID, evidenceBundleSHA256 string) (domain.ModelAnalysisReport, bool, error) {
-	const query = `
+	const environmentQuery = `
 		SELECT id::text, organization_id::text, project_id::text, environment_id::text,
 			coalesce(app_id::text, ''), report_schema, status, model_provider, model_name,
 			prompt_template_id, prompt_template_version, prompt_template_sha256, prompt_sha256,
@@ -194,13 +249,33 @@ func (r *ModelAnalysisReportRepository) FindModelAnalysisReportByEvidence(ctx co
 			prompt_eval_count, eval_count, generated_at, metadata, created_at
 		FROM hub_model_analysis_reports
 		WHERE environment_id = $1
-			AND ($2::text = '' OR app_id = nullif($2::text, '')::uuid)
+			AND source_finding_ids @> ARRAY[$2]::text[]
+			AND evidence_bundle_sha256 = $3
+		ORDER BY generated_at DESC, created_at DESC
+		LIMIT 1
+	`
+	const appQuery = `
+		SELECT id::text, organization_id::text, project_id::text, environment_id::text,
+			coalesce(app_id::text, ''), report_schema, status, model_provider, model_name,
+			prompt_template_id, prompt_template_version, prompt_template_sha256, prompt_sha256,
+			evidence_bundle_schema, evidence_bundle_sha256, evidence_bundle_redaction_version,
+			evidence_bundle_generated_at, source_finding_ids, analysis, error, total_duration_millis,
+			prompt_eval_count, eval_count, generated_at, metadata, created_at
+		FROM hub_model_analysis_reports
+		WHERE environment_id = $1
+			AND app_id = $2::uuid
 			AND source_finding_ids @> ARRAY[$3]::text[]
 			AND evidence_bundle_sha256 = $4
 		ORDER BY generated_at DESC, created_at DESC
 		LIMIT 1
 	`
-	report, err := r.scanModelAnalysisReport(r.pool.QueryRow(ctx, query, environmentID, string(appID), string(findingID), evidenceBundleSHA256))
+	query := environmentQuery
+	args := []any{environmentID, string(findingID), evidenceBundleSHA256}
+	if strings.TrimSpace(string(appID)) != "" {
+		query = appQuery
+		args = []any{environmentID, string(appID), string(findingID), evidenceBundleSHA256}
+	}
+	report, err := r.scanModelAnalysisReport(r.pool.QueryRow(ctx, query, args...))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.ModelAnalysisReport{}, false, nil
@@ -211,7 +286,7 @@ func (r *ModelAnalysisReportRepository) FindModelAnalysisReportByEvidence(ctx co
 }
 
 func (r *ModelAnalysisReportRepository) FindLatestModelAnalysisReportByFinding(ctx context.Context, environmentID domain.ID, appID domain.ID, findingID domain.ID, promptTemplateID string, promptTemplateVersion string, modelName string) (domain.ModelAnalysisReport, bool, error) {
-	const query = `
+	const environmentQuery = `
 		SELECT id::text, organization_id::text, project_id::text, environment_id::text,
 			coalesce(app_id::text, ''), report_schema, status, model_provider, model_name,
 			prompt_template_id, prompt_template_version, prompt_template_sha256, prompt_sha256,
@@ -220,7 +295,23 @@ func (r *ModelAnalysisReportRepository) FindLatestModelAnalysisReportByFinding(c
 			prompt_eval_count, eval_count, generated_at, metadata, created_at
 		FROM hub_model_analysis_reports
 		WHERE environment_id = $1
-			AND ($2::text = '' OR app_id = nullif($2::text, '')::uuid)
+			AND source_finding_ids @> ARRAY[$2]::text[]
+			AND prompt_template_id = $3
+			AND prompt_template_version = $4
+			AND ($5::text = '' OR model_name = $5)
+		ORDER BY generated_at DESC, created_at DESC
+		LIMIT 1
+	`
+	const appQuery = `
+		SELECT id::text, organization_id::text, project_id::text, environment_id::text,
+			coalesce(app_id::text, ''), report_schema, status, model_provider, model_name,
+			prompt_template_id, prompt_template_version, prompt_template_sha256, prompt_sha256,
+			evidence_bundle_schema, evidence_bundle_sha256, evidence_bundle_redaction_version,
+			evidence_bundle_generated_at, source_finding_ids, analysis, error, total_duration_millis,
+			prompt_eval_count, eval_count, generated_at, metadata, created_at
+		FROM hub_model_analysis_reports
+		WHERE environment_id = $1
+			AND app_id = $2::uuid
 			AND source_finding_ids @> ARRAY[$3]::text[]
 			AND prompt_template_id = $4
 			AND prompt_template_version = $5
@@ -228,7 +319,13 @@ func (r *ModelAnalysisReportRepository) FindLatestModelAnalysisReportByFinding(c
 		ORDER BY generated_at DESC, created_at DESC
 		LIMIT 1
 	`
-	report, err := r.scanModelAnalysisReport(r.pool.QueryRow(ctx, query, environmentID, string(appID), string(findingID), promptTemplateID, promptTemplateVersion, modelName))
+	query := environmentQuery
+	args := []any{environmentID, string(findingID), promptTemplateID, promptTemplateVersion, modelName}
+	if strings.TrimSpace(string(appID)) != "" {
+		query = appQuery
+		args = []any{environmentID, string(appID), string(findingID), promptTemplateID, promptTemplateVersion, modelName}
+	}
+	report, err := r.scanModelAnalysisReport(r.pool.QueryRow(ctx, query, args...))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.ModelAnalysisReport{}, false, nil

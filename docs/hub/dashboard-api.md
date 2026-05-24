@@ -87,6 +87,12 @@ since
 limit
 ```
 
+`GET /api/v1/timeline` also accepts exact signal lookups with repeated
+`id=<event_id>` values or a comma-separated `ids=<event_id>,<event_id>` value.
+When IDs are supplied, Hub ignores the `since` window and returns matching
+events inside the requested org/project/environment/app scope. The dashboard
+uses this for issue detail timelines so old linked evidence still opens.
+
 ## Browser Scripts And Deployments
 
 | Method | Route | Access | Purpose |
@@ -96,7 +102,7 @@ limit
 | `POST` | `/api/v1/browser/script-allowlist` | operator | Add a domain, inline hash, or tag-manager ID allowlist entry. |
 | `PATCH` | `/api/v1/browser/script-allowlist/{id}/status` | operator | Enable/disable an allowlist entry. |
 | `GET` | `/api/v1/deployments` | viewer | List deployment markers. |
-| `POST` | `/api/v1/deployments` | operator | Create a deployment marker. |
+| `POST` | `/api/v1/deployments` | operator | Create a deployment marker and acknowledge expected file/browser findings inside the marker window. Response includes `acknowledged_findings`. |
 
 ## Model Analysis And Reports
 

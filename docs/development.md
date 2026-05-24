@@ -14,7 +14,7 @@
 `agent/` owns:
 
 - Agent config, file/log/database/browser collection, local state, queueing, and replay
-- WordPress, PrestaShop, and Mautic module/profile helpers used by the agent
+- WordPress, PrestaShop, Mautic, Yii2 RBAC, Laravel, static, React, and Node.js module/profile helpers used by the agent
 - Agent CLI commands for local development and operations
 
 Package map:
@@ -31,7 +31,7 @@ hub/configs/                 Hub config examples
 agent/cmd/agent/             Agent app entrypoint
 agent/internal/agent/        agent runtime, config, queue, file watch, log watch
 agent/internal/collector/    database and browser collectors
-agent/internal/modules/      WordPress, PrestaShop, and Mautic source logic
+agent/internal/modules/      WordPress, PrestaShop, Mautic, Yii2 RBAC, Laravel, static, React, and Node.js source logic
 agent/internal/redaction/    secret and token redaction
 agent/configs/               Agent YAML examples
 ```

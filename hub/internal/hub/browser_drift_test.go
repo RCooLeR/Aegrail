@@ -3,6 +3,7 @@ package hub
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -41,8 +42,10 @@ func TestAnalyzeBrowserScriptDriftDetectsNewDomainsInlineHashesAndTagManagers(t 
 			"url":         "https://cdn.bad.example/payload.js",
 		}),
 		browserScriptTimelineEvent("evt-new-inline", environment.ID, app.ID, now.Add(-19*time.Minute), pageURL, map[string]any{
-			"source_type": "inline",
-			"sha256":      "new-inline",
+			"source_type":              "inline",
+			"sha256":                   "new-inline",
+			"inline_preview":           "window.checkoutWidget = { enabled: true };",
+			"inline_preview_truncated": false,
 		}),
 		browserScriptTimelineEvent("evt-new-tag", environment.ID, app.ID, now.Add(-18*time.Minute), pageURL, map[string]any{
 			"source_type":     "dom",
@@ -80,11 +83,24 @@ func TestAnalyzeBrowserScriptDriftDetectsNewDomainsInlineHashesAndTagManagers(t 
 	if byRule["browser-inline-script-changed"].Value != "new-inline" {
 		t.Fatalf("inline drift = %#v", byRule["browser-inline-script-changed"])
 	}
+	if byRule["browser-inline-script-changed"].Metadata["inline_preview"] != "window.checkoutWidget = { enabled: true };" {
+		t.Fatalf("inline drift metadata = %#v", byRule["browser-inline-script-changed"].Metadata)
+	}
 	if byRule["browser-tag-manager-id-new"].Value != "GTM-NEW" || byRule["browser-tag-manager-id-new"].Severity != domain.SeverityHigh {
 		t.Fatalf("tag manager drift = %#v", byRule["browser-tag-manager-id-new"])
 	}
 	if len(result.Findings) != 3 {
 		t.Fatalf("saved findings = %#v, want 3", result.Findings)
+	}
+	var inlineFinding domain.HubFinding
+	for _, finding := range result.Findings {
+		if finding.RuleID == "browser-inline-script-changed" {
+			inlineFinding = finding
+			break
+		}
+	}
+	if !strings.Contains(inlineFinding.Summary, "window.checkoutWidget") {
+		t.Fatalf("inline finding summary = %q, want script preview", inlineFinding.Summary)
 	}
 }
 
@@ -174,7 +190,7 @@ func TestAnalyzeBrowserScriptDriftSuppressesAllowedValues(t *testing.T) {
 	}
 }
 
-func TestAnalyzeBrowserScriptDriftAddsDeploymentContextAndLowersNoisyMediumFinding(t *testing.T) {
+func TestAnalyzeBrowserScriptDriftSuppressesExpectedDeploymentFinding(t *testing.T) {
 	inventory := newMemoryInventoryRepository()
 	ingest := &memoryIngestRepository{}
 	hub := New(Dependencies{Inventory: inventory, Ingest: ingest})
@@ -220,19 +236,11 @@ func TestAnalyzeBrowserScriptDriftAddsDeploymentContextAndLowersNoisyMediumFindi
 	if err != nil {
 		t.Fatalf("AnalyzeBrowserScriptDrift returned error: %v", err)
 	}
-	if len(result.Findings) != 1 {
-		t.Fatalf("findings = %#v, want one drift finding", result.Findings)
+	if len(result.Drifts) != 1 {
+		t.Fatalf("drifts = %#v, want raw drift still detected", result.Drifts)
 	}
-	finding := result.Findings[0]
-	if finding.RuleID != "browser-script-domain-new" || finding.Severity != domain.SeverityLow {
-		t.Fatalf("finding = %#v, want browser domain drift lowered to low during deployment", finding)
-	}
-	deploymentContext, ok := finding.Metadata["deployment_context"].(map[string]any)
-	if !ok || deploymentContext["active"] != true {
-		t.Fatalf("deployment context = %#v, want active context", finding.Metadata["deployment_context"])
-	}
-	if deploymentContext["severity_adjusted"] != true || deploymentContext["original_severity"] != "medium" || deploymentContext["adjusted_severity"] != "low" {
-		t.Fatalf("deployment context = %#v, want medium-to-low adjustment", deploymentContext)
+	if len(result.Findings) != 0 {
+		t.Fatalf("findings = %#v, want expected browser deployment drift suppressed", result.Findings)
 	}
 }
 

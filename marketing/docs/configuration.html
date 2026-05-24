@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Configure Aegrail agent identity, site roots, collectors, schedules, ignores, and safe secret handling.">
+  <meta name="theme-color" content="#0B0F1A">
+  <title>Configuration - Aegrail Docs</title>
+  <link rel="icon" href="../assets/favicon/favicon.ico">
+  <link rel="apple-touch-icon" href="../assets/favicon/apple-touch-icon.png">
+  <link rel="manifest" href="../site.webmanifest">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="../assets/vendor/bootstrap/bootstrap.min.css" rel="stylesheet">
+  <link href="../assets/css/aegrail-docs.css" rel="stylesheet">
+</head>
+<body data-base-path="docs"><nav class="navbar navbar-expand-lg docs-navbar sticky-top"><div class="container-xxl"><a class="navbar-brand d-flex align-items-center gap-2" href="../index.html" aria-label="Aegrail home"><img src="../assets/img/aegrail-horizontal-white.png" class="brand-logo brand-logo-full" alt="Aegrail"><span class="brand-word d-lg-none">Aegrail</span></a><button class="navbar-toggler btn-ghost" type="button" data-bs-toggle="collapse" data-bs-target="#docsNav" aria-controls="docsNav" aria-expanded="false" aria-label="Toggle navigation"><span class="navbar-toggler-icon"></span></button><div class="collapse navbar-collapse" id="docsNav"><ul class="navbar-nav me-auto mb-2 mb-lg-0"><li class="nav-item"><a class="nav-link" href="../index.html">Overview</a></li><li class="nav-item"><a class="nav-link" href="../docs/getting-started.html">Docs</a></li><li class="nav-item"><a class="nav-link" href="../docs/agents-and-collectors.html">Agents</a></li><li class="nav-item"><a class="nav-link" href="../docs/evidence-model.html">Security model</a></li></ul><div class="search-box me-lg-3 mb-3 mb-lg-0" style="min-width:min(420px, 100%);"><input id="docsSearch" class="form-control" type="search" placeholder="Search docs..." autocomplete="off" aria-label="Search docs"><div id="docsSearchResults" class="search-results"></div></div><a class="btn btn-aegrail px-3" href="../docs/agents-and-collectors.html">Collectors</a></div></div></nav>
+<main class="container-xxl docs-layout"><div class="row g-4"><div class="col-lg-3 col-xl-2"><aside class="docs-sidebar p-2">
+  <div class="section-title">Start</div><nav class="nav flex-column pb-2"><a class="nav-link" data-doc-link href="../docs/getting-started.html">Getting started</a><a class="nav-link" data-doc-link href="../docs/installation.html">Installation</a><a class="nav-link" data-doc-link href="../docs/configuration.html">Configuration</a></nav>
+  <div class="section-title">Product</div><nav class="nav flex-column pb-2"><a class="nav-link" data-doc-link href="../docs/cli-reference.html">Command reference</a><a class="nav-link" data-doc-link href="../docs/agents-and-collectors.html">Agents and collectors</a><a class="nav-link" data-doc-link href="../docs/evidence-model.html">Evidence model</a><a class="nav-link" data-doc-link href="../docs/incident-timeline.html">Dashboard workflow</a><a class="nav-link" data-doc-link href="../docs/reports.html">Reports</a></nav>
+  <div class="section-title">Operations</div><nav class="nav flex-column pb-2"><a class="nav-link" data-doc-link href="../docs/deployment.html">Deployment</a></nav>
+</aside></div><div class="col-lg-9 col-xl-8"><article class="docs-main overflow-hidden"><header class="doc-header p-4 p-lg-5"><span class="eyebrow mb-3"><span class="pulse"></span>Agent YAML</span><h1 class="display-5 mb-3">Configuration</h1><p class="lead mb-0">The generated config is a starting point. The important part is matching Hub inventory and real local paths.</p></header><div class="p-4 p-lg-5">
+<section id="identity"><h2>Identity must match inventory</h2><p>The Hub resolves incoming events by organization, project, environment, app, service, and agent id. If the dashboard app slug is <code>demo-app</code>, the agent site <code>app</code> must also be <code>demo-app</code>. A mismatch is rejected instead of silently creating unknown inventory.</p><pre><code>identity:
+  org: demo-org
+  project: demo-site
+  environment: production
+  host: demo-prod
+  agent_id: agt_demo_prod
+
+sites:
+  - slug: demo-site
+    kind: wordpress
+    app: demo-app
+    service: frontend
+    root: /mnt/sites/demo-site</code></pre></section>
+<section id="collectors"><h2>Collectors</h2><p>Enable only the collectors that make sense for that node. Pantheon-style hosted sites may disable files or config monitoring if the agent cannot read those paths. The dashboard shows disabled and ignored areas so an operator can see what the node is not watching.</p><pre><code>files:
+  enabled: true
+  profiles: [wordpress]
+  exclude:
+    - /mnt/sites/demo-site/wp-content/cache
+    - /mnt/sites/demo-site/wp-content/uploads/backups
+coverage:
+  enabled: true
+browser_crawl:
+  enabled: true
+  rendered: false</code></pre></section>
+<section id="databases"><h2>Databases</h2><p>Use environment variables for DSNs. Profiles decide which tables and fields matter: WordPress users and high-signal options, PrestaShop employees and modules, Mautic users, Laravel auth tables, and Yii2 RBAC assignments. Static, React, and Node.js profiles do not collect database snapshots by default.</p><pre><code>databases:
+  - name: demo-db
+    engine: mysql
+    dsn_env: AEGRAIL_DB_DEMO_DSN
+    profile: wordpress
+    table_prefix: mrk_
+    schedule: 5m</code></pre></section>
+<section id="secrets"><h2>Secrets</h2><p>Do not store DSNs, passwords, API keys, cookies, or tokens in the YAML. Use environment variables or your container secret mechanism. The agent redacts sensitive values before queueing evidence, but the cleanest secret is the one that never enters the config file.</p></section>
+</div></article></div><div class="col-xl-2"><aside class="toc d-none d-xl-block"><div class="small text-uppercase fw-bold mb-2" style="letter-spacing:.12em;color:#8EA0BE;">On this page</div><a href="#identity">Identity</a><a href="#collectors">Collectors</a><a href="#databases">Databases</a><a href="#secrets">Secrets</a></aside></div></div></main>
+<footer class="footer py-4 mt-5"><div class="container-xxl d-flex flex-column flex-lg-row align-items-start align-items-lg-center justify-content-between gap-3"><div class="d-flex align-items-center gap-2"><img src="../assets/img/icon.png" alt="Aegrail" width="34" height="34"><div><strong class="text-white">Aegrail</strong><div class="small">Practical website monitoring for client projects.</div></div></div><div class="small">(c) 2026 Aegrail. Hub, agents, evidence, and reports.</div></div></footer>
+<script src="../assets/vendor/bootstrap/bootstrap.bundle.min.js"></script><script src="../assets/js/aegrail-docs.js"></script>
+</body>
+</html>

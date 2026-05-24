@@ -4,7 +4,10 @@ import (
 	"github.com/rcooler/aegrail/agent/internal/modules"
 	"github.com/rcooler/aegrail/agent/internal/modules/laravel"
 	"github.com/rcooler/aegrail/agent/internal/modules/mautic"
+	"github.com/rcooler/aegrail/agent/internal/modules/nodejs"
 	"github.com/rcooler/aegrail/agent/internal/modules/prestashop"
+	"github.com/rcooler/aegrail/agent/internal/modules/react"
+	"github.com/rcooler/aegrail/agent/internal/modules/static"
 	"github.com/rcooler/aegrail/agent/internal/modules/wordpress"
 	"github.com/rcooler/aegrail/agent/internal/modules/yii2rbac"
 )
@@ -17,6 +20,9 @@ func DefaultRegistry() (*modules.Registry, error) {
 		mautic.Spec(),
 		yii2rbac.Spec(),
 		laravel.Spec(),
+		static.Spec(),
+		react.Spec(),
+		nodejs.Spec(),
 	} {
 		if err := registry.Register(spec); err != nil {
 			return nil, err

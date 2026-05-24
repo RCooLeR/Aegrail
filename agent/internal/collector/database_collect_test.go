@@ -57,6 +57,46 @@ func TestCollectDatabaseSnapshotUnsupportedEngineReturnsWarning(t *testing.T) {
 	}
 }
 
+func TestDatabaseConnectionReusesPersistentHandle(t *testing.T) {
+	runtime := NewRuntime(Config{Name: "database"})
+	defer runtime.Close()
+
+	dsn := "user:pass@tcp(127.0.0.1:3306)/site_db?parseTime=true"
+	first, releaseFirst, err := runtime.databaseConnection("mysql", dsn, true)
+	if err != nil {
+		t.Fatalf("databaseConnection first returned error: %v", err)
+	}
+	defer releaseFirst()
+	second, releaseSecond, err := runtime.databaseConnection("mysql", dsn, true)
+	if err != nil {
+		t.Fatalf("databaseConnection second returned error: %v", err)
+	}
+	defer releaseSecond()
+	if first != second {
+		t.Fatalf("persistent databaseConnection returned different handles")
+	}
+}
+
+func TestDatabaseConnectionCanUseOneShotHandle(t *testing.T) {
+	runtime := NewRuntime(Config{Name: "database"})
+	defer runtime.Close()
+
+	dsn := "user:pass@tcp(127.0.0.1:3306)/site_db?parseTime=true"
+	first, releaseFirst, err := runtime.databaseConnection("mysql", dsn, false)
+	if err != nil {
+		t.Fatalf("databaseConnection first returned error: %v", err)
+	}
+	defer releaseFirst()
+	second, releaseSecond, err := runtime.databaseConnection("mysql", dsn, false)
+	if err != nil {
+		t.Fatalf("databaseConnection second returned error: %v", err)
+	}
+	defer releaseSecond()
+	if first == second {
+		t.Fatalf("one-shot databaseConnection reused a handle")
+	}
+}
+
 func TestNormalizeDatabaseProfileTreatsWordPressNetworkAsWordPress(t *testing.T) {
 	for _, profile := range []string{"wp", "wordpress", "wordpress-multisite", "woocommerce"} {
 		if got := normalizeDatabaseProfile(profile); got != "wordpress" {
@@ -326,6 +366,53 @@ func TestParseWordPressActivePluginsFromSerializedOption(t *testing.T) {
 	}
 	if plugins[0] != "akismet/akismet.php" || plugins[1] != "woocommerce/woocommerce.php" {
 		t.Fatalf("plugins = %#v, want normalized plugin files", plugins)
+	}
+}
+
+func TestWordPressTrackedOptionsAreHighSignalOnly(t *testing.T) {
+	siteOptions := map[string]bool{}
+	for _, name := range wordpressTrackedSiteOptionNames("wp_") {
+		siteOptions[name] = true
+	}
+	for _, name := range []string{"active_plugins", "admin_email", "default_role", "home", "siteurl", "users_can_register", "wp_user_roles"} {
+		if !siteOptions[name] {
+			t.Fatalf("site options = %#v, want %s tracked", siteOptions, name)
+		}
+	}
+	for _, name := range []string{"blog_public", "cron", "permalink_structure", "stylesheet", "template"} {
+		if siteOptions[name] {
+			t.Fatalf("site options = %#v, want noisy option %s ignored", siteOptions, name)
+		}
+	}
+
+	networkOptions := map[string]bool{}
+	for _, name := range wordpressTrackedNetworkOptionNames() {
+		networkOptions[name] = true
+	}
+	for _, name := range []string{"active_sitewide_plugins", "admin_email", "registration", "site_admins", "siteurl"} {
+		if !networkOptions[name] {
+			t.Fatalf("network options = %#v, want %s tracked", networkOptions, name)
+		}
+	}
+	if networkOptions["upload_space_check_disabled"] {
+		t.Fatalf("network options = %#v, want noisy upload_space_check_disabled ignored", networkOptions)
+	}
+
+	specs, warnings := wordpressDatabaseCheckSpecs("wp_")
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %#v", warnings)
+	}
+	specNames := map[string]bool{}
+	for _, spec := range specs {
+		specNames[spec.Name] = true
+	}
+	if !specNames["wordpress.active_plugins.digest"] {
+		t.Fatalf("specs = %#v, want active plugin digest", specNames)
+	}
+	for _, name := range []string{"wordpress.options.count", "wordpress.cron.digest", "wordpress.theme_stylesheet.digest", "wordpress.theme_template.digest"} {
+		if specNames[name] {
+			t.Fatalf("specs = %#v, want noisy check %s ignored", specNames, name)
+		}
 	}
 }
 

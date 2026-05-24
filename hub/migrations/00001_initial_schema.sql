@@ -321,6 +321,9 @@ CREATE INDEX deployment_markers_app_started_idx ON deployment_markers (app_id, s
 CREATE INDEX hub_ingest_batches_environment_received_idx ON hub_ingest_batches (environment_id, received_at DESC);
 CREATE INDEX hub_ingest_batches_agent_received_idx ON hub_ingest_batches (agent_id, received_at DESC);
 CREATE INDEX hub_ingest_events_environment_time_idx ON hub_ingest_events (environment_id, event_time DESC);
+CREATE INDEX hub_ingest_events_environment_type_time_idx ON hub_ingest_events (environment_id, event_type, event_time DESC, created_at DESC);
+CREATE INDEX hub_ingest_events_environment_app_time_idx ON hub_ingest_events (environment_id, app_id, event_time DESC, created_at DESC);
+CREATE INDEX hub_ingest_events_environment_app_type_time_idx ON hub_ingest_events (environment_id, app_id, event_type, event_time DESC, created_at DESC);
 CREATE INDEX hub_ingest_events_host_time_idx ON hub_ingest_events (host_id, event_time DESC);
 CREATE INDEX hub_ingest_events_agent_time_idx ON hub_ingest_events (agent_id, event_time DESC);
 CREATE INDEX hub_ingest_events_type_idx ON hub_ingest_events (event_type);
@@ -330,6 +333,8 @@ CREATE INDEX hub_ingest_events_payload_gin_idx ON hub_ingest_events USING gin (p
 
 CREATE INDEX hub_findings_environment_event_idx ON hub_findings (environment_id, first_event_at DESC);
 CREATE INDEX hub_findings_app_event_idx ON hub_findings (app_id, first_event_at DESC);
+CREATE INDEX hub_findings_environment_app_event_idx ON hub_findings (environment_id, app_id, first_event_at DESC, created_at DESC);
+CREATE INDEX hub_findings_environment_app_status_event_idx ON hub_findings (environment_id, app_id, status, last_event_at DESC, updated_at DESC);
 CREATE INDEX hub_findings_severity_idx ON hub_findings (severity);
 CREATE INDEX hub_findings_status_idx ON hub_findings (status);
 CREATE INDEX hub_findings_metadata_gin_idx ON hub_findings USING gin (metadata);
@@ -341,6 +346,8 @@ CREATE INDEX hub_browser_script_allowlist_status_idx ON hub_browser_script_allow
 
 CREATE INDEX hub_model_analysis_reports_environment_generated_idx ON hub_model_analysis_reports (environment_id, generated_at DESC);
 CREATE INDEX hub_model_analysis_reports_app_generated_idx ON hub_model_analysis_reports (app_id, generated_at DESC);
+CREATE INDEX hub_model_analysis_reports_environment_app_generated_idx ON hub_model_analysis_reports (environment_id, app_id, generated_at DESC, created_at DESC);
+CREATE INDEX hub_model_analysis_reports_scope_status_idx ON hub_model_analysis_reports (environment_id, app_id, status);
 CREATE INDEX hub_model_analysis_reports_status_idx ON hub_model_analysis_reports (status);
 CREATE INDEX hub_model_analysis_reports_bundle_sha_idx ON hub_model_analysis_reports (evidence_bundle_sha256);
 CREATE INDEX hub_model_analysis_reports_prompt_template_idx ON hub_model_analysis_reports (prompt_template_id, prompt_template_version);
@@ -358,6 +365,7 @@ CREATE INDEX hub_user_sessions_active_idx ON hub_user_sessions (expires_at) WHER
 
 CREATE UNIQUE INDEX hub_push_subscriptions_endpoint_idx ON hub_push_subscriptions (endpoint);
 CREATE INDEX hub_push_subscriptions_user_status_idx ON hub_push_subscriptions (user_id, status);
+CREATE INDEX hub_push_subscriptions_status_updated_idx ON hub_push_subscriptions (status, updated_at DESC);
 
 CREATE UNIQUE INDEX hub_file_ignore_rules_unique_idx
 	ON hub_file_ignore_rules (environment_id, coalesce(app_id, '00000000-0000-0000-0000-000000000000'::uuid), match_kind, normalized_value);

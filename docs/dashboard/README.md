@@ -53,7 +53,7 @@ Rules:
 - Hub can also analyze the issue queue automatically. `hub serve` starts a background pass by default, controlled by `AEGRAIL_MODEL_ANALYSIS_AUTO`, `AEGRAIL_MODEL_ANALYSIS_INTERVAL`, and `AEGRAIL_MODEL_ANALYSIS_LIMIT`. Keep the limit small for local GPUs.
 - Operators can run one pass manually from `hub/` with `go run ./cmd/hub model-analysis queue`.
 - The Deployments page records a version/note, actor, optional commit SHA, start time, and finish time. It previews open issues that overlap the selected node/timeframe and requires a second confirmation before saving.
-- Deployment markers are context, not blanket suppression. Hub scoring may lower expected low/medium rollout drift, but high-risk administrator, payment, persistence, and incident-chain findings stay visible.
+- Deployment markers acknowledge already-open expected deployment findings in that window and suppress future expected file/browser drift for the same window. High-risk administrator, payment, sensitive config, writable PHP, persistence, and incident-chain findings stay visible.
 - The Browser Scripts page can allowlist a domain, inline SHA-256, or tag-manager ID. It updates Hub allowlist state; it does not edit agent YAML.
 - Users & 2FA uses a pending enrollment flow: generate QR, verify the current 6-digit TOTP code, then activate. Dashboard access stays locked until the current user has active 2FA.
 - Browser-to-Hub calls use `aegrail.dashboard.v1`: HttpOnly session cookie for authentication, `X-Aegrail-Dashboard-Protocol` on dashboard requests, and `X-Aegrail-CSRF` on mutating requests.

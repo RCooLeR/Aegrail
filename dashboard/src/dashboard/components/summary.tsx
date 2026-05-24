@@ -83,7 +83,7 @@ export function ServiceGrid({ instance, issueRows }: { instance: InstanceModel; 
   return (
     <div className="service-grid">
       {instance.collectors.map((collector) => {
-        const issues = issueRows.filter((row) => row.service === serviceFromCollector(collector.key));
+        const openIssues = issueRows.filter((row) => row.service === serviceFromCollector(collector.key) && row.finding.status === "open");
         return (
           <div className="service-card" key={collector.key}>
             <StatusPill value={collector.status} />
@@ -91,7 +91,7 @@ export function ServiceGrid({ instance, issueRows }: { instance: InstanceModel; 
             <small>Collector: {collector.label}</small>
             <small>{collector.detail}</small>
             <small>Last scan: {formatRelative(collector.lastSeenAt)}</small>
-            <small>Issues: {issues.length}</small>
+            <small>Open issues: {openIssues.length}</small>
           </div>
         );
       })}

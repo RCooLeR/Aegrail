@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -63,6 +65,16 @@ type renderedNetworkState struct {
 	lastSeen time.Time
 }
 
+type renderedChromeRuntime struct {
+	Root       string
+	Home       string
+	ConfigHome string
+	CacheHome  string
+	UserData   string
+	CrashDumps string
+	Cleanup    func()
+}
+
 func newRenderedNetworkState() *renderedNetworkState {
 	return &renderedNetworkState{
 		active:   map[network.RequestID]struct{}{},
@@ -90,14 +102,21 @@ func crawlRenderedPage(ctx context.Context, pageURL *url.URL, input BrowserCrawl
 		userAgent = AegrailCrawlerUserAgent
 	}
 
-	options := append(chromedp.DefaultExecAllocatorOptions[:],
-		chromedp.Headless,
-		chromedp.DisableGPU,
-		chromedp.NoDefaultBrowserCheck,
-		chromedp.NoFirstRun,
-		chromedp.Flag("disable-dev-shm-usage", true),
-		chromedp.UserAgent(userAgent),
-	)
+	page := BrowserPageResult{
+		URL:       pageURL.String(),
+		FinalURL:  pageURL.String(),
+		Mode:      browserCrawlModeRendered,
+		UserAgent: userAgent,
+		Scripts:   []BrowserScriptObservation{},
+	}
+
+	chromeRuntime, err := newRenderedChromeRuntime()
+	if err != nil {
+		return page, fmt.Errorf("rendered chrome runtime setup failed: %w", err)
+	}
+	defer chromeRuntime.Cleanup()
+
+	options := renderedChromeAllocatorOptions(userAgent, chromeRuntime)
 	allocatorCtx, cancelAllocator := chromedp.NewExecAllocator(ctx, options...)
 	defer cancelAllocator()
 
@@ -109,14 +128,6 @@ func crawlRenderedPage(ctx context.Context, pageURL *url.URL, input BrowserCrawl
 
 	networkState := newRenderedNetworkState()
 	chromedp.ListenTarget(pageCtx, networkState.handleEvent)
-
-	page := BrowserPageResult{
-		URL:       pageURL.String(),
-		FinalURL:  pageURL.String(),
-		Mode:      browserCrawlModeRendered,
-		UserAgent: userAgent,
-		Scripts:   []BrowserScriptObservation{},
-	}
 
 	if err := chromedp.Run(pageCtx, network.Enable(), chromedp.Navigate(pageURL.String())); err != nil {
 		return page, fmt.Errorf("rendered crawl failed: %w", err)
@@ -174,6 +185,79 @@ func crawlRenderedPage(ctx context.Context, pageURL *url.URL, input BrowserCrawl
 		page.Warnings = append(page.Warnings, "tag manager script observed but runtime readiness was not confirmed")
 	}
 	return page, nil
+}
+
+func newRenderedChromeRuntime() (renderedChromeRuntime, error) {
+	base := strings.TrimSpace(os.Getenv("AEGRAIL_BROWSER_TMP_DIR"))
+	if base == "" {
+		base = os.TempDir()
+	}
+	if err := os.MkdirAll(base, 0o700); err != nil {
+		return renderedChromeRuntime{}, err
+	}
+	root, err := os.MkdirTemp(base, "aegrail-chrome-*")
+	if err != nil {
+		return renderedChromeRuntime{}, err
+	}
+	runtime := renderedChromeRuntime{
+		Root:       root,
+		Home:       filepath.Join(root, "home"),
+		ConfigHome: filepath.Join(root, "config"),
+		CacheHome:  filepath.Join(root, "cache"),
+		UserData:   filepath.Join(root, "profile"),
+		CrashDumps: filepath.Join(root, "crashes"),
+		Cleanup: func() {
+			_ = os.RemoveAll(root)
+		},
+	}
+	for _, path := range []string{runtime.Home, runtime.ConfigHome, runtime.CacheHome, runtime.UserData, runtime.CrashDumps} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			runtime.Cleanup()
+			return renderedChromeRuntime{}, err
+		}
+	}
+	return runtime, nil
+}
+
+func renderedChromeAllocatorOptions(userAgent string, runtime renderedChromeRuntime) []chromedp.ExecAllocatorOption {
+	options := append([]chromedp.ExecAllocatorOption{}, chromedp.DefaultExecAllocatorOptions[:]...)
+	if chromePath := renderedChromeExecPath(); chromePath != "" {
+		options = append(options, chromedp.ExecPath(chromePath))
+	}
+	options = append(options,
+		chromedp.UserAgent(userAgent),
+		chromedp.UserDataDir(runtime.UserData),
+		chromedp.Env(renderedChromeEnvVars(runtime)...),
+		chromedp.NoDefaultBrowserCheck,
+		chromedp.NoFirstRun,
+		chromedp.Headless,
+		chromedp.DisableGPU,
+		chromedp.Flag("no-sandbox", true),
+		chromedp.Flag("disable-setuid-sandbox", true),
+		chromedp.Flag("disable-crash-reporter", true),
+		chromedp.Flag("disable-crashpad", true),
+		chromedp.Flag("disable-dev-shm-usage", true),
+		chromedp.Flag("crash-dumps-dir", runtime.CrashDumps),
+	)
+	return options
+}
+
+func renderedChromeExecPath() string {
+	for _, key := range []string{"AEGRAIL_BROWSER_CHROME_PATH", "AEGRAIL_CHROME_PATH", "CHROME_BIN"} {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func renderedChromeEnvVars(runtime renderedChromeRuntime) []string {
+	return []string{
+		"HOME=" + runtime.Home,
+		"XDG_CONFIG_HOME=" + runtime.ConfigHome,
+		"XDG_CACHE_HOME=" + runtime.CacheHome,
+		"TMPDIR=" + runtime.Root,
+	}
 }
 
 func buildRenderedIconObservations(icons []renderedPageIcon, baseURL *url.URL) []BrowserIconObservation {
@@ -363,6 +447,7 @@ func buildRenderedDOMScriptObservation(script renderedDOMScript, baseURL *url.UR
 			sum := sha256.Sum256([]byte(text))
 			observation.SHA256 = hex.EncodeToString(sum[:])
 			observation.InlineBytes = len([]byte(text))
+			observation.InlinePreview, observation.InlineTruncated = inlineScriptPreview(text)
 			observation.TagManagerIDs = append(observation.TagManagerIDs, tagManagerIDs(text)...)
 		}
 	}

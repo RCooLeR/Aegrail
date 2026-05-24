@@ -13,6 +13,7 @@
 - Dashboard wording now uses `Acknowledged` instead of the confusing `Triaged` label.
 - Reusable empty/loading/error states and tighter mobile behavior for issue detail, tabs, actions, and panels.
 - Settings tabs for profile, Hub scope, triage defaults, companies, sites, nodes, users/2FA, and inventory.
+- Static, React, and Node.js app kinds are available in site create/edit flows and labels.
 - Profile push notification controls with browser support/config/permission/subscription state.
 - Site icons/favicons where available.
 

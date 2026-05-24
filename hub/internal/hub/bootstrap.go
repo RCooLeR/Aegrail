@@ -167,10 +167,16 @@ func normalizeBootstrapKind(value string) (string, error) {
 		return "yii2-rbac", nil
 	case "laravel":
 		return "laravel", nil
+	case "static", "static-site", "static-html":
+		return "static", nil
+	case "react":
+		return "react", nil
+	case "node", "node.js", "node-js", "nodejs":
+		return "nodejs", nil
 	case "":
 		return "", errors.New("app kind is required")
 	default:
-		return "", fmt.Errorf("app kind %q is not supported; use wordpress, prestashop, mautic, yii2-rbac, or laravel", value)
+		return "", fmt.Errorf("app kind %q is not supported; use wordpress, prestashop, mautic, yii2-rbac, laravel, static, react, or nodejs", value)
 	}
 }
 
@@ -186,6 +192,12 @@ func bootstrapAppName(kind string) string {
 		return "Yii2 RBAC"
 	case "laravel":
 		return "Laravel"
+	case "static":
+		return "Static site"
+	case "react":
+		return "React"
+	case "nodejs":
+		return "Node.js"
 	default:
 		return kind
 	}

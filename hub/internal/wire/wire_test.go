@@ -86,11 +86,12 @@ func TestDecryptRejectsTamperedEnvelope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Encrypt returned error: %v", err)
 	}
-	replacement := "A"
-	if envelope.Ciphertext[len(envelope.Ciphertext)-1:] == replacement {
-		replacement = "B"
+	ciphertext, err := decode(envelope.Ciphertext)
+	if err != nil {
+		t.Fatalf("ciphertext decode returned error: %v", err)
 	}
-	envelope.Ciphertext = envelope.Ciphertext[:len(envelope.Ciphertext)-1] + replacement
+	ciphertext[len(ciphertext)-1] ^= 0x01
+	envelope.Ciphertext = encode(ciphertext)
 	if _, err := Decrypt(envelope, nodePublic, hubPrivate, now, time.Minute); err == nil {
 		t.Fatal("Decrypt returned nil error for tampered ciphertext")
 	}

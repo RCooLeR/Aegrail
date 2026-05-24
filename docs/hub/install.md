@@ -24,7 +24,7 @@ Set the equivalent environment values in your shell/service manager:
 $env:AEGRAIL_DATABASE_URL = "postgres://aegrail:aegrail@localhost:55432/aegrail?sslmode=disable"
 $env:AEGRAIL_REDIS_URL = "redis://localhost:56379/0"
 $env:AEGRAIL_REDIS_KEY_PREFIX = "aegrail"
-$env:AEGRAIL_CORRELATION_WORKERS = "2"
+$env:AEGRAIL_CORRELATION_WORKERS = "1"
 $env:AEGRAIL_HUB_USER_SECRET = "replace-with-strong-user-secret"
 ```
 
@@ -34,6 +34,21 @@ development can use generated throwaway values, but do not reuse local secrets
 for real projects.
 
 Redis is optional for very small local tests. For the normal 20+ site setup, configure it. Hub uses Redis for short-lived ingest correlation jobs, distributed worker locks, and shared auth rate limiting, while PostgreSQL still stores durable evidence, findings, users, sessions, and reports.
+
+On small NAS hardware, keep `AEGRAIL_CORRELATION_WORKERS=1`. Increase it only
+after the Hub stays comfortably below CPU limits during agent backlog replay.
+
+Temporary ingest troubleshooting:
+
+```text
+AEGRAIL_INGEST_DEBUG=true
+```
+
+When enabled, Hub logs every Agent ingest stage: `received`, `decoded`,
+`parsed`, `accepted`, or the failure stage such as `decode_failed`,
+`signature_mismatch`, or `save_failed`. The logs include scope IDs, batch ID,
+event counts, and errors, but not decrypted event payloads or secrets. Turn it
+off after debugging because busy Agents can produce many lines.
 
 Optional notification base URL:
 
@@ -55,13 +70,13 @@ AEGRAIL_NOTIFICATION_WEBHOOK_TIMEOUT
 
 When configured, Hub sends JSON when findings are observed and when an operator changes finding status. If `AEGRAIL_NOTIFICATION_WEBHOOK_SECRET` is set, each request includes `X-Aegrail-Signature: sha256=<hmac>`.
 
-Optional Mailjet SMTP email notifications:
+Optional SMTP email notifications:
 
 ```text
-AEGRAIL_NOTIFICATION_EMAIL_SMTP_HOST=in-v3.mailjet.com
+AEGRAIL_NOTIFICATION_EMAIL_SMTP_HOST=smtp.example.test
 AEGRAIL_NOTIFICATION_EMAIL_SMTP_PORT=587
-AEGRAIL_NOTIFICATION_EMAIL_USERNAME=<mailjet-api-key>
-AEGRAIL_NOTIFICATION_EMAIL_PASSWORD=<mailjet-secret-key>
+AEGRAIL_NOTIFICATION_EMAIL_USERNAME=<smtp-username>
+AEGRAIL_NOTIFICATION_EMAIL_PASSWORD=<smtp-password>
 AEGRAIL_NOTIFICATION_EMAIL_FROM=Aegrail <alerts@example.test>
 AEGRAIL_NOTIFICATION_EMAIL_TO=ops@example.test,security@example.test
 AEGRAIL_NOTIFICATION_EMAIL_MIN_SEVERITY=medium
@@ -95,6 +110,19 @@ Dashboard users opt in from Settings -> Profile. Browser push requires HTTPS or
 localhost, an active Hub session, and the user's browser notification
 permission. The Hub stores push endpoint/key material in PostgreSQL and disables
 subscriptions that return `404` or `410`.
+
+Notification delivery is best-effort: a webhook, SMTP, or browser-push provider
+failure does not roll back saved findings or fail correlation workers. Browser
+push uses public push providers such as FCM over TLS, so Docker images must
+include a current CA bundle. The example Hub image copies Debian's
+`ca-certificates.crt` and sets `SSL_CERT_FILE`. If browser push TLS fails with
+`x509: certificate signed by unknown authority`, rebuild the Hub image from the
+current Dockerfile or install/mount a CA bundle into the running image. To
+temporarily disable browser push, clear both
+`AEGRAIL_NOTIFICATION_PUSH_VAPID_PUBLIC_KEY` and
+`AEGRAIL_NOTIFICATION_PUSH_VAPID_PRIVATE_KEY`; email and webhook delivery remain
+independent. Repeated provider failures are rate-limited in Hub logs so one bad
+push provider cannot drown out collector errors.
 
 Optional reverse-proxy trust:
 

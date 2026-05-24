@@ -2,6 +2,7 @@ package hub
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -13,6 +14,20 @@ const (
 	deploymentWindowPadding = 5 * time.Minute
 	openDeploymentWindow    = 30 * time.Minute
 )
+
+var deploymentExpectedRuleIDs = []string{
+	"browser-inline-script-changed",
+	"browser-script-domain-new",
+	"browser-script-drift",
+	"browser-tag-manager-id-new",
+	"file-baseline-drift",
+	"file-php-changed",
+	"file-plugin-theme-module-changed",
+}
+
+type deploymentExpectedFindingStatusRepository interface {
+	UpdateOpenHubFindingStatusesForRulesInWindow(ctx context.Context, environmentID domain.ID, appID domain.ID, ruleIDs []string, windowStart time.Time, windowEnd time.Time, update domain.HubFindingStatusUpdate) (int, error)
+}
 
 func (h *Hub) applyDeploymentContextToFindings(ctx context.Context, environmentID domain.ID, scopeAppID domain.ID, findings []domain.HubFinding) ([]domain.HubFinding, error) {
 	if len(findings) == 0 || h.inventory == nil {
@@ -40,6 +55,75 @@ func (h *Hub) applyDeploymentContextToFindings(ctx context.Context, environmentI
 		enriched[index] = applyDeploymentScoring(enriched[index], active)
 	}
 	return enriched, nil
+}
+
+func filterDeploymentExpectedFindings(findings []domain.HubFinding) []domain.HubFinding {
+	if len(findings) == 0 {
+		return findings
+	}
+	filtered := make([]domain.HubFinding, 0, len(findings))
+	for _, finding := range findings {
+		if deploymentExpectedFinding(finding) {
+			continue
+		}
+		filtered = append(filtered, finding)
+	}
+	return filtered
+}
+
+func deploymentExpectedFinding(finding domain.HubFinding) bool {
+	if !deploymentMetadataActive(finding.Metadata) {
+		return false
+	}
+	return deploymentExpectedRuleID(finding.RuleID)
+}
+
+func deploymentExpectedRuleID(ruleID string) bool {
+	for _, expected := range deploymentExpectedRuleIDs {
+		if ruleID == expected {
+			return true
+		}
+	}
+	return false
+}
+
+func deploymentMetadataActive(metadata map[string]any) bool {
+	context, ok := metadata["deployment_context"].(map[string]any)
+	if !ok {
+		return false
+	}
+	active, ok := context["active"].(bool)
+	return ok && active
+}
+
+func (h *Hub) acknowledgeDeploymentExpectedOpenFindings(ctx context.Context, deployment domain.DeploymentMarker) (int, error) {
+	if h.findings == nil {
+		return 0, nil
+	}
+	repository, ok := h.findings.(deploymentExpectedFindingStatusRepository)
+	if !ok {
+		return 0, nil
+	}
+	windowStart, windowEnd, ok := deploymentScoringWindow(deployment)
+	if !ok {
+		return 0, nil
+	}
+	actor := strings.TrimSpace(deployment.Actor)
+	if actor == "" {
+		actor = "dashboard"
+	}
+	note := fmt.Sprintf(
+		"Marked as expected deployment activity for %s (%s to %s).",
+		deployment.Version,
+		windowStart.Format(time.RFC3339),
+		windowEnd.Format(time.RFC3339),
+	)
+	return repository.UpdateOpenHubFindingStatusesForRulesInWindow(ctx, deployment.EnvironmentID, deployment.AppID, deploymentExpectedRuleIDs, windowStart, windowEnd, domain.HubFindingStatusUpdate{
+		Status: "acknowledged",
+		Reason: "deployment_window",
+		Note:   note,
+		Actor:  actor,
+	})
 }
 
 func activeDeploymentMarkers(deployments []domain.DeploymentMarker, appID domain.ID, firstEventAt time.Time, lastEventAt time.Time) []domain.DeploymentMarker {

@@ -194,6 +194,12 @@ func agentRunCommand() *urfavecli.Command {
 			runtime := agent.NewRuntime(agent.Config{
 				QueueDir: config.Runtime.QueueDir,
 			})
+			databaseCollectorRuntime := collector.NewRuntime(collector.Config{Name: "database"})
+			defer func() {
+				if err := databaseCollectorRuntime.Close(); err != nil {
+					fmt.Fprintf(c.App.ErrWriter, "database connection close: %v\n", err)
+				}
+			}()
 			ctx, stop := signal.NotifyContext(c.Context, syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
 
@@ -206,7 +212,7 @@ func agentRunCommand() *urfavecli.Command {
 				if err != nil {
 					return err
 				}
-				databaseResult, err := runConfiguredDatabaseCollectors(ctx, runtime, config, bootstrap)
+				databaseResult, err := runConfiguredDatabaseCollectorsWithRuntime(ctx, runtime, databaseCollectorRuntime, config, bootstrap)
 				if err != nil {
 					return err
 				}
@@ -458,6 +464,11 @@ type agentDatabaseSiteRunResult struct {
 
 func runConfiguredDatabaseCollectors(ctx context.Context, runtime *agent.Runtime, config agent.ServerConfig, bootstrap bool) (agentDatabaseRunResult, error) {
 	collectorRuntime := collector.NewRuntime(collector.Config{Name: "database"})
+	defer collectorRuntime.Close()
+	return runConfiguredDatabaseCollectorsWithRuntime(ctx, runtime, collectorRuntime, config, bootstrap)
+}
+
+func runConfiguredDatabaseCollectorsWithRuntime(ctx context.Context, runtime *agent.Runtime, collectorRuntime *collector.Runtime, config agent.ServerConfig, bootstrap bool) (agentDatabaseRunResult, error) {
 	piiKey := strings.TrimSpace(os.Getenv("AEGRAIL_PII_KEY"))
 	summary := agentDatabaseRunResult{}
 	for _, site := range config.Sites {
@@ -517,6 +528,7 @@ func runConfiguredDatabaseCollectors(ctx context.Context, runtime *agent.Runtime
 					TablePrefix: database.TablePrefix,
 					Timeout:     timeout,
 					PIIKey:      piiKey,
+					Persistent:  databasePersistent(database),
 				})
 				if err != nil {
 					now := time.Now().UTC()
@@ -596,6 +608,13 @@ func runConfiguredDatabaseCollectors(ctx context.Context, runtime *agent.Runtime
 		}
 	}
 	return summary, nil
+}
+
+func databasePersistent(database agent.ServerDatabaseConfig) bool {
+	if database.Persistent == nil {
+		return true
+	}
+	return *database.Persistent
 }
 
 func shouldSkipDatabaseCollection(schedule time.Duration, statePath string) (bool, error) {
@@ -838,6 +857,8 @@ func databaseProfileForSite(site agent.ServerSiteConfig, database agent.ServerDa
 			return "wordpress"
 		case "ps":
 			return "prestashop"
+		case "woocommerce", "wordpress-multisite":
+			return "wordpress"
 		case "mautic":
 			return "mautic"
 		case "yii2-rbac":

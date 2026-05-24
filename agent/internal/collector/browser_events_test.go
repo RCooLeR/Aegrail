@@ -43,6 +43,13 @@ func TestBuildBrowserCrawlEventsEmitsPageScriptTagManagerAndWarnings(t *testing.
 						TagManagerIDs:     []string{"GTM-ABC123"},
 						DynamicallyLoaded: true,
 					},
+					{
+						SourceType:      "inline",
+						SHA256:          "abc123",
+						InlineBytes:     45,
+						InlinePreview:   `window.aegrailTest = true; access_token = [REDACTED]`,
+						InlineTruncated: true,
+					},
 				},
 				Warnings: []string{"tag manager readiness wait timed out; continuing with observed scripts"},
 			},
@@ -50,8 +57,8 @@ func TestBuildBrowserCrawlEventsEmitsPageScriptTagManagerAndWarnings(t *testing.
 	}
 
 	events := BuildBrowserCrawlEvents(result, map[string]string{"site": "main"})
-	if len(events) != 4 {
-		t.Fatalf("events = %#v, want page + script + tag manager + warning", events)
+	if len(events) != 5 {
+		t.Fatalf("events = %#v, want page + scripts + tag manager + warning", events)
 	}
 	if events[0].Type != "browser.crawl.completed" || events[0].Severity != "info" {
 		t.Fatalf("page event = %#v", events[0])
@@ -66,8 +73,11 @@ func TestBuildBrowserCrawlEventsEmitsPageScriptTagManagerAndWarnings(t *testing.
 	if events[2].Type != "browser.tag_manager.detected" || events[2].Severity != "low" {
 		t.Fatalf("tag manager event = %#v", events[2])
 	}
-	if events[3].Type != "browser.coverage.warning" || events[3].Severity != "medium" {
-		t.Fatalf("warning event = %#v", events[3])
+	if events[3].Type != "browser.script.observed" || events[3].Payload["inline_preview"] == "" || events[3].Payload["inline_preview_truncated"] != true {
+		t.Fatalf("inline script event = %#v", events[3])
+	}
+	if events[4].Type != "browser.coverage.warning" || events[4].Severity != "medium" {
+		t.Fatalf("warning event = %#v", events[4])
 	}
 	if events[1].Payload["tag_manager_ids"] == nil {
 		t.Fatalf("script payload should carry tag manager IDs: %#v", events[1].Payload)

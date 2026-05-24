@@ -15,6 +15,8 @@ The Hub example builds:
 - the React dashboard into `/app/dashboard`
 - the standalone Hub binary into `/usr/local/bin/aegrail-hub`
 - migrations into `/app/migrations`
+- Debian CA certificates into the runtime image so HTTPS notification providers
+  such as FCM validate correctly
 
 Prepare local env:
 
@@ -39,6 +41,10 @@ Optional browser push keys can be generated with:
 ```powershell
 docker compose --env-file docker/examples/.env.hub -f docker/examples/hub.compose.yaml run --rm --no-deps hub notifications vapid-keys
 ```
+
+Browser push delivery is best-effort. If FCM/APNs/web-push delivery fails, Hub
+keeps saved findings and correlation workers continue; fix the notification
+provider or CA bundle separately.
 
 Optional Mailjet email notifications use
 `AEGRAIL_NOTIFICATION_EMAIL_USERNAME` for the Mailjet API key and

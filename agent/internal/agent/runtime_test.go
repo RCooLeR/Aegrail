@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -103,6 +104,59 @@ func TestAgentQueueSendDeletesBatchByDefault(t *testing.T) {
 	}
 }
 
+func TestAgentQueueSendReportsTotalPendingBeforeLimit(t *testing.T) {
+	root := t.TempDir()
+	nodeSecret, _, err := wire.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("GenerateKeyPair node returned error: %v", err)
+	}
+	_, hubPublic, err := wire.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("GenerateKeyPair hub returned error: %v", err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+
+	runtime := NewRuntime(Config{
+		ConfigPath: filepath.Join(root, "agent.json"),
+		QueueDir:   filepath.Join(root, "queue"),
+	})
+	_, err = runtime.Install(context.Background(), Identity{
+		HubURL:       server.URL,
+		HubProtocol:  "aegrail-wire-v1",
+		HubPublicKey: hubPublic,
+		NodeSecret:   nodeSecret,
+		QueueDir:     filepath.Join(root, "queue"),
+		Org:          "acme",
+		Project:      "customer-site",
+		Environment:  "production",
+		Host:         "web-01",
+		AgentID:      "agt_web_01",
+	})
+	if err != nil {
+		t.Fatalf("Install returned error: %v", err)
+	}
+	for index := 0; index < 3; index++ {
+		if _, _, err := runtime.EnqueueEvent(context.Background(), EnqueueEventInput{
+			BatchID: "batch-limit-" + strconv.Itoa(index),
+			Type:    "file.created",
+			Target:  "/var/www/app/file.php",
+		}); err != nil {
+			t.Fatalf("EnqueueEvent %d returned error: %v", index, err)
+		}
+	}
+
+	result, err := runtime.SendQueued(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("SendQueued returned error: %v", err)
+	}
+	if result.PendingBefore != 3 || result.Sent != 1 || result.PendingAfter != 2 {
+		t.Fatalf("result = %+v, want PendingBefore 3, Sent 1, PendingAfter 2", result)
+	}
+}
+
 func TestAgentQueueSendCanReadNodeSecretFromEnvironment(t *testing.T) {
 	root := t.TempDir()
 	nodeSecret, _, err := wire.GenerateKeyPair()
@@ -155,6 +209,93 @@ func TestAgentQueueSendCanReadNodeSecretFromEnvironment(t *testing.T) {
 	}
 	if result.Sent != 1 || result.Failed != 0 {
 		t.Fatalf("result = %+v, want env-secret send success", result)
+	}
+}
+
+func TestAgentQueueSendQuarantinesWrongAgentIDBatch(t *testing.T) {
+	root := t.TempDir()
+	nodeSecret, _, err := wire.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("GenerateKeyPair node returned error: %v", err)
+	}
+	_, hubPublic, err := wire.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("GenerateKeyPair hub returned error: %v", err)
+	}
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+
+	queueDir := filepath.Join(root, "queue")
+	runtime := NewRuntime(Config{
+		ConfigPath: filepath.Join(root, "agent.json"),
+		QueueDir:   queueDir,
+	})
+	_, err = runtime.Install(context.Background(), Identity{
+		HubURL:       server.URL,
+		HubProtocol:  "aegrail-wire-v1",
+		HubPublicKey: hubPublic,
+		NodeSecret:   nodeSecret,
+		QueueDir:     queueDir,
+		Org:          "acme",
+		Project:      "customer-site",
+		Environment:  "production",
+		Host:         "web-01",
+		AgentID:      "agt_current",
+	})
+	if err != nil {
+		t.Fatalf("Install returned error: %v", err)
+	}
+
+	pendingDir := filepath.Join(queueDir, "pending")
+	if err := os.MkdirAll(pendingDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll pending returned error: %v", err)
+	}
+	wrongBatch := QueuedBatch{
+		Schema:      QueueSchema,
+		QueuedAt:    time.Date(2026, 5, 21, 1, 0, 0, 0, time.UTC),
+		Org:         "acme",
+		Project:     "customer-site",
+		Environment: "production",
+		Host:        "web-01",
+		AgentID:     "agt_old",
+		BatchID:     "wrong-agent",
+		Source:      "logs",
+		Events: []QueuedEvent{{
+			Time: time.Date(2026, 5, 21, 1, 0, 0, 0, time.UTC),
+			Type: "log.scan",
+		}},
+	}
+	content, err := json.Marshal(wrongBatch)
+	if err != nil {
+		t.Fatalf("Marshal wrongBatch returned error: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(pendingDir, "wrong-agent.json"), content, 0o600); err != nil {
+		t.Fatalf("WriteFile pending returned error: %v", err)
+	}
+
+	result, err := runtime.SendQueued(context.Background(), 0)
+	if err != nil {
+		t.Fatalf("SendQueued returned error: %v", err)
+	}
+	if result.Sent != 0 || result.Failed != 1 || result.PendingAfter != 0 {
+		t.Fatalf("result = %+v, want one quarantined failed batch and zero pending", result)
+	}
+	if requests != 0 {
+		t.Fatalf("requests = %d, want no hub requests for wrong-agent pending batch", requests)
+	}
+	failedFiles, err := queueFiles(filepath.Join(queueDir, "failed"))
+	if err != nil {
+		t.Fatalf("queueFiles failed returned error: %v", err)
+	}
+	if len(failedFiles) != 1 {
+		t.Fatalf("failed files = %d, want 1", len(failedFiles))
+	}
+	if len(result.Errors) == 0 || !strings.Contains(result.Errors[0], "does not match configured agent_id") {
+		t.Fatalf("errors = %#v, want configured-agent mismatch message", result.Errors)
 	}
 }
 
@@ -677,6 +818,12 @@ func TestShouldSkipNoisyPathSkipsCacheVariants(t *testing.T) {
 	if shouldSkipNoisyPath("/var/www/site/wp-content/plugins/shop/assets/app.js") {
 		t.Fatalf("plugin scripts should still be tracked")
 	}
+	if !shouldSkipNoisyPath("/var/www/site/assets/logo.png") {
+		t.Fatalf("static binary assets should be skipped")
+	}
+	if shouldSkipNoisyPath("/var/www/site/assets/app.js") {
+		t.Fatalf("static scripts should still be tracked")
+	}
 	if !shouldSkipNoisyPath("/var/www/site/modules/reviews/logs/logs.txt") {
 		t.Fatalf("module log files should be skipped")
 	}
@@ -902,6 +1049,54 @@ func TestFileEventAddsFrameworkDeployEvidence(t *testing.T) {
 		event.Payload["file_area"] != "writable_asset" ||
 		event.Payload["security_context"] != "writable_php" {
 		t.Fatalf("upload payload = %#v, want writable PHP evidence", event.Payload)
+	}
+
+	reactSource := fileState{
+		Path:         filepath.FromSlash("/site/src/App.tsx"),
+		RelativePath: "src/App.tsx",
+		SizeBytes:    12,
+		ModTime:      observedAt,
+		ObservedAt:   observedAt,
+		SHA256:       "jkl012",
+	}
+	event = fileEvent("file.modified", reactSource, fileState{})
+	if event.Payload["platform_hint"] != "react" ||
+		event.Payload["file_area"] != "frontend_source" ||
+		event.Payload["framework_component"] != "entrypoint" ||
+		event.Payload["deploy_evidence"] != true {
+		t.Fatalf("react payload = %#v, want frontend deploy evidence", event.Payload)
+	}
+
+	nodeRoute := fileState{
+		Path:         filepath.FromSlash("/site/routes/auth.js"),
+		RelativePath: "routes/auth.js",
+		SizeBytes:    12,
+		ModTime:      observedAt,
+		ObservedAt:   observedAt,
+		SHA256:       "mno345",
+	}
+	event = fileEvent("file.modified", nodeRoute, fileState{})
+	if event.Payload["platform_hint"] != "nodejs" ||
+		event.Payload["file_area"] != "backend_source" ||
+		event.Payload["framework_component"] != "route" ||
+		event.Payload["deploy_evidence"] != true {
+		t.Fatalf("node payload = %#v, want backend route deploy evidence", event.Payload)
+	}
+
+	staticEntry := fileState{
+		Path:         filepath.FromSlash("/site/service-worker.js"),
+		RelativePath: "service-worker.js",
+		SizeBytes:    12,
+		ModTime:      observedAt,
+		ObservedAt:   observedAt,
+		SHA256:       "pqr678",
+	}
+	event = fileEvent("file.modified", staticEntry, fileState{})
+	if event.Payload["platform_hint"] != "static" ||
+		event.Payload["file_area"] != "public_entrypoint" ||
+		event.Payload["framework_component"] != "document" ||
+		event.Payload["deploy_evidence"] != true {
+		t.Fatalf("static payload = %#v, want static entrypoint deploy evidence", event.Payload)
 	}
 }
 
@@ -1159,6 +1354,37 @@ func TestResolveWatchPathsReturnsProfilePaths(t *testing.T) {
 	for path, found := range expected {
 		if !found {
 			t.Fatalf("expected profile path %s in %v", path, paths)
+		}
+	}
+}
+
+func TestResolveWatchPathsReturnsFrontendProfilePaths(t *testing.T) {
+	root := filepath.Join("var", "www", "frontend")
+	paths, err := ResolveWatchPaths(WatchOptions{
+		Root:     root,
+		Profiles: []string{"static", "react", "nodejs"},
+	})
+	if err != nil {
+		t.Fatalf("ResolveWatchPaths returned error: %v", err)
+	}
+	expected := map[string]bool{
+		filepath.Clean(root): false,
+		filepath.Clean(filepath.Join(root, "package.json")):   false,
+		filepath.Clean(filepath.Join(root, "vite.config.ts")): false,
+		filepath.Clean(filepath.Join(root, "src")):            false,
+		filepath.Clean(filepath.Join(root, "public")):         false,
+		filepath.Clean(filepath.Join(root, "server.js")):      false,
+		filepath.Clean(filepath.Join(root, "routes")):         false,
+		filepath.Clean(filepath.Join(root, "middleware")):     false,
+	}
+	for _, path := range paths {
+		if _, ok := expected[path]; ok {
+			expected[path] = true
+		}
+	}
+	for path, found := range expected {
+		if !found {
+			t.Fatalf("expected frontend profile path %s in %v", path, paths)
 		}
 	}
 }

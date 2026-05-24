@@ -5,6 +5,9 @@ ARG RUNTIME_IMAGE=gcr.io/distroless/static-debian12:nonroot
 
 FROM ${GO_IMAGE} AS agent-build
 WORKDIR /src/agent
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 COPY agent/go.mod agent/go.sum ./
 RUN go mod download
 COPY agent/ ./
@@ -12,9 +15,11 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/aegrail
 
 FROM ${RUNTIME_IMAGE}
 WORKDIR /app
+COPY --from=agent-build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=agent-build /out/aegrail-agent /usr/local/bin/aegrail-agent
 
 ENV AEGRAIL_CONFIG=/etc/aegrail/agent.yaml
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
 USER nonroot:nonroot
 ENTRYPOINT ["/usr/local/bin/aegrail-agent"]

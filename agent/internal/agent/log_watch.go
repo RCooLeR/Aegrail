@@ -533,6 +533,12 @@ func shouldDropNoisyLogEvent(event EnqueueEventInput) bool {
 	if path == "" {
 		return false
 	}
+	if !isSensitiveAccessPath(path) && isRoutineStaticAccessPath(path) {
+		return status < 500
+	}
+	if isRoutineSuccessfulPublicAccessPath(path, method, status, event.Payload) {
+		return true
+	}
 	if siteKind == "yii2-rbac" {
 		return shouldDropNoisyYii2RBACAccessPath(path, method, status)
 	}
@@ -554,6 +560,70 @@ func shouldDropNoisyLogEvent(event EnqueueEventInput) bool {
 	}
 	if method == "GET" && status > 0 && status < 400 && isMauticLowSignalPublicPath(routePath) {
 		return true
+	}
+	return false
+}
+
+func isRoutineSuccessfulPublicAccessPath(path string, method string, status int, payload map[string]any) bool {
+	if status <= 0 || status >= 400 {
+		return false
+	}
+	if payloadBool(payload, "remote_is_tor") || payloadBool(payload, "is_tor") {
+		return false
+	}
+	if isSensitiveAccessPath(path) {
+		return false
+	}
+	if method != "GET" && method != "HEAD" && method != "OPTIONS" {
+		return isRoutinePublicAPIPath(path, method)
+	}
+	if strings.Contains(strings.TrimSpace(path), ".php") {
+		return false
+	}
+	return true
+}
+
+func isRoutinePublicAPIPath(path string, method string) bool {
+	switch method {
+	case "POST", "PUT", "PATCH":
+	default:
+		return false
+	}
+	if strings.Contains(strings.TrimSpace(path), ".php") {
+		return false
+	}
+	clean := "/" + strings.Trim(strings.ToLower(strings.TrimSpace(path)), "/")
+	return clean == "/api" ||
+		strings.HasPrefix(clean, "/api/") ||
+		clean == "/rest" ||
+		strings.HasPrefix(clean, "/rest/") ||
+		clean == "/graphql" ||
+		strings.HasPrefix(clean, "/graphql/")
+}
+
+func isRoutineStaticAccessPath(path string) bool {
+	path = strings.ToLower(strings.TrimSpace(strings.Split(path, "?")[0]))
+	if path == "" {
+		return false
+	}
+	switch filepath.Ext(path) {
+	case ".avif", ".bmp", ".css", ".eot", ".gif", ".ico", ".jpeg", ".jpg", ".js", ".map", ".mp3", ".mp4", ".ogg", ".otf", ".pdf", ".png", ".svg", ".ttf", ".txt", ".wav", ".webm", ".webp", ".woff", ".woff2":
+		return true
+	}
+	for _, marker := range []string{
+		"/assets/",
+		"/app-assets/",
+		"/build/",
+		"/dist/",
+		"/fonts/",
+		"/images/",
+		"/img/",
+		"/media/",
+		"/static/",
+	} {
+		if strings.Contains(path, marker) {
+			return true
+		}
 	}
 	return false
 }
@@ -766,6 +836,25 @@ func payloadInt(payload map[string]any, key string) int {
 		return parsed
 	default:
 		return 0
+	}
+}
+
+func payloadBool(payload map[string]any, key string) bool {
+	if payload == nil {
+		return false
+	}
+	switch value := payload[key].(type) {
+	case bool:
+		return value
+	case string:
+		switch strings.ToLower(strings.TrimSpace(value)) {
+		case "1", "true", "yes", "y":
+			return true
+		default:
+			return false
+		}
+	default:
+		return false
 	}
 }
 

@@ -47,6 +47,7 @@ type HubOptions struct {
 	TrustedProxyCIDRs   []*net.IPNet
 	Now                 func() time.Time
 	HealthCheck         func(context.Context) map[string]string
+	IngestDebugLog      func(stage string, fields map[string]any)
 	authRateLimiter     *hubAuthRateLimiter
 }
 
@@ -346,6 +347,8 @@ type browserScriptObservationResponse struct {
 	Path            string            `json:"path,omitempty"`
 	SHA256          string            `json:"sha256,omitempty"`
 	InlineBytes     int               `json:"inline_bytes,omitempty"`
+	InlinePreview   string            `json:"inline_preview,omitempty"`
+	InlineTruncated bool              `json:"inline_preview_truncated,omitempty"`
 	TagManager      bool              `json:"tag_manager"`
 	TagManagerIDs   []string          `json:"tag_manager_ids,omitempty"`
 	Labels          map[string]string `json:"labels"`
@@ -659,41 +662,117 @@ type loginHubUserRequest struct {
 func ingestEventsHandler(hub *hubapp.Hub, options HubOptions) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if hub == nil {
+			logIngestDebug(options, "hub_missing", map[string]any{
+				"remote": requestRemoteAddr(r),
+			})
 			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
 			return
 		}
 		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 2<<20))
 		if err != nil {
+			logIngestDebug(options, "read_failed", map[string]any{
+				"remote": requestRemoteAddr(r),
+				"error":  err.Error(),
+			})
 			writeError(w, http.StatusBadRequest, "request body is too large or unreadable")
 			return
 		}
+		logIngestDebug(options, "received", map[string]any{
+			"remote":       requestRemoteAddr(r),
+			"body_bytes":   len(body),
+			"content_type": r.Header.Get("Content-Type"),
+			"wire_node":    ingestWireNodeID(body),
+		})
 		body, signature, err := decodeIngestBody(r, body, hub, options)
 		if err != nil {
+			logIngestDebug(options, "decode_failed", map[string]any{
+				"remote":    requestRemoteAddr(r),
+				"wire_node": ingestWireNodeID(body),
+				"error":     err.Error(),
+			})
 			writeError(w, http.StatusUnauthorized, err.Error())
 			return
 		}
+		logIngestDebug(options, "decoded", map[string]any{
+			"remote":          requestRemoteAddr(r),
+			"decrypted_bytes": len(body),
+			"signature":       compactWireSignature(signature),
+		})
 		r.Body = io.NopCloser(bytes.NewReader(body))
 
 		var request ingestEventsRequest
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			logIngestDebug(options, "json_failed", map[string]any{
+				"remote":          requestRemoteAddr(r),
+				"decrypted_bytes": len(body),
+				"error":           err.Error(),
+			})
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
+		logIngestDebug(options, "parsed", map[string]any{
+			"org":         request.Organization,
+			"project":     request.Project,
+			"environment": request.Environment,
+			"app":         request.App,
+			"service":     request.Service,
+			"host":        request.Host,
+			"agent_id":    request.AgentID,
+			"batch_id":    request.BatchID,
+			"source":      request.Source,
+			"events":      len(request.Events),
+		})
 		if err := verifyWireEnvelopeMatchesBatch(signature, request.AgentID); err != nil {
+			logIngestDebug(options, "signature_mismatch", map[string]any{
+				"agent_id":  request.AgentID,
+				"signature": compactWireSignature(signature),
+				"error":     err.Error(),
+			})
 			writeError(w, http.StatusUnauthorized, err.Error())
 			return
 		}
 		input, err := request.toInput(signature)
 		if err != nil {
+			logIngestDebug(options, "input_failed", map[string]any{
+				"agent_id": request.AgentID,
+				"batch_id": request.BatchID,
+				"error":    err.Error(),
+			})
 			writeHubError(w, err)
 			return
 		}
 
 		result, err := hub.IngestEvents(r.Context(), input)
 		if err != nil {
+			logIngestDebug(options, "save_failed", map[string]any{
+				"org":         input.OrganizationSlug,
+				"project":     input.ProjectSlug,
+				"environment": input.EnvironmentSlug,
+				"app":         input.AppSlug,
+				"service":     input.ServiceSlug,
+				"host":        input.HostSlug,
+				"agent_id":    input.AgentID,
+				"batch_id":    input.ExternalBatchID,
+				"events":      len(input.Events),
+				"error":       err.Error(),
+			})
 			writeHubError(w, err)
 			return
 		}
+		logIngestDebug(options, "accepted", map[string]any{
+			"org":            input.OrganizationSlug,
+			"project":        input.ProjectSlug,
+			"environment":    input.EnvironmentSlug,
+			"app":            input.AppSlug,
+			"service":        input.ServiceSlug,
+			"host":           input.HostSlug,
+			"agent_id":       input.AgentID,
+			"batch_id":       result.Batch.ExternalID,
+			"hub_batch_id":   result.Batch.ID,
+			"events":         len(result.Events),
+			"already_stored": result.Reused,
+			"received_at":    result.Batch.ReceivedAt,
+		})
 		writeJSON(w, http.StatusAccepted, map[string]any{
 			"batch_id":       result.Batch.ExternalID,
 			"id":             result.Batch.ID,
@@ -702,6 +781,57 @@ func ingestEventsHandler(hub *hubapp.Hub, options HubOptions) http.HandlerFunc {
 			"already_stored": result.Reused,
 		})
 	}
+}
+
+func logIngestDebug(options HubOptions, stage string, fields map[string]any) {
+	if options.IngestDebugLog == nil {
+		return
+	}
+	options.IngestDebugLog(stage, fields)
+}
+
+func ingestWireNodeID(body []byte) string {
+	var envelope struct {
+		NodeID string `json:"node_id"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(envelope.NodeID)
+}
+
+func compactWireSignature(signature string) string {
+	signature = strings.TrimSpace(signature)
+	if signature == "" {
+		return ""
+	}
+	parts := strings.Split(signature, ":")
+	if len(parts) >= 4 && parts[0] == "wire" && parts[1] == "v1" {
+		digest := parts[3]
+		if len(digest) > 12 {
+			digest = digest[:12]
+		}
+		return strings.Join([]string{parts[0], parts[1], parts[2], digest}, ":")
+	}
+	if len(signature) > 64 {
+		return signature[:64]
+	}
+	return signature
+}
+
+func requestRemoteAddr(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	remote := strings.TrimSpace(r.RemoteAddr)
+	if remote == "" {
+		return ""
+	}
+	host, _, err := net.SplitHostPort(remote)
+	if err == nil {
+		return host
+	}
+	return remote
 }
 
 func listRulesHandler(hub *hubapp.Hub) http.HandlerFunc {
@@ -1110,6 +1240,29 @@ func listTimelineHandler(hub *hubapp.Hub) http.HandlerFunc {
 			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
 			return
 		}
+		ids := timelineEventIDsFromQuery(r, 200)
+		if len(ids) > 0 {
+			events, err := hub.ListTimelineEventsByID(r.Context(), hubapp.ListTimelineEventsByIDInput{
+				OrganizationSlug: r.URL.Query().Get("org"),
+				ProjectSlug:      r.URL.Query().Get("project"),
+				EnvironmentSlug:  r.URL.Query().Get("environment"),
+				AppSlug:          r.URL.Query().Get("app"),
+				EventIDs:         ids,
+			})
+			if err != nil {
+				writeHubError(w, err)
+				return
+			}
+			records := make([]timelineEventResponse, 0, len(events))
+			for _, event := range events {
+				records = append(records, timelineEventRecord(event))
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"count":  len(records),
+				"events": records,
+			})
+			return
+		}
 		limit, err := parseQueryLimit(r, 500)
 		if err != nil {
 			writeHubError(w, err)
@@ -1141,6 +1294,33 @@ func listTimelineHandler(hub *hubapp.Hub) http.HandlerFunc {
 			"events": records,
 		})
 	}
+}
+
+func timelineEventIDsFromQuery(r *http.Request, limit int) []string {
+	if limit <= 0 {
+		limit = 200
+	}
+	values := append([]string{}, r.URL.Query()["id"]...)
+	values = append(values, r.URL.Query()["ids"]...)
+	ids := make([]string, 0, len(values))
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		for _, part := range strings.Split(value, ",") {
+			id := strings.TrimSpace(part)
+			if id == "" {
+				continue
+			}
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			seen[id] = struct{}{}
+			ids = append(ids, id)
+			if len(ids) >= limit {
+				return ids
+			}
+		}
+	}
+	return ids
 }
 
 func listCoverageHandler(hub *hubapp.Hub) http.HandlerFunc {
@@ -1224,7 +1404,7 @@ func createDeploymentHandler(hub *hubapp.Hub) http.HandlerFunc {
 			finished := request.FinishedAt.UTC()
 			finishedAt = &finished
 		}
-		deployment, err := hub.SaveDeploymentMarker(r.Context(), hubapp.SaveDeploymentMarkerInput{
+		result, err := hub.SaveDeploymentMarkerWithStatusUpdate(r.Context(), hubapp.SaveDeploymentMarkerInput{
 			OrganizationSlug: r.URL.Query().Get("org"),
 			ProjectSlug:      r.URL.Query().Get("project"),
 			EnvironmentSlug:  r.URL.Query().Get("environment"),
@@ -1240,7 +1420,8 @@ func createDeploymentHandler(hub *hubapp.Hub) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, http.StatusCreated, map[string]any{
-			"deployment": deploymentRecord(deployment),
+			"acknowledged_findings": result.AcknowledgedFindings,
+			"deployment":            deploymentRecord(result.Deployment),
 		})
 	}
 }
@@ -2128,6 +2309,15 @@ func createInventoryNodeHandler(hub *hubapp.Hub, options HubOptions) http.Handle
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
+		sampleApp, serviceSlug, ok, err := resolveAgentSampleConfigTarget(r.Context(), hub, request)
+		if err != nil {
+			writeHubError(w, err)
+			return
+		}
+		if !ok {
+			writeError(w, http.StatusNotFound, fmt.Sprintf("app %q or service %q does not exist in environment %q", defaultString(request.AppSlug, "main-web"), defaultString(request.ServiceSlug, "frontend"), defaultString(request.EnvironmentSlug, "production")))
+			return
+		}
 		host, err := hub.SaveHost(r.Context(), hubapp.SaveHostInput{
 			OrganizationSlug: request.OrganizationSlug,
 			ProjectSlug:      request.ProjectSlug,
@@ -2164,7 +2354,7 @@ func createInventoryNodeHandler(hub *hubapp.Hub, options HubOptions) http.Handle
 			writeHubError(w, err)
 			return
 		}
-		sample := buildAgentSampleConfig(r, options, request, host, agent, hubPublicKey, nodeSecret)
+		sample := buildAgentSampleConfig(r, options, request, host, agent, sampleApp, serviceSlug, hubPublicKey, nodeSecret)
 		writeJSON(w, http.StatusCreated, map[string]any{
 			"host":           hostRecord(host),
 			"agent":          agentRecord(agent),
@@ -2174,6 +2364,27 @@ func createInventoryNodeHandler(hub *hubapp.Hub, options HubOptions) http.Handle
 			"sample_config":  sample,
 		})
 	}
+}
+
+func resolveAgentSampleConfigTarget(ctx context.Context, hub *hubapp.Hub, request createInventoryNodeRequest) (domain.MonitoredApp, string, bool, error) {
+	scope, ok, err := hub.GetInventoryScopeForEnvironment(ctx, request.OrganizationSlug, request.ProjectSlug, defaultString(request.EnvironmentSlug, "production"))
+	if err != nil || !ok {
+		return domain.MonitoredApp{}, "", false, err
+	}
+	appSlug := defaultString(request.AppSlug, "main-web")
+	serviceSlug := defaultString(request.ServiceSlug, "frontend")
+	for _, appScope := range scope.Apps {
+		if appScope.App.Slug != appSlug {
+			continue
+		}
+		for _, service := range appScope.Services {
+			if service.Slug == serviceSlug {
+				return appScope.App, service.Slug, true, nil
+			}
+		}
+		return appScope.App, serviceSlug, false, nil
+	}
+	return domain.MonitoredApp{}, serviceSlug, false, nil
 }
 
 func updateInventoryHostHandler(hub *hubapp.Hub) http.HandlerFunc {
@@ -2822,6 +3033,8 @@ func browserScriptObservationRecord(record hubapp.BrowserScriptObservationRecord
 		Path:            record.Path,
 		SHA256:          record.SHA256,
 		InlineBytes:     record.InlineBytes,
+		InlinePreview:   record.InlinePreview,
+		InlineTruncated: record.InlineTruncated,
 		TagManager:      record.TagManager,
 		TagManagerIDs:   record.TagManagerIDs,
 		Labels:          nonNilResponseStringMap(record.Labels),
@@ -3180,13 +3393,15 @@ func verifyWireEnvelopeMatchesBatch(signature string, agentID string) error {
 	return nil
 }
 
-func buildAgentSampleConfig(r *http.Request, options HubOptions, request createInventoryNodeRequest, host domain.Host, agent domain.Agent, hubPublicKey string, nodeSecret string) string {
+func buildAgentSampleConfig(r *http.Request, options HubOptions, request createInventoryNodeRequest, host domain.Host, agent domain.Agent, app domain.MonitoredApp, serviceSlug string, hubPublicKey string, nodeSecret string) string {
 	environment := defaultString(request.EnvironmentSlug, "production")
-	app := defaultString(request.AppSlug, "main-web")
-	service := defaultString(request.ServiceSlug, "frontend")
+	appSlug := defaultString(app.Slug, defaultString(request.AppSlug, "main-web"))
+	appKind := normalizeAgentSampleSiteKind(app.Kind)
+	service := defaultString(serviceSlug, defaultString(request.ServiceSlug, "frontend"))
 	queueDir := defaultString(request.QueueDir, "/var/lib/aegrail/queue")
 	stateDir := defaultString(request.StateDir, "/var/lib/aegrail/state")
 	interval := defaultString(request.Interval, "30s")
+	fileProfile := agentSampleFileProfile(appKind)
 	return fmt.Sprintf(`schema: aegrail.agent.server_config.v1
 
 hub:
@@ -3214,12 +3429,14 @@ runtime:
 sites:
   - slug: %q
     name: %q
-    kind: wordpress
+    kind: %q
     app: %q
     service: %q
     root: /var/www/example
     files:
       enabled: true
+      profiles:
+        - %q
     coverage:
       enabled: true
 `,
@@ -3237,9 +3454,49 @@ sites:
 		interval,
 		request.ProjectSlug,
 		defaultString(request.ProjectSlug, "Example Site"),
-		app,
+		appKind,
+		appSlug,
 		service,
+		fileProfile,
 	)
+}
+
+func normalizeAgentSampleSiteKind(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "wp", "woocommerce":
+		return "wordpress"
+	case "static-site", "static-html":
+		return "static"
+	case "node", "node.js", "node-js":
+		return "nodejs"
+	case "":
+		return "wordpress"
+	default:
+		return strings.ToLower(strings.TrimSpace(value))
+	}
+}
+
+func agentSampleFileProfile(kind string) string {
+	switch normalizeAgentSampleSiteKind(kind) {
+	case "wordpress", "wordpress-multisite", "woocommerce":
+		return "wordpress"
+	case "prestashop":
+		return "prestashop"
+	case "mautic":
+		return "mautic"
+	case "yii2-rbac":
+		return "yii2-rbac"
+	case "laravel":
+		return "laravel"
+	case "static":
+		return "static"
+	case "react":
+		return "react"
+	case "nodejs":
+		return "nodejs"
+	default:
+		return "static"
+	}
 }
 
 func requestBaseURL(r *http.Request, options HubOptions) string {

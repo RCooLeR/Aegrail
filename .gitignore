@@ -15,6 +15,10 @@ app/.aegrail/
 docker/examples/.env.hub
 docker/examples/.env.agent
 docker/examples/agent.yaml
+id_rsa
+id_rsa.pub
+*.pem
+*.key
 
 # Go build and test output
 app/bin/

@@ -13,6 +13,7 @@
 - Mautic database/entity correlation rules for users, roles, plugins, integrations, OAuth clients, and webhooks.
 - Yii2 RBAC database/entity correlation rules for users, roles, RBAC assignments, and migrations.
 - Laravel database/entity correlation rules for users, roles, permissions, sessions, reset tokens, and migrations.
+- Static, React, and Node.js app kinds for inventory, node config generation, rule metadata, and model-analysis prompt context.
 - Finding lifecycle actions and baseline acceptance.
 - Browser script allowlist workflows.
 - File ignore rules created from dashboard findings.
@@ -24,8 +25,9 @@
 - Dashboard static serving from built assets.
 - Operator-action metadata on findings so warnings and alerts explain the concrete review action and final status choice.
 - Finding review report that places deterministic Hub findings beside latest model analysis.
-- Notification hooks for observed findings and finding status changes, with optional signed webhook delivery, Mailjet SMTP email, and browser push delivery.
+- Notification hooks for observed findings and finding status changes, with optional signed webhook delivery, SMTP email, and browser push delivery.
 - Graceful shutdown waits briefly for Hub background workers.
+- Hub performance pass: bulk event inserts, batched finding saves, single-query ingest scope resolution, dedicated correlation timeline queries, coalesced Redis correlation jobs, low-signal log filtering, throttled session and agent heartbeat writes, cached push subscription reads, token-rotation suppression, and composite indexes for timeline, finding, model-report, and notification lookups.
 
 ## Next
 

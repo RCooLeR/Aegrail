@@ -45,14 +45,13 @@ func (h *Hub) ListConfigCoverage(ctx context.Context, input ListConfigCoverageIn
 	if limit <= 0 {
 		limit = 5000
 	}
-	events, err := h.ListTimelineEvents(ctx, ListTimelineEventsInput{
+	events, err := h.listTimelineEventsByTypes(ctx, ListTimelineEventsInput{
 		OrganizationSlug: input.OrganizationSlug,
 		ProjectSlug:      input.ProjectSlug,
 		EnvironmentSlug:  input.EnvironmentSlug,
 		AppSlug:          input.AppSlug,
 		Since:            input.Since,
-		Limit:            limit,
-	})
+	}, []string{"agent.config.coverage"}, limit)
 	if err != nil {
 		return nil, err
 	}

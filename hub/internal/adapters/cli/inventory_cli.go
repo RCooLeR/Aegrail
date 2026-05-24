@@ -38,7 +38,7 @@ func inventoryBootstrapCommand(meta domain.AppMeta) *urfavecli.Command {
 				Name:  "single-site",
 				Usage: "create a WordPress or PrestaShop single-site inventory path",
 				Flags: []urfavecli.Flag{
-					&urfavecli.StringFlag{Name: "kind", Usage: "site kind: wordpress, prestashop, mautic, yii2-rbac, or laravel", Required: true},
+					&urfavecli.StringFlag{Name: "kind", Usage: "site kind: wordpress, prestashop, mautic, yii2-rbac, laravel, static, react, or nodejs", Required: true},
 					&urfavecli.StringFlag{Name: "org", Usage: "organization slug", Required: true},
 					&urfavecli.StringFlag{Name: "org-name", Usage: "organization display name"},
 					&urfavecli.StringFlag{Name: "project", Usage: "project slug", Required: true},

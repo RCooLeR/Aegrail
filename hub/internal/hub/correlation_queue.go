@@ -13,9 +13,10 @@ const (
 	ingestCorrelationJobSchema = "aegrail.hub.job.ingest-correlation.v1"
 	ingestCorrelationQueueName = "ingest-correlation"
 
-	defaultCorrelationWorkerCount   = 2
+	defaultCorrelationWorkerCount   = 1
 	defaultCorrelationQueueTimeout  = 5 * time.Second
 	defaultCorrelationWorkerBackoff = 2 * time.Second
+	defaultCorrelationJobMaxAge     = 30 * time.Minute
 )
 
 type ingestCorrelationJob struct {
@@ -97,6 +98,12 @@ func (h *Hub) HandleCorrelationJob(ctx context.Context, payload []byte) error {
 		return err
 	}
 	if job.Schema != "" && job.Schema != ingestCorrelationJobSchema {
+		return nil
+	}
+	if !job.QueuedAt.IsZero() && time.Since(job.QueuedAt) > defaultCorrelationJobMaxAge {
+		return nil
+	}
+	if !h.reserveAutoCorrelationRun(autoCorrelationScopeKey(job.OrganizationSlug, job.ProjectSlug, job.EnvironmentSlug, job.AppSlug), time.Now().UTC()) {
 		return nil
 	}
 	window := job.Window

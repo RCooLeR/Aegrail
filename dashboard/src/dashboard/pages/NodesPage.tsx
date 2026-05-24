@@ -122,7 +122,7 @@ function AgentConfigSummary({ coverage }: { coverage?: CoverageRecord }) {
       <div className="agent-config-card">
         <strong>Database</strong>
         <span>{enabledLabel(databases.enabled)} / {databaseNames.join(", ") || "no database"}</span>
-        <small>{databaseProfiles.join(", ") || "no profile"}; DSN env {databases.all_dsn_env_configured === false ? "missing" : "configured"}</small>
+        <small>{databaseProfiles.join(", ") || "no profile"}; DSN env {databases.all_dsn_env_configured === false ? "missing" : "configured"}; {databases.all_persistent === false ? "one-shot" : "persistent"} connections</small>
       </div>
       <div className="agent-config-card">
         <strong>Logs</strong>

@@ -374,6 +374,7 @@ func (r *Runtime) SendQueued(ctx context.Context, limit int) (SendResult, error)
 	}
 	pendingDir := filepath.Join(identity.QueueDir, "pending")
 	sentDir := filepath.Join(identity.QueueDir, "sent")
+	failedDir := filepath.Join(identity.QueueDir, "failed")
 	if err := ensureQueueDirs(identity.QueueDir); err != nil {
 		return SendResult{}, err
 	}
@@ -381,15 +382,44 @@ func (r *Runtime) SendQueued(ctx context.Context, limit int) (SendResult, error)
 	if err != nil {
 		return SendResult{}, err
 	}
+	pendingBefore := len(files)
 	if limit > 0 && limit < len(files) {
 		files = files[:limit]
 	}
-	result := SendResult{PendingBefore: len(files)}
+	result := SendResult{PendingBefore: pendingBefore}
 	for _, path := range files {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			result.Failed++
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", filepath.Base(path), err))
+			continue
+		}
+		batchAgentID, err := queuedBatchAgentID(content)
+		if err != nil {
+			result.Failed++
+			if quarantineErr := quarantineQueuedBatch(path, failedDir); quarantineErr != nil {
+				result.Errors = append(result.Errors, fmt.Sprintf("%s: invalid queued batch json: %v; failed to move to failed queue: %v", filepath.Base(path), err, quarantineErr))
+				continue
+			}
+			result.Errors = append(result.Errors, fmt.Sprintf("%s: invalid queued batch json: %v; moved to failed queue", filepath.Base(path), err))
+			continue
+		}
+		if batchAgentID == "" {
+			result.Failed++
+			if quarantineErr := quarantineQueuedBatch(path, failedDir); quarantineErr != nil {
+				result.Errors = append(result.Errors, fmt.Sprintf("%s: queued batch agent_id is empty; failed to move to failed queue: %v", filepath.Base(path), quarantineErr))
+				continue
+			}
+			result.Errors = append(result.Errors, fmt.Sprintf("%s: queued batch agent_id is empty; moved to failed queue", filepath.Base(path)))
+			continue
+		}
+		if batchAgentID != identity.AgentID {
+			result.Failed++
+			if quarantineErr := quarantineQueuedBatch(path, failedDir); quarantineErr != nil {
+				result.Errors = append(result.Errors, fmt.Sprintf("%s: queued batch agent_id %q does not match configured agent_id %q; failed to move to failed queue: %v", filepath.Base(path), batchAgentID, identity.AgentID, quarantineErr))
+				continue
+			}
+			result.Errors = append(result.Errors, fmt.Sprintf("%s: queued batch agent_id %q does not match configured agent_id %q; moved to failed queue", filepath.Base(path), batchAgentID, identity.AgentID))
 			continue
 		}
 		if err := r.sendBatch(ctx, identity, nodeSecret, content); err != nil {
@@ -410,6 +440,24 @@ func (r *Runtime) SendQueued(ctx context.Context, limit int) (SendResult, error)
 	}
 	result.PendingAfter = status.Pending
 	return result, nil
+}
+
+func queuedBatchAgentID(content []byte) (string, error) {
+	var header struct {
+		AgentID string `json:"agent_id"`
+	}
+	if err := json.Unmarshal(content, &header); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(header.AgentID), nil
+}
+
+func quarantineQueuedBatch(path string, failedDir string) error {
+	if err := os.MkdirAll(failedDir, 0o700); err != nil {
+		return err
+	}
+	destination := filepath.Join(failedDir, filepath.Base(path))
+	return os.Rename(path, uniquePath(destination))
 }
 
 func (r *Runtime) archiveOrDeleteSentBatch(path string, sentDir string) error {

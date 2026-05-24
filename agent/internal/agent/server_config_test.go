@@ -23,8 +23,8 @@ func TestLoadServerConfigExample(t *testing.T) {
 	if config.Schema != ServerConfigSchema {
 		t.Fatalf("schema = %q, want %q", config.Schema, ServerConfigSchema)
 	}
-	if len(config.Sites) != 6 {
-		t.Fatalf("sites = %d, want 6", len(config.Sites))
+	if len(config.Sites) != 9 {
+		t.Fatalf("sites = %d, want 9", len(config.Sites))
 	}
 	if config.Sites[0].Slug != "example-com" || config.Sites[1].Kind != "prestashop" {
 		t.Fatalf("unexpected sites: %+v", config.Sites)
@@ -34,6 +34,15 @@ func TestLoadServerConfigExample(t *testing.T) {
 	}
 	if config.Sites[5].Kind != "laravel" || config.Sites[5].Files.Profiles[0] != "laravel" {
 		t.Fatalf("laravel site = %+v, want laravel profile", config.Sites[5])
+	}
+	if config.Sites[6].Kind != "static" || config.Sites[6].Files.Profiles[0] != "static" {
+		t.Fatalf("static site = %+v, want static profile", config.Sites[6])
+	}
+	if config.Sites[7].Kind != "react" || config.Sites[7].Files.Profiles[0] != "react" {
+		t.Fatalf("react site = %+v, want react profile", config.Sites[7])
+	}
+	if config.Sites[8].Kind != "nodejs" || config.Sites[8].Files.Profiles[0] != "nodejs" {
+		t.Fatalf("node site = %+v, want nodejs profile", config.Sites[8])
 	}
 }
 
@@ -122,6 +131,77 @@ func TestValidateServerConfigAcceptsWooCommerceKind(t *testing.T) {
 	}
 	if got := config.Sites[0].Files.Profiles; len(got) != 1 || got[0] != "wordpress" {
 		t.Fatalf("files profiles = %#v, want wordpress profile", got)
+	}
+}
+
+func TestValidateServerConfigAcceptsStaticReactAndNodeKinds(t *testing.T) {
+	root := t.TempDir()
+	config := NormalizeServerConfig(ServerConfig{
+		Schema: ServerConfigSchema,
+		Hub:    testWireHubConfig(t, "http://127.0.0.1:8787"),
+		Identity: ServerIdentityConfig{
+			Org:         "acme",
+			Project:     "frontends",
+			Environment: "production",
+			Host:        "web-01",
+			AgentID:     "agt_web_01",
+		},
+		Runtime: ServerRuntimeConfig{
+			QueueDir: filepath.Join(root, "queue"),
+			StateDir: filepath.Join(root, "state"),
+			Interval: "30s",
+		},
+		Sites: []ServerSiteConfig{
+			{Slug: "static", Kind: "static-site", Root: filepath.Join(root, "static")},
+			{Slug: "react", Kind: "react", Root: filepath.Join(root, "react")},
+			{Slug: "node", Kind: "node.js", Root: filepath.Join(root, "node")},
+		},
+	})
+	if err := ValidateServerConfig(config); err != nil {
+		t.Fatalf("ValidateServerConfig returned error: %v", err)
+	}
+	if config.Sites[0].Kind != "static" || config.Sites[0].Files.Profiles[0] != "static" {
+		t.Fatalf("static site = %+v, want normalized static profile", config.Sites[0])
+	}
+	if config.Sites[1].Files.Profiles[0] != "react" {
+		t.Fatalf("react site profiles = %#v, want react", config.Sites[1].Files.Profiles)
+	}
+	if config.Sites[2].Kind != "nodejs" || config.Sites[2].Files.Profiles[0] != "nodejs" {
+		t.Fatalf("node site = %+v, want normalized nodejs profile", config.Sites[2])
+	}
+}
+
+func TestValidateServerConfigRejectsStaticDatabaseProfile(t *testing.T) {
+	root := t.TempDir()
+	config := NormalizeServerConfig(ServerConfig{
+		Schema: ServerConfigSchema,
+		Hub:    testWireHubConfig(t, "http://127.0.0.1:8787"),
+		Identity: ServerIdentityConfig{
+			Org:         "acme",
+			Project:     "frontends",
+			Environment: "production",
+			Host:        "web-01",
+			AgentID:     "agt_web_01",
+		},
+		Runtime: ServerRuntimeConfig{
+			QueueDir: filepath.Join(root, "queue"),
+			StateDir: filepath.Join(root, "state"),
+			Interval: "30s",
+		},
+		Sites: []ServerSiteConfig{
+			{
+				Slug: "static",
+				Kind: "static",
+				Root: filepath.Join(root, "static"),
+				Databases: []ServerDatabaseConfig{
+					{Name: "static", Engine: "mysql", DSNEnv: "AEGRAIL_DB_STATIC_DSN", Profile: "static"},
+				},
+			},
+		},
+	})
+	err := ValidateServerConfig(config)
+	if err == nil || !strings.Contains(err.Error(), "databases[0].profile is unknown") {
+		t.Fatalf("ValidateServerConfig error = %v, want static database profile rejection", err)
 	}
 }
 

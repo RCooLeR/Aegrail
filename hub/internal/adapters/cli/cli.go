@@ -117,7 +117,7 @@ func hubServeCommand(meta domain.AppMeta) *urfavecli.Command {
 				Name:    "correlation-workers",
 				Usage:   "number of Redis-backed ingest correlation workers; ignored when Redis is not configured",
 				EnvVars: []string{"AEGRAIL_CORRELATION_WORKERS"},
-				Value:   2,
+				Value:   1,
 			},
 		},
 		Action: func(c *urfavecli.Context) error {
@@ -153,6 +153,17 @@ func hubServeCommand(meta domain.AppMeta) *urfavecli.Command {
 			}) {
 				container.Logger.Info().Int("workers", c.Int("correlation-workers")).Msg("started redis correlation workers")
 			}
+			var ingestDebugLog func(stage string, fields map[string]any)
+			if container.Config.Hub.IngestDebug {
+				container.Logger.Info().Msg("hub ingest debug logging enabled")
+				ingestDebugLog = func(stage string, fields map[string]any) {
+					event := container.Logger.Info().Str("stage", stage)
+					for key, value := range fields {
+						event = event.Interface(key, value)
+					}
+					event.Msg("hub ingest debug")
+				}
+			}
 
 			addr := c.String("addr")
 			server := &nethttp.Server{
@@ -165,6 +176,7 @@ func hubServeCommand(meta domain.AppMeta) *urfavecli.Command {
 					PushVAPIDPublicKey:  container.Config.Notifications.Push.VAPIDPublicKey,
 					TrustedProxyCIDRs:   container.Config.Hub.TrustedProxyCIDRs,
 					HealthCheck:         container.HealthCheck,
+					IngestDebugLog:      ingestDebugLog,
 				}),
 				ReadHeaderTimeout: 5 * time.Second,
 				ReadTimeout:       15 * time.Second,

@@ -99,6 +99,38 @@ func TestBootstrapSingleSiteRejectsUnsupportedKind(t *testing.T) {
 	}
 }
 
+func TestBootstrapSingleSiteAcceptsFrontendKinds(t *testing.T) {
+	tests := []struct {
+		kind string
+		want string
+		name string
+	}{
+		{kind: "static-site", want: "static", name: "Static site"},
+		{kind: "react", want: "react", name: "React"},
+		{kind: "node.js", want: "nodejs", name: "Node.js"},
+	}
+	for _, test := range tests {
+		t.Run(test.kind, func(t *testing.T) {
+			repo := newMemoryInventoryRepository()
+			hub := New(Dependencies{Inventory: repo})
+			result, err := hub.BootstrapSingleSite(context.Background(), BootstrapSingleSiteInput{
+				OrganizationSlug: "acme",
+				ProjectSlug:      "frontend",
+				Kind:             test.kind,
+				HostSlug:         "web-01",
+				AgentID:          "agt_web_01",
+				Fingerprint:      "SHA256:test",
+			})
+			if err != nil {
+				t.Fatalf("BootstrapSingleSite returned error: %v", err)
+			}
+			if result.App.Kind != test.want || result.App.Name != test.name {
+				t.Fatalf("app = %#v, want kind %q name %q", result.App, test.want, test.name)
+			}
+		})
+	}
+}
+
 type memoryInventoryRepository struct {
 	next          int
 	organizations map[string]domain.Organization

@@ -260,3 +260,97 @@ sites:
       timeout: 30s
       urls:
         - https://laravel.example.com/
+
+  - slug: static-site
+    name: Example Static Site
+    domain: static.example.com
+    kind: static
+    app: static-site
+    service: frontend
+    root: /var/www/static.example.com
+    labels:
+      app_profile: static
+      tier: production
+    files:
+      profiles:
+        - static
+      extra_paths:
+        - /etc/nginx/conf.d/static.example.com.conf
+      exclude:
+        - /var/www/static.example.com/.git
+        - /var/www/static.example.com/.cache
+        - /var/www/static.example.com/tmp
+    logs:
+      - path: /var/log/nginx/static.example.com.access.log
+        kind: nginx_access
+      - path: /var/log/nginx/static.example.com.error.log
+        kind: generic
+    browser_crawl:
+      enabled: true
+      rendered: false
+      wait_tag_manager: false
+      max_pages: 5
+      timeout: 20s
+      urls:
+        - https://static.example.com/
+
+  - slug: react-frontend
+    name: Example React Frontend
+    domain: app.example.com
+    kind: react
+    app: react-frontend
+    service: frontend
+    root: /srv/frontend/app.example.com
+    labels:
+      app_profile: react
+      tier: production
+    files:
+      profiles:
+        - react
+      extra_paths:
+        - /etc/nginx/conf.d/app.example.com.conf
+      exclude:
+        - /srv/frontend/app.example.com/.git
+        - /srv/frontend/app.example.com/node_modules
+        - /srv/frontend/app.example.com/.next/cache
+        - /srv/frontend/app.example.com/dist
+        - /srv/frontend/app.example.com/build
+        - /srv/frontend/app.example.com/coverage
+    logs:
+      - path: /var/log/nginx/app.example.com.access.log
+        kind: nginx_access
+    browser_crawl:
+      enabled: true
+      rendered: false
+      wait_tag_manager: false
+      max_pages: 5
+      timeout: 20s
+      urls:
+        - https://app.example.com/
+
+  - slug: node-api
+    name: Example Node.js API
+    domain: api.example.com
+    kind: nodejs
+    app: node-api
+    service: api
+    root: /srv/node/api.example.com
+    labels:
+      app_profile: nodejs
+      tier: production
+    files:
+      profiles:
+        - nodejs
+      extra_paths:
+        - /etc/nginx/conf.d/api.example.com.conf
+      exclude:
+        - /srv/node/api.example.com/.git
+        - /srv/node/api.example.com/node_modules
+        - /srv/node/api.example.com/logs
+        - /srv/node/api.example.com/tmp
+        - /srv/node/api.example.com/coverage
+    logs:
+      - path: /var/log/nginx/api.example.com.access.log
+        kind: nginx_access
+    coverage:
+      enabled: true

@@ -24,6 +24,7 @@ func TestCrawlBrowserPagesInventoriesInitialScripts(t *testing.T) {
     window.dataLayer = window.dataLayer || [];
     window.dataLayer.push({'gtm.start': new Date().getTime(), event:'gtm.js'});
     var id = 'GTM-ABC123';
+    var access_token = "should-not-leak";
   </script>
   <script src="https://www.googletagmanager.com/gtm.js?id=GTM-ABC123"></script>
 </head>
@@ -70,6 +71,12 @@ func TestCrawlBrowserPagesInventoriesInitialScripts(t *testing.T) {
 	}
 	if page.Scripts[1].SourceType != "inline" || page.Scripts[1].SHA256 == "" || !page.Scripts[1].TagManager {
 		t.Fatalf("inline script = %#v", page.Scripts[1])
+	}
+	if !strings.Contains(page.Scripts[1].InlinePreview, "window.dataLayer") || !strings.Contains(page.Scripts[1].InlinePreview, "[REDACTED]") {
+		t.Fatalf("inline preview = %q, want useful redacted script", page.Scripts[1].InlinePreview)
+	}
+	if strings.Contains(page.Scripts[1].InlinePreview, "should-not-leak") {
+		t.Fatalf("inline preview leaked sensitive material: %q", page.Scripts[1].InlinePreview)
 	}
 	if !page.Scripts[2].TagManager || len(page.Scripts[2].TagManagerIDs) != 1 || page.Scripts[2].TagManagerIDs[0] != "GTM-ABC123" {
 		t.Fatalf("tag manager script = %#v", page.Scripts[2])

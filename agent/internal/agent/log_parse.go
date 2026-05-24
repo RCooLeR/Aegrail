@@ -27,7 +27,13 @@ var accessLogPattern = regexp.MustCompile(`^(\S+) (\S+) (\S+) \[([^\]]+)\] "([^"
 var phpFileLinePattern = regexp.MustCompile(`(?i)\bin\s+(.+?)\s+on\s+line\s+(\d+)`)
 var phpColonFileLinePattern = regexp.MustCompile(`(?i)\bin\s+([^'"\s]+):(\d+)(?:\s|$)`)
 
-func parseStructuredLogEvent(path string, line string) (structuredLogEvent, bool) {
+func parseStructuredLogEvent(path string, line string) (event structuredLogEvent, ok bool) {
+	defer func() {
+		if recover() != nil {
+			event = structuredLogEvent{}
+			ok = false
+		}
+	}()
 	if event, ok := parseAccessLogEvent(path, line); ok {
 		return event, true
 	}
@@ -81,12 +87,17 @@ func parseAccessLogEvent(path string, line string) (structuredLogEvent, bool) {
 	if messagePath == "" {
 		messagePath = redactedTarget
 	}
+	message := fmt.Sprintf("HTTP %d %s %s", status, method, messagePath)
+	remoteAddr := strings.TrimSpace(match[1])
+	if remoteAddr != "" && remoteAddr != "-" {
+		message += " from " + remoteAddr
+	}
 	return structuredLogEvent{
 		Type:      "log.access",
 		Parser:    parser,
 		EventTime: eventTime,
 		Severity:  accessLogSeverity(status),
-		Message:   fmt.Sprintf("HTTP %d %s %s", status, method, messagePath),
+		Message:   message,
 		Payload:   payload,
 	}, true
 }
@@ -329,6 +340,9 @@ func extractPHPFileLine(message string) (string, int, bool) {
 }
 
 func addApacheErrorContext(payload map[string]any, brackets []string) {
+	if len(brackets) <= 1 {
+		return
+	}
 	for _, value := range brackets[1:] {
 		lower := strings.ToLower(value)
 		switch {

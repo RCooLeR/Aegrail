@@ -18,7 +18,19 @@ type databaseSnapshotRule struct {
 func isDatabaseSnapshotDiffEvent(event domain.TimelineEvent) bool {
 	switch event.EventType {
 	case "db.snapshot.check_changed", "db.snapshot.check_added", "db.entity.added", "db.entity.changed", "db.entity.removed":
+		if isWordPressNoisyOptionSnapshotEvent(event) {
+			return false
+		}
+		if isWordPressNoisyCronEntityEvent(event) {
+			return false
+		}
+		if isWordPressNoisyThemeEntityEvent(event) {
+			return false
+		}
 		if isPrestashopModuleCountSnapshotEvent(event) {
+			return false
+		}
+		if isPrestashopNoisyConfigurationEntityEvent(event) {
 			return false
 		}
 		if isPrestashopModuleEntityEvent(event) {
@@ -27,6 +39,93 @@ func isDatabaseSnapshotDiffEvent(event domain.TimelineEvent) bool {
 		if isMauticExtensionCountSnapshotEvent(event) {
 			return false
 		}
+		return true
+	default:
+		return false
+	}
+}
+
+func isWordPressNoisyCronEntityEvent(event domain.TimelineEvent) bool {
+	profile := strings.ToLower(firstNonEmpty(
+		payloadStringAny(event.Payload, "profile", ""),
+		event.Labels["db_profile"],
+	))
+	if profile != "wordpress" && profile != "wp" {
+		return false
+	}
+	entityType := strings.ToLower(firstNonEmpty(
+		payloadStringAny(event.Payload, "entity_type", ""),
+		event.Labels["db_entity_type"],
+	))
+	if entityType != "wordpress_cron" {
+		return false
+	}
+	current := payloadMap(payloadMap(event.Payload, "current"), "attributes")
+	previous := payloadMap(payloadMap(event.Payload, "previous"), "attributes")
+	return !payloadBool(current, "suspicious") && !payloadBool(previous, "suspicious")
+}
+
+func isWordPressNoisyThemeEntityEvent(event domain.TimelineEvent) bool {
+	profile := strings.ToLower(firstNonEmpty(
+		payloadStringAny(event.Payload, "profile", ""),
+		event.Labels["db_profile"],
+	))
+	if profile != "wordpress" && profile != "wp" {
+		return false
+	}
+	entityType := strings.ToLower(firstNonEmpty(
+		payloadStringAny(event.Payload, "entity_type", ""),
+		event.Labels["db_entity_type"],
+	))
+	return entityType == "wordpress_theme"
+}
+
+func isWordPressNoisyOptionSnapshotEvent(event domain.TimelineEvent) bool {
+	profile := strings.ToLower(firstNonEmpty(
+		payloadStringAny(event.Payload, "profile", ""),
+		event.Labels["db_profile"],
+	))
+	if profile != "wordpress" && profile != "wp" {
+		return false
+	}
+	if strings.HasPrefix(event.EventType, "db.snapshot.") {
+		check := strings.ToLower(firstNonEmpty(
+			payloadStringAny(event.Payload, "check", ""),
+			event.Labels["db_check"],
+			event.Target,
+		))
+		for _, name := range []string{"wordpress.options.count", "wordpress.cron.digest", "wordpress.theme_stylesheet.digest", "wordpress.theme_template.digest"} {
+			if strings.Contains(check, name) {
+				return true
+			}
+		}
+		return false
+	}
+	entityType := strings.ToLower(firstNonEmpty(
+		payloadStringAny(event.Payload, "entity_type", ""),
+		event.Labels["db_entity_type"],
+	))
+	if entityType != "wordpress_option" {
+		return false
+	}
+	optionName := strings.ToLower(firstNonEmpty(
+		payloadStringAny(event.Payload, "option_name", ""),
+		payloadStringAny(payloadMap(event.Payload, "current"), "option_name", ""),
+		payloadStringAny(payloadMap(event.Payload, "previous"), "option_name", ""),
+		payloadStringAny(payloadMap(payloadMap(event.Payload, "current"), "attributes"), "option_name", ""),
+		payloadStringAny(payloadMap(payloadMap(event.Payload, "previous"), "attributes"), "option_name", ""),
+	))
+	if optionName == "" {
+		target := strings.ToLower(event.Target)
+		for _, suffix := range []string{":cron", ":blog_public", ":permalink_structure", ":stylesheet", ":template", ":upload_space_check_disabled"} {
+			if strings.HasSuffix(target, suffix) {
+				return true
+			}
+		}
+		return false
+	}
+	switch optionName {
+	case "cron", "blog_public", "permalink_structure", "stylesheet", "template", "upload_space_check_disabled":
 		return true
 	default:
 		return false
@@ -647,21 +746,8 @@ func wordpressCronEntityRule(event domain.TimelineEvent, current map[string]any,
 			Severity:   domain.SeverityHigh,
 			Confidence: domain.ConfidenceHigh,
 		}
-	case event.EventType == "db.entity.added":
-		return databaseSnapshotRule{
-			RuleID:     "wordpress-cron-task-added",
-			Title:      "WordPress cron task added",
-			Severity:   domain.SeverityMedium,
-			Confidence: domain.ConfidenceHigh,
-		}
-	default:
-		return databaseSnapshotRule{
-			RuleID:     "wordpress-cron-task-changed",
-			Title:      "WordPress cron task changed",
-			Severity:   domain.SeverityMedium,
-			Confidence: domain.ConfidenceMedium,
-		}
 	}
+	return databaseSnapshotRule{}
 }
 
 func wordpressContentScriptEntityRule(event domain.TimelineEvent, current map[string]any, previous map[string]any) databaseSnapshotRule {
@@ -794,6 +880,58 @@ func prestashopConfigurationEntityRule(event domain.TimelineEvent, current map[s
 			Confidence: domain.ConfidenceMedium,
 		}
 	}
+}
+
+func isPrestashopNoisyConfigurationEntityEvent(event domain.TimelineEvent) bool {
+	if event.EventType != "db.entity.changed" {
+		return false
+	}
+	profile := strings.ToLower(firstNonEmpty(
+		payloadStringAny(event.Payload, "profile", ""),
+		event.Labels["db_profile"],
+	))
+	if profile != "prestashop" && profile != "ps" {
+		return false
+	}
+	entityType := strings.ToLower(firstNonEmpty(
+		payloadStringAny(event.Payload, "entity_type", ""),
+		event.Labels["db_entity_type"],
+	))
+	if entityType != "prestashop_configuration" {
+		return false
+	}
+	currentAttributes := payloadMap(payloadMap(event.Payload, "current"), "attributes")
+	previousAttributes := payloadMap(payloadMap(event.Payload, "previous"), "attributes")
+	configName := strings.ToUpper(firstNonEmpty(
+		payloadStringAny(currentAttributes, "config_name", ""),
+		payloadStringAny(previousAttributes, "config_name", ""),
+		prestashopConfigurationNameFromTarget(event.Target),
+	))
+	return isPrestashopRotatingAccessTokenConfig(configName)
+}
+
+func prestashopConfigurationNameFromTarget(target string) string {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return ""
+	}
+	if index := strings.LastIndex(target, ":"); index >= 0 && index+1 < len(target) {
+		return target[index+1:]
+	}
+	return target
+}
+
+func isPrestashopRotatingAccessTokenConfig(upperName string) bool {
+	upperName = strings.ToUpper(strings.TrimSpace(upperName))
+	if upperName == "" {
+		return false
+	}
+	for _, marker := range []string{"ACCESS_TOKEN", "REFRESH_TOKEN", "OAUTH_TOKEN", "BEARER_TOKEN", "ID_TOKEN"} {
+		if strings.Contains(upperName, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func prestashopModuleEntityRule(event domain.TimelineEvent, current map[string]any, previous map[string]any) databaseSnapshotRule {

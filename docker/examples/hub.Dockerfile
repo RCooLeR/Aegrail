@@ -13,6 +13,9 @@ RUN npm run build
 
 FROM ${GO_IMAGE} AS hub-build
 WORKDIR /src/hub
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 COPY hub/go.mod hub/go.sum ./
 RUN go mod download
 COPY hub/ ./
@@ -20,6 +23,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/aegrail
 
 FROM ${RUNTIME_IMAGE}
 WORKDIR /app
+COPY --from=hub-build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=hub-build /out/aegrail-hub /usr/local/bin/aegrail-hub
 COPY --from=hub-build /src/hub/migrations /app/migrations
 COPY --from=dashboard-build /src/dashboard/dist /app/dashboard
@@ -27,6 +31,7 @@ COPY --from=dashboard-build /src/dashboard/dist /app/dashboard
 ENV AEGRAIL_HTTP_ADDR=0.0.0.0:8787
 ENV AEGRAIL_DATA_DIR=/var/lib/aegrail/hub
 ENV AEGRAIL_MIGRATIONS_DIR=/app/migrations
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
 EXPOSE 8787
 USER nonroot:nonroot

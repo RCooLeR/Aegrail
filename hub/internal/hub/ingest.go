@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/rcooler/aegrail/hub/internal/domain"
+	"github.com/rcooler/aegrail/hub/internal/ports"
 )
 
 type IngestEventsInput struct {
@@ -47,9 +48,10 @@ type IngestEventsResult struct {
 }
 
 const (
-	autoCorrelationLookback = 30 * time.Minute
-	autoCorrelationWindow   = 30 * time.Minute
-	autoCorrelationLimit    = 5000
+	autoCorrelationLookback           = 30 * time.Minute
+	autoCorrelationWindow             = 30 * time.Minute
+	autoCorrelationLimit              = 5000
+	autoCorrelationEnqueueMinInterval = 30 * time.Second
 )
 
 func (h *Hub) IngestEvents(ctx context.Context, input IngestEventsInput) (IngestEventsResult, error) {
@@ -68,45 +70,9 @@ func (h *Hub) IngestEvents(ctx context.Context, input IngestEventsInput) (Ingest
 		return IngestEventsResult{}, errors.New("at least one event is required")
 	}
 
-	org, err := h.resolveOrganization(ctx, input.OrganizationSlug)
+	scope, err := h.resolveIngestScope(ctx, input)
 	if err != nil {
 		return IngestEventsResult{}, err
-	}
-	project, err := h.resolveProjectPath(ctx, input.OrganizationSlug, input.ProjectSlug)
-	if err != nil {
-		return IngestEventsResult{}, err
-	}
-	environment, err := h.resolveEnvironmentPath(ctx, input.OrganizationSlug, input.ProjectSlug, input.EnvironmentSlug)
-	if err != nil {
-		return IngestEventsResult{}, err
-	}
-	host, err := h.resolveHostPath(ctx, input.OrganizationSlug, input.ProjectSlug, input.EnvironmentSlug, input.HostSlug)
-	if err != nil {
-		return IngestEventsResult{}, err
-	}
-	agent, err := h.resolveAgent(ctx, host.ID, input.AgentID)
-	if err != nil {
-		return IngestEventsResult{}, err
-	}
-
-	var appID domain.ID
-	appSlug := strings.TrimSpace(input.AppSlug)
-	if strings.TrimSpace(input.AppSlug) != "" {
-		app, err := h.resolveAppPath(ctx, input.OrganizationSlug, input.ProjectSlug, input.EnvironmentSlug, input.AppSlug)
-		if err != nil {
-			return IngestEventsResult{}, err
-		}
-		appID = app.ID
-		appSlug = app.Slug
-	}
-
-	var serviceID domain.ID
-	if strings.TrimSpace(input.ServiceSlug) != "" {
-		service, err := h.resolveServicePath(ctx, input.OrganizationSlug, input.ProjectSlug, input.EnvironmentSlug, input.AppSlug, input.ServiceSlug)
-		if err != nil {
-			return IngestEventsResult{}, err
-		}
-		serviceID = service.ID
 	}
 
 	receivedAt := time.Now().UTC()
@@ -117,13 +83,13 @@ func (h *Hub) IngestEvents(ctx context.Context, input IngestEventsInput) (Ingest
 		if err != nil {
 			return IngestEventsResult{}, err
 		}
-		event.OrganizationID = org.ID
-		event.ProjectID = project.ID
-		event.EnvironmentID = environment.ID
-		event.AppID = appID
-		event.ServiceID = serviceID
-		event.HostID = host.ID
-		event.AgentID = agent.ID
+		event.OrganizationID = scope.Organization.ID
+		event.ProjectID = scope.Project.ID
+		event.EnvironmentID = scope.Environment.ID
+		event.AppID = scope.App.ID
+		event.ServiceID = scope.Service.ID
+		event.HostID = scope.Host.ID
+		event.AgentID = scope.Agent.ID
 		events = append(events, event)
 	}
 
@@ -133,13 +99,13 @@ func (h *Hub) IngestEvents(ctx context.Context, input IngestEventsInput) (Ingest
 	}
 	batch := domain.IngestBatch{
 		ExternalID:     externalID,
-		OrganizationID: org.ID,
-		ProjectID:      project.ID,
-		EnvironmentID:  environment.ID,
-		AppID:          appID,
-		ServiceID:      serviceID,
-		HostID:         host.ID,
-		AgentID:        agent.ID,
+		OrganizationID: scope.Organization.ID,
+		ProjectID:      scope.Project.ID,
+		EnvironmentID:  scope.Environment.ID,
+		AppID:          scope.App.ID,
+		ServiceID:      scope.Service.ID,
+		HostID:         scope.Host.ID,
+		AgentID:        scope.Agent.ID,
 		Source:         strings.TrimSpace(input.Source),
 		BodySHA256:     bodyHash,
 		Signature:      strings.TrimSpace(input.Signature),
@@ -156,8 +122,10 @@ func (h *Hub) IngestEvents(ctx context.Context, input IngestEventsInput) (Ingest
 		return IngestEventsResult{}, err
 	}
 	if created {
-		if !h.enqueueAutoCorrelation(ctx, org.Slug, project.Slug, environment.Slug, appSlug, savedEvents) {
-			h.autoCorrelateIngestEvents(ctx, org.Slug, project.Slug, environment.Slug, appSlug, savedEvents)
+		if h.jobs != nil && h.findings != nil && shouldAutoCorrelateIngestEvents(savedEvents) {
+			h.enqueueAutoCorrelation(ctx, scope.Organization.Slug, scope.Project.Slug, scope.Environment.Slug, scope.App.Slug, savedEvents)
+		} else {
+			h.autoCorrelateIngestEvents(ctx, scope.Organization.Slug, scope.Project.Slug, scope.Environment.Slug, scope.App.Slug, savedEvents)
 		}
 	}
 	return IngestEventsResult{
@@ -167,13 +135,84 @@ func (h *Hub) IngestEvents(ctx context.Context, input IngestEventsInput) (Ingest
 	}, nil
 }
 
+func (h *Hub) resolveIngestScope(ctx context.Context, input IngestEventsInput) (ports.InventoryIngestScopePath, error) {
+	orgSlug := strings.TrimSpace(input.OrganizationSlug)
+	projectSlug := strings.TrimSpace(input.ProjectSlug)
+	environmentSlug := strings.TrimSpace(input.EnvironmentSlug)
+	hostSlug := strings.TrimSpace(input.HostSlug)
+	agentID := strings.TrimSpace(input.AgentID)
+	appSlug := strings.TrimSpace(input.AppSlug)
+	serviceSlug := strings.TrimSpace(input.ServiceSlug)
+
+	if scopeRepository, ok := h.inventory.(ports.InventoryIngestScopeRepository); ok {
+		scope, found, err := scopeRepository.GetInventoryIngestScope(ctx, orgSlug, projectSlug, environmentSlug, hostSlug, agentID, appSlug, serviceSlug)
+		if err != nil {
+			return ports.InventoryIngestScopePath{}, err
+		}
+		if found {
+			return scope, nil
+		}
+	}
+
+	org, err := h.resolveOrganization(ctx, orgSlug)
+	if err != nil {
+		return ports.InventoryIngestScopePath{}, err
+	}
+	project, err := h.resolveProjectPath(ctx, orgSlug, projectSlug)
+	if err != nil {
+		return ports.InventoryIngestScopePath{}, err
+	}
+	environment, err := h.resolveEnvironmentPath(ctx, orgSlug, projectSlug, environmentSlug)
+	if err != nil {
+		return ports.InventoryIngestScopePath{}, err
+	}
+	host, err := h.resolveHostPath(ctx, orgSlug, projectSlug, environmentSlug, hostSlug)
+	if err != nil {
+		return ports.InventoryIngestScopePath{}, err
+	}
+	agent, err := h.resolveAgent(ctx, host.ID, agentID)
+	if err != nil {
+		return ports.InventoryIngestScopePath{}, err
+	}
+
+	var app domain.MonitoredApp
+	if appSlug != "" {
+		app, err = h.resolveAppPath(ctx, orgSlug, projectSlug, environmentSlug, appSlug)
+		if err != nil {
+			return ports.InventoryIngestScopePath{}, err
+		}
+	}
+
+	var service domain.Service
+	if serviceSlug != "" {
+		service, err = h.resolveServicePath(ctx, orgSlug, projectSlug, environmentSlug, appSlug, serviceSlug)
+		if err != nil {
+			return ports.InventoryIngestScopePath{}, err
+		}
+	}
+
+	return ports.InventoryIngestScopePath{
+		Organization: org,
+		Project:      project,
+		Environment:  environment,
+		Host:         host,
+		Agent:        agent,
+		App:          app,
+		Service:      service,
+	}, nil
+}
+
 func (h *Hub) enqueueAutoCorrelation(ctx context.Context, organizationSlug string, projectSlug string, environmentSlug string, appSlug string, events []domain.IngestEvent) bool {
 	if h.jobs == nil || h.findings == nil || len(events) == 0 || !shouldAutoCorrelateIngestEvents(events) {
 		return false
 	}
+	queuedAt := time.Now().UTC()
+	if !h.reserveAutoCorrelationEnqueue(autoCorrelationScopeKey(organizationSlug, projectSlug, environmentSlug, appSlug), queuedAt) {
+		return true
+	}
 	since := earliestIngestEventTime(events)
 	if since.IsZero() {
-		since = time.Now().UTC()
+		since = queuedAt
 	}
 	payload, err := json.Marshal(ingestCorrelationJob{
 		Schema:           ingestCorrelationJobSchema,
@@ -184,12 +223,19 @@ func (h *Hub) enqueueAutoCorrelation(ctx context.Context, organizationSlug strin
 		Since:            since.Add(-autoCorrelationLookback).UTC(),
 		Window:           autoCorrelationWindow,
 		Limit:            autoCorrelationLimit,
-		QueuedAt:         time.Now().UTC(),
+		QueuedAt:         queuedAt,
 	})
 	if err != nil {
 		return false
 	}
-	return h.jobs.Enqueue(ctx, ingestCorrelationQueueName, payload) == nil
+	if err := h.jobs.Enqueue(ctx, ingestCorrelationQueueName, payload); err != nil {
+		h.releaseAutoCorrelationEnqueue(autoCorrelationScopeKey(organizationSlug, projectSlug, environmentSlug, appSlug), queuedAt)
+		if h.backgroundError != nil {
+			h.backgroundError(err)
+		}
+		return false
+	}
+	return true
 }
 
 func (h *Hub) autoCorrelateIngestEvents(ctx context.Context, organizationSlug string, projectSlug string, environmentSlug string, appSlug string, events []domain.IngestEvent) {
@@ -219,12 +265,114 @@ func shouldAutoCorrelateIngestEvents(events []domain.IngestEvent) bool {
 		eventType := strings.ToLower(strings.TrimSpace(event.EventType))
 		if strings.HasPrefix(eventType, "db.") ||
 			isFileMutationEventType(eventType) ||
-			eventType == "log.access" ||
-			eventType == "log.php_error" {
+			eventType == "log.php_error" ||
+			(eventType == "log.access" && isIngestLogAccessCorrelationCandidate(event)) {
 			return true
 		}
 	}
 	return false
+}
+
+func (h *Hub) reserveAutoCorrelationEnqueue(scopeKey string, now time.Time) bool {
+	if h == nil {
+		return false
+	}
+	h.correlationEnqueueMu.Lock()
+	defer h.correlationEnqueueMu.Unlock()
+	if h.correlationEnqueueLast == nil {
+		h.correlationEnqueueLast = map[string]time.Time{}
+	}
+	if previous := h.correlationEnqueueLast[scopeKey]; !previous.IsZero() && now.Sub(previous) < autoCorrelationEnqueueMinInterval {
+		return false
+	}
+	h.correlationEnqueueLast[scopeKey] = now
+	if len(h.correlationEnqueueLast) > 1024 {
+		for key, value := range h.correlationEnqueueLast {
+			if now.Sub(value) > 10*autoCorrelationEnqueueMinInterval {
+				delete(h.correlationEnqueueLast, key)
+			}
+		}
+	}
+	return true
+}
+
+func (h *Hub) releaseAutoCorrelationEnqueue(scopeKey string, reservedAt time.Time) {
+	if h == nil {
+		return
+	}
+	h.correlationEnqueueMu.Lock()
+	defer h.correlationEnqueueMu.Unlock()
+	if h.correlationEnqueueLast == nil {
+		return
+	}
+	if h.correlationEnqueueLast[scopeKey].Equal(reservedAt) {
+		delete(h.correlationEnqueueLast, scopeKey)
+	}
+}
+
+func (h *Hub) reserveAutoCorrelationRun(scopeKey string, now time.Time) bool {
+	if h == nil {
+		return false
+	}
+	h.correlationRunMu.Lock()
+	defer h.correlationRunMu.Unlock()
+	if h.correlationRunLast == nil {
+		h.correlationRunLast = map[string]time.Time{}
+	}
+	if previous := h.correlationRunLast[scopeKey]; !previous.IsZero() && now.Sub(previous) < autoCorrelationEnqueueMinInterval {
+		return false
+	}
+	h.correlationRunLast[scopeKey] = now
+	if len(h.correlationRunLast) > 1024 {
+		for key, value := range h.correlationRunLast {
+			if now.Sub(value) > 10*autoCorrelationEnqueueMinInterval {
+				delete(h.correlationRunLast, key)
+			}
+		}
+	}
+	return true
+}
+
+func autoCorrelationScopeKey(organizationSlug string, projectSlug string, environmentSlug string, appSlug string) string {
+	return strings.Join([]string{
+		strings.TrimSpace(organizationSlug),
+		strings.TrimSpace(projectSlug),
+		strings.TrimSpace(environmentSlug),
+		strings.TrimSpace(appSlug),
+	}, "\x00")
+}
+
+func isIngestLogAccessCorrelationCandidate(event domain.IngestEvent) bool {
+	status := payloadInt(event.Payload, "status_code")
+	method := strings.ToUpper(strings.TrimSpace(payloadStringAny(event.Payload, "method", "")))
+	path := strings.ToLower(payloadStringAny(event.Payload, "path", event.Target))
+	remoteNetwork := strings.ToLower(payloadStringAny(event.Payload, "remote_network", ""))
+	if remoteNetwork == "tor_exit" || payloadBoolAny(event.Payload, "remote_is_tor") {
+		return true
+	}
+	if status >= 500 || status == 401 || status == 403 {
+		return true
+	}
+	if isAdminLikePath(path) {
+		return true
+	}
+	return method == "POST" && (strings.Contains(path, "login") || strings.Contains(path, "password") || strings.Contains(path, "reset"))
+}
+
+func payloadBoolAny(payload map[string]any, key string) bool {
+	switch value := payload[key].(type) {
+	case bool:
+		return value
+	case string:
+		switch strings.ToLower(strings.TrimSpace(value)) {
+		case "true", "1", "yes":
+			return true
+		default:
+			return false
+		}
+	default:
+		return false
+	}
 }
 
 func isFileMutationEventType(eventType string) bool {

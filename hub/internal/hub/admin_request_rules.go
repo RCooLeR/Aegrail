@@ -18,6 +18,7 @@ type adminRequestObservation struct {
 	Event             domain.TimelineEvent
 	Key               string
 	RemoteFingerprint string
+	RemoteAddress     string
 	RemoteKnown       bool
 	Method            string
 	Path              string
@@ -86,6 +87,7 @@ func adminRequestObservationFromEvent(event domain.TimelineEvent) (adminRequestO
 	}
 	method := strings.ToUpper(payloadStringAny(event.Payload, "method", ""))
 	remoteFingerprint, remoteKnown := remoteAddressFingerprint(event.Payload)
+	remoteAddress := remoteAddressDisplayLabel(event.Payload, remoteFingerprint)
 	status := payloadInt(event.Payload, "status_code")
 	displayPath := path
 	if isPasswordResetRequestText(path, requestText) {
@@ -95,6 +97,7 @@ func adminRequestObservationFromEvent(event domain.TimelineEvent) (adminRequestO
 		Event:             event,
 		Key:               correlationEventKey(event),
 		RemoteFingerprint: remoteFingerprint,
+		RemoteAddress:     remoteAddress,
 		RemoteKnown:       remoteKnown,
 		Method:            method,
 		Path:              path,
@@ -143,7 +146,7 @@ func adminSuccessAfterFailuresChains(observations []adminRequestObservation, cov
 			Title:      "Admin request succeeded after failures",
 			Severity:   domain.SeverityHigh,
 			Confidence: domain.ConfidenceMedium,
-			Summary:    fmt.Sprintf("admin request from remote %s succeeded after %d failed/probe request(s)", observation.RemoteFingerprint, len(failures)),
+			Summary:    fmt.Sprintf("admin request from remote %s succeeded after %d failed/probe request(s)", observation.RemoteAddress, len(failures)),
 			Events:     ruleEvents,
 		}))
 	}
@@ -191,7 +194,7 @@ func adminBurstChainsByKind(observations []adminRequestObservation, covered map[
 			Title:      title,
 			Severity:   severity,
 			Confidence: confidence,
-			Summary:    fmt.Sprintf("%d admin request(s) from remote %s within %s", len(group), observation.RemoteFingerprint, adminAnomalyWindow),
+			Summary:    fmt.Sprintf("%d admin request(s) from remote %s within %s", len(group), observation.RemoteAddress, adminAnomalyWindow),
 			Events:     group,
 		}))
 	}
@@ -212,7 +215,7 @@ func adminToolProbeChains(observations []adminRequestObservation, covered map[st
 			Title:      "Admin tool probe",
 			Severity:   domain.SeverityLow,
 			Confidence: domain.ConfidenceMedium,
-			Summary:    fmt.Sprintf("admin tool probe from remote %s: %s", observation.RemoteFingerprint, observation.Path),
+			Summary:    fmt.Sprintf("admin tool probe from remote %s: %s", observation.RemoteAddress, observation.Path),
 			Events:     []adminRequestObservation{observation},
 		}))
 	}
@@ -233,7 +236,7 @@ func passwordResetRequestChains(observations []adminRequestObservation, covered 
 		},
 		summary: func(group []adminRequestObservation) string {
 			first := group[0]
-			return fmt.Sprintf("%d password reset request(s) from remote %s on %s within %s", len(group), first.RemoteFingerprint, first.Path, adminAnomalyWindow)
+			return fmt.Sprintf("%d password reset request(s) from remote %s on %s within %s", len(group), first.RemoteAddress, first.Path, adminAnomalyWindow)
 		},
 	})
 }
@@ -254,7 +257,7 @@ func adminLoginRequestChains(observations []adminRequestObservation, covered map
 			if anyAdminLoginLikelySuccess(group) {
 				outcome = "success likely"
 			}
-			return fmt.Sprintf("%d admin login request(s) from remote %s on %s within %s; outcome: %s", len(group), first.RemoteFingerprint, first.Path, adminAnomalyWindow, outcome)
+			return fmt.Sprintf("%d admin login request(s) from remote %s on %s within %s; outcome: %s", len(group), first.RemoteAddress, first.Path, adminAnomalyWindow, outcome)
 		},
 	})
 }
@@ -507,6 +510,31 @@ func resetRequestDisplayPath(payload map[string]any, path string) string {
 }
 
 func remoteAddressFingerprint(payload map[string]any) (string, bool) {
+	remote := remoteAddressValue(payload)
+	if remote == "" {
+		if hash := strings.TrimSpace(payloadStringAny(payload, "remote_addr_sha256", "")); hash != "" {
+			return compactHashLabel(hash), true
+		}
+		return "unknown", false
+	}
+	return sha256Short(remote), true
+}
+
+func remoteAddressDisplayLabel(payload map[string]any, fallback string) string {
+	remote := remoteAddressValue(payload)
+	if remote != "" {
+		return remote
+	}
+	if hash := strings.TrimSpace(payloadStringAny(payload, "remote_addr_sha256", "")); hash != "" {
+		return "hash " + compactHashLabel(hash)
+	}
+	if strings.TrimSpace(fallback) != "" {
+		return fallback
+	}
+	return "unknown"
+}
+
+func remoteAddressValue(payload map[string]any) string {
 	remote := payloadStringAny(payload, "remote_addr", "")
 	if remote == "" {
 		remote = payloadStringAny(payload, "client_ip", "")
@@ -515,9 +543,17 @@ func remoteAddressFingerprint(payload map[string]any) (string, bool) {
 		remote = payloadStringAny(payload, "real_ip", "")
 	}
 	if remote == "" {
-		return "unknown", false
+		return ""
 	}
-	return sha256Short(remote), true
+	return strings.TrimSpace(remote)
+}
+
+func compactHashLabel(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) <= 24 {
+		return value
+	}
+	return value[:24]
 }
 
 func reverseAdminObservations(values []adminRequestObservation) {

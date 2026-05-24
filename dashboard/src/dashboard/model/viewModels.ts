@@ -157,10 +157,19 @@ export function browserScriptLabel(script: BrowserScriptRow["script"]) {
   if (script.domain) {
     return script.domain;
   }
+  if (script.inline_preview) {
+    return `inline: ${compactInlineScriptPreview(script.inline_preview, 88)}`;
+  }
   if (script.sha256) {
     return `inline ${script.sha256.slice(0, 12)}...`;
   }
   return script.target || "browser script";
+}
+
+export function compactInlineScriptPreview(value: string, limit = 160) {
+  const compact = value.replace(/\s+/g, " ").trim();
+  if (compact.length <= limit) return compact;
+  return `${compact.slice(0, Math.max(0, limit - 3)).trim()}...`;
 }
 
 export function summarizeEstate(instances: InstanceModel[], issueRows: IssueRow[], signalRows: SignalRow[]): DashboardStats {
@@ -322,7 +331,7 @@ function serviceForFinding(finding: HubFinding, rule?: RuleDefinition) {
   return "Web";
 }
 
-function serviceForEvent(event: TimelineEvent) {
+export function serviceForEvent(event: TimelineEvent) {
   if (event.type.startsWith("browser.")) return "Browser";
   if (event.type.startsWith("db.")) return "Database";
   if (event.type.startsWith("log.")) return "Logs";
@@ -386,6 +395,9 @@ function appKindLabel(kind: string) {
     case "mautic": return "Mautic";
     case "yii2-rbac": return "Yii2 RBAC";
     case "laravel": return "Laravel";
+    case "static": return "Static site";
+    case "react": return "React";
+    case "nodejs": return "Node.js";
     default: return titleCase(kind || "app");
   }
 }

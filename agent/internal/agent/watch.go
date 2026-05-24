@@ -318,6 +318,59 @@ func profileWatchPaths(root string, profile string) []string {
 			filepath.Join(root, "public", "index.php"),
 			filepath.Join(root, "public", ".htaccess"),
 		}
+	case "static", "static-site", "static-html":
+		return []string{
+			root,
+		}
+	case "react":
+		return []string{
+			filepath.Join(root, ".env"),
+			filepath.Join(root, ".env.local"),
+			filepath.Join(root, "package.json"),
+			filepath.Join(root, "package-lock.json"),
+			filepath.Join(root, "pnpm-lock.yaml"),
+			filepath.Join(root, "yarn.lock"),
+			filepath.Join(root, "vite.config.js"),
+			filepath.Join(root, "vite.config.ts"),
+			filepath.Join(root, "webpack.config.js"),
+			filepath.Join(root, "webpack.config.ts"),
+			filepath.Join(root, "next.config.js"),
+			filepath.Join(root, "next.config.mjs"),
+			filepath.Join(root, "tailwind.config.js"),
+			filepath.Join(root, "tailwind.config.ts"),
+			filepath.Join(root, "postcss.config.js"),
+			filepath.Join(root, "tsconfig.json"),
+			filepath.Join(root, "src"),
+			filepath.Join(root, "app"),
+			filepath.Join(root, "pages"),
+			filepath.Join(root, "components"),
+			filepath.Join(root, "public"),
+			filepath.Join(root, "index.html"),
+		}
+	case "node", "nodejs", "node.js":
+		return []string{
+			filepath.Join(root, ".env"),
+			filepath.Join(root, ".env.local"),
+			filepath.Join(root, "package.json"),
+			filepath.Join(root, "package-lock.json"),
+			filepath.Join(root, "pnpm-lock.yaml"),
+			filepath.Join(root, "yarn.lock"),
+			filepath.Join(root, "server.js"),
+			filepath.Join(root, "server.ts"),
+			filepath.Join(root, "index.js"),
+			filepath.Join(root, "index.ts"),
+			filepath.Join(root, "app.js"),
+			filepath.Join(root, "app.ts"),
+			filepath.Join(root, "src"),
+			filepath.Join(root, "app"),
+			filepath.Join(root, "config"),
+			filepath.Join(root, "routes"),
+			filepath.Join(root, "controllers"),
+			filepath.Join(root, "middleware"),
+			filepath.Join(root, "models"),
+			filepath.Join(root, "prisma"),
+			filepath.Join(root, "migrations"),
+		}
 	default:
 		return nil
 	}
@@ -545,10 +598,19 @@ func shouldSkipDir(path string, queueAbs string) bool {
 		return true
 	}
 	abs, err := filepath.Abs(path)
-	if err == nil && queueAbs != "" && strings.HasPrefix(abs, queueAbs) {
+	if err == nil && queueAbs != "" && pathWithinOrEqual(queueAbs, abs) {
 		return true
 	}
 	return false
+}
+
+func pathWithinOrEqual(parent string, child string) bool {
+	parent = filepath.Clean(parent)
+	child = filepath.Clean(child)
+	if parent == "" || child == "" {
+		return false
+	}
+	return child == parent || strings.HasPrefix(child, parent+string(filepath.Separator))
 }
 
 func isNoisyRuntimeDir(base string) bool {
@@ -585,7 +647,7 @@ func shouldSkipNoisyPath(path string) bool {
 }
 
 func isLowSignalStaticAssetPath(path string) bool {
-	if !isCodePackagePath(path) {
+	if !isCodePackagePath(path) && !isStaticAssetTreePath(path) {
 		return false
 	}
 	switch filepath.Ext(path) {
@@ -606,6 +668,19 @@ func isLowSignalGeneratedAssetPath(path string) bool {
 	default:
 		return false
 	}
+}
+
+func isStaticAssetTreePath(path string) bool {
+	return hasPathSegment(path, "assets") ||
+		hasPathSegment(path, "asset") ||
+		hasPathSegment(path, "images") ||
+		hasPathSegment(path, "image") ||
+		hasPathSegment(path, "img") ||
+		hasPathSegment(path, "fonts") ||
+		hasPathSegment(path, "font") ||
+		hasPathSegment(path, "media") ||
+		hasPathSegment(path, "videos") ||
+		hasPathSegment(path, "video")
 }
 
 func isGeneratedAssetPath(path string) bool {
@@ -970,6 +1045,15 @@ func detectFileEvidence(path string) fileEvidenceDetails {
 	if base == ".env" {
 		return fileEvidenceDetails{Area: "config", Component: "environment", DeployEvidence: true}
 	}
+	if isReactEntrypoint(normalized, base) {
+		return fileEvidenceDetails{Platform: "react", Area: "frontend_source", Component: "entrypoint", DeployEvidence: true}
+	}
+	if isStaticEntrypoint(normalized, base) {
+		return fileEvidenceDetails{Platform: "static", Area: "public_entrypoint", Component: "document", DeployEvidence: true}
+	}
+	if isNodeJSSourcePath(padded, base, ext) {
+		return fileEvidenceDetails{Platform: "nodejs", Area: "backend_source", Component: nodeJSComponentForPath(padded, base), DeployEvidence: true}
+	}
 
 	switch {
 	case strings.Contains(padded, "/wp-content/plugins/"):
@@ -1076,10 +1160,59 @@ func isDependencyManifest(base string) bool {
 
 func isBuildConfig(base string) bool {
 	switch strings.ToLower(strings.TrimSpace(base)) {
-	case "vite.config.js", "vite.config.ts", "tailwind.config.js", "postcss.config.js", "webpack.config.js":
+	case "vite.config.js", "vite.config.ts", "tailwind.config.js", "tailwind.config.ts", "postcss.config.js", "webpack.config.js", "webpack.config.ts", "next.config.js", "next.config.mjs", "tsconfig.json":
 		return true
 	default:
 		return false
+	}
+}
+
+func isReactEntrypoint(path string, base string) bool {
+	if base == "index.html" || base == "main.jsx" || base == "main.tsx" || base == "app.jsx" || base == "app.tsx" {
+		return true
+	}
+	return strings.HasPrefix(path, "src/") && (strings.HasSuffix(path, ".jsx") || strings.HasSuffix(path, ".tsx"))
+}
+
+func isStaticEntrypoint(path string, base string) bool {
+	if base == "index.html" || base == "service-worker.js" || base == "sw.js" || base == "manifest.json" || base == "robots.txt" {
+		return true
+	}
+	return strings.HasSuffix(path, ".html")
+}
+
+func isNodeJSSourcePath(padded string, base string, ext string) bool {
+	if ext != ".js" && ext != ".mjs" && ext != ".cjs" && ext != ".ts" {
+		return false
+	}
+	switch base {
+	case "server.js", "server.ts", "index.js", "index.ts", "app.js", "app.ts":
+		return true
+	}
+	return strings.Contains(padded, "/src/") ||
+		strings.Contains(padded, "/routes/") ||
+		strings.Contains(padded, "/controllers/") ||
+		strings.Contains(padded, "/middleware/") ||
+		strings.Contains(padded, "/models/") ||
+		strings.Contains(padded, "/config/")
+}
+
+func nodeJSComponentForPath(padded string, base string) string {
+	switch {
+	case base == "server.js" || base == "server.ts" || base == "app.js" || base == "app.ts" || base == "index.js" || base == "index.ts":
+		return "entrypoint"
+	case strings.Contains(padded, "/routes/"):
+		return "route"
+	case strings.Contains(padded, "/controllers/"):
+		return "controller"
+	case strings.Contains(padded, "/middleware/"):
+		return "middleware"
+	case strings.Contains(padded, "/models/"):
+		return "model"
+	case strings.Contains(padded, "/config/"):
+		return "config"
+	default:
+		return "source"
 	}
 }
 
@@ -1269,7 +1402,8 @@ func sortStrings(values []string) {
 
 func appRelativePath(rootAbs string, pathAbs string) (string, bool) {
 	relativePath, err := filepath.Rel(rootAbs, pathAbs)
-	if err != nil || relativePath == "." || strings.HasPrefix(relativePath, "..") || filepath.IsAbs(relativePath) {
+	if err != nil || relativePath == "." || relativePath == ".." ||
+		strings.HasPrefix(relativePath, ".."+string(filepath.Separator)) || filepath.IsAbs(relativePath) {
 		return "", false
 	}
 	return filepath.ToSlash(relativePath), true

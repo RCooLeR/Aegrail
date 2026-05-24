@@ -364,6 +364,20 @@ export async function loadEstateDashboard(scope: ApiScope): Promise<EstateDashbo
   return { health, instances, rules, scopes };
 }
 
+export async function loadTimelineEventsByID(scope: ApiScope, eventIDs: string[]): Promise<TimelineEvent[]> {
+  const ids = Array.from(new Set(eventIDs.map((eventID) => eventID.trim()).filter(Boolean))).slice(0, 200);
+  if (!ids.length) {
+    return [];
+  }
+  const params = new URLSearchParams(query(scope));
+  for (const eventID of ids) {
+    params.append("id", eventID);
+  }
+  return apiGet<ApiEnvelope<{ events: TimelineEvent[] }>>(scope, `/api/v1/timeline?${params.toString()}`).then(
+    (body) => body.events ?? []
+  );
+}
+
 async function loadEstateInstanceDashboard(
   scope: ApiScope,
   shared: Pick<DashboardData, "health" | "rules" | "scopes">,
@@ -821,11 +835,11 @@ export async function createDeployment(
   }
 ) {
   const params = query(scope);
-  return apiPost<ApiEnvelope<{ deployment: Deployment }>>(
+  return apiPost<ApiEnvelope<{ deployment: Deployment; acknowledged_findings?: number }>>(
     scope,
     `/api/v1/deployments?${params}`,
     input
-  ).then((body) => body.deployment);
+  );
 }
 
 export async function updateBrowserAllowlistEntryStatus(

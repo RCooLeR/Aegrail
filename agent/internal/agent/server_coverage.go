@@ -89,6 +89,7 @@ type ServerConfigCoverageDatabases struct {
 	Engines             []string `json:"engines,omitempty"`
 	Profiles            []string `json:"profiles,omitempty"`
 	AllDSNEnvConfigured bool     `json:"all_dsn_env_configured"`
+	AllPersistent       bool     `json:"all_persistent"`
 }
 
 type ServerConfigCoverageBrowser struct {
@@ -241,6 +242,7 @@ func serverConfigCoverageDetail(site ServerSiteConfig) ServerConfigCoverageDetai
 		Engines:             serverDatabaseEngines(site.Databases),
 		Profiles:            serverDatabaseProfiles(site),
 		AllDSNEnvConfigured: serverDatabasesHaveDSNEnv(site.Databases),
+		AllPersistent:       serverDatabasesPersistent(site.Databases),
 	}
 	browser := ServerConfigCoverageBrowser{
 		Enabled:        site.BrowserCrawl.Enabled,
@@ -454,6 +456,10 @@ func coverageDatabaseProfile(site ServerSiteConfig, database ServerDatabaseConfi
 		return "yii2-rbac"
 	case "laravel":
 		return "laravel"
+	case "static-site", "static-html":
+		return "static"
+	case "node", "node.js", "node-js":
+		return "nodejs"
 	default:
 		return strings.ToLower(profile)
 	}
@@ -465,6 +471,18 @@ func serverDatabasesHaveDSNEnv(databases []ServerDatabaseConfig) bool {
 	}
 	for _, database := range databases {
 		if strings.TrimSpace(database.DSNEnv) == "" {
+			return false
+		}
+	}
+	return true
+}
+
+func serverDatabasesPersistent(databases []ServerDatabaseConfig) bool {
+	if len(databases) == 0 {
+		return false
+	}
+	for _, database := range databases {
+		if database.Persistent != nil && !*database.Persistent {
 			return false
 		}
 	}

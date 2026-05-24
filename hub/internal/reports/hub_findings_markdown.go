@@ -365,7 +365,7 @@ func nextChecksForFinding(finding HubFindingJSONRecord) []string {
 		}
 	case strings.Contains(rule, "tor") || strings.Contains(rule, "request") || strings.Contains(rule, "admin"):
 		return []string{
-			"Review normalized access logs around the finding window for repeated source fingerprints and admin paths.",
+			"Review normalized access logs around the finding window for repeated source IPs and admin paths.",
 			"Compare the request pattern against known monitoring, uptime, CDN, or WAF traffic.",
 		}
 	default:

@@ -195,6 +195,104 @@ func TestShouldAutoCorrelateIgnoresFileScanHeartbeat(t *testing.T) {
 	}}) {
 		t.Fatalf("file.modified should trigger correlation")
 	}
+	if shouldAutoCorrelateIngestEvents([]domain.IngestEvent{{
+		EventType: "log.access",
+		Severity:  domain.SeverityInfo,
+		Target:    "/2-accueil",
+		Payload: map[string]any{
+			"method":      "GET",
+			"path":        "/2-accueil",
+			"status_code": 200,
+		},
+	}}) {
+		t.Fatalf("low-signal successful access log should not trigger correlation")
+	}
+	if !shouldAutoCorrelateIngestEvents([]domain.IngestEvent{{
+		EventType: "log.access",
+		Severity:  domain.SeverityInfo,
+		Target:    "/wp-login.php",
+		Payload: map[string]any{
+			"method":      "POST",
+			"path":        "/wp-login.php",
+			"status_code": 302,
+		},
+	}}) {
+		t.Fatalf("admin/login access log should trigger correlation")
+	}
+	if !shouldAutoCorrelateIngestEvents([]domain.IngestEvent{{
+		EventType: "log.access",
+		Severity:  domain.SeverityInfo,
+		Target:    "/",
+		Payload: map[string]any{
+			"method":         "GET",
+			"path":           "/",
+			"status_code":    200,
+			"remote_network": "tor_exit",
+		},
+	}}) {
+		t.Fatalf("tor access log should trigger correlation")
+	}
+}
+
+func TestAutoCorrelationEnqueueCoalescesHotScope(t *testing.T) {
+	queue := &memoryJobQueue{}
+	hub := New(Dependencies{
+		Findings: newMemoryHubFindingRepository(),
+		Jobs:     queue,
+	})
+	now := time.Date(2026, 5, 23, 21, 36, 0, 0, time.UTC)
+	events := []domain.IngestEvent{{
+		EventTime: now,
+		EventType: "db.entity.added",
+		Severity:  domain.SeverityHigh,
+	}}
+	if !hub.enqueueAutoCorrelation(context.Background(), "acme", "site", "production", "main-web", events) {
+		t.Fatalf("first enqueue should be accepted")
+	}
+	if !hub.enqueueAutoCorrelation(context.Background(), "acme", "site", "production", "main-web", events) {
+		t.Fatalf("coalesced enqueue should still be treated as handled")
+	}
+	if got := len(queue.enqueued[ingestCorrelationQueueName]); got != 1 {
+		t.Fatalf("queued jobs = %d, want one coalesced job", got)
+	}
+}
+
+func TestHandleCorrelationJobSkipsStaleBacklog(t *testing.T) {
+	hub := New(Dependencies{})
+	payload, err := json.Marshal(ingestCorrelationJob{
+		Schema:           ingestCorrelationJobSchema,
+		OrganizationSlug: "acme",
+		ProjectSlug:      "site",
+		EnvironmentSlug:  "production",
+		AppSlug:          "main-web",
+		QueuedAt:         time.Now().Add(-defaultCorrelationJobMaxAge - time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("Marshal returned error: %v", err)
+	}
+	if err := hub.HandleCorrelationJob(context.Background(), payload); err != nil {
+		t.Fatalf("HandleCorrelationJob returned error for stale job: %v", err)
+	}
+}
+
+func TestHandleCorrelationJobCoalescesHotBacklog(t *testing.T) {
+	hub := New(Dependencies{})
+	key := autoCorrelationScopeKey("acme", "site", "production", "main-web")
+	hub.correlationRunLast[key] = time.Now()
+	payload, err := json.Marshal(ingestCorrelationJob{
+		Schema:           ingestCorrelationJobSchema,
+		OrganizationSlug: "acme",
+		ProjectSlug:      "site",
+		EnvironmentSlug:  "production",
+		AppSlug:          "main-web",
+		QueuedAt:         time.Now(),
+	})
+	if err != nil {
+		t.Fatalf("Marshal returned error: %v", err)
+	}
+	if err := hub.HandleCorrelationJob(context.Background(), payload); err != nil {
+		t.Fatalf("HandleCorrelationJob returned error for coalesced job: %v", err)
+	}
 }
 
 type memoryJobQueue struct {

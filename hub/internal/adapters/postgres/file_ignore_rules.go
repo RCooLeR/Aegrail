@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rcooler/aegrail/hub/internal/domain"
@@ -76,17 +77,40 @@ func (r *HubFileIgnoreRuleRepository) SaveHubFileIgnoreRule(ctx context.Context,
 }
 
 func (r *HubFileIgnoreRuleRepository) ListActiveHubFileIgnoreRules(ctx context.Context, environmentID domain.ID, appID domain.ID) ([]domain.HubFileIgnoreRule, error) {
-	const query = `
+	const environmentQuery = `
 		SELECT id::text, organization_id::text, project_id::text, environment_id::text,
 			coalesce(app_id::text, ''), match_kind, match_value, normalized_value, reason,
 			created_by, status, created_at, updated_at
 		FROM hub_file_ignore_rules
 		WHERE environment_id = $1
 			AND status = 'active'
-			AND ($2::text = '' OR app_id IS NULL OR app_id = nullif($2::text, '')::uuid)
 		ORDER BY created_at DESC
 	`
-	rows, err := r.pool.Query(ctx, query, environmentID, string(appID))
+	const appQuery = `
+		SELECT id::text, organization_id::text, project_id::text, environment_id::text,
+			coalesce(app_id::text, ''), match_kind, match_value, normalized_value, reason,
+			created_by, status, created_at, updated_at
+		FROM hub_file_ignore_rules
+		WHERE environment_id = $1
+			AND status = 'active'
+			AND app_id IS NULL
+		UNION ALL
+		SELECT id::text, organization_id::text, project_id::text, environment_id::text,
+			coalesce(app_id::text, ''), match_kind, match_value, normalized_value, reason,
+			created_by, status, created_at, updated_at
+		FROM hub_file_ignore_rules
+		WHERE environment_id = $1
+			AND status = 'active'
+			AND app_id = $2::uuid
+		ORDER BY created_at DESC
+	`
+	query := environmentQuery
+	args := []any{environmentID}
+	if strings.TrimSpace(string(appID)) != "" {
+		query = appQuery
+		args = []any{environmentID, string(appID)}
+	}
+	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

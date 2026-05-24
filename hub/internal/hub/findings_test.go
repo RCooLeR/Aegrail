@@ -2,6 +2,7 @@ package hub
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -75,11 +76,61 @@ func TestUpdateHubFindingStatusValidatesAndUpdatesFinding(t *testing.T) {
 
 type memoryNotificationSink struct {
 	items []ports.HubFindingNotification
+	err   error
 }
 
 func (s *memoryNotificationSink) NotifyHubFinding(_ context.Context, notification ports.HubFindingNotification) error {
 	s.items = append(s.items, notification)
+	if s.err != nil {
+		return s.err
+	}
 	return nil
+}
+
+func TestUpdateHubFindingStatusDoesNotFailWhenNotificationFails(t *testing.T) {
+	inventory := newMemoryInventoryRepository()
+	findings := newMemoryHubFindingRepository()
+	notifications := &memoryNotificationSink{err: errors.New("push provider unavailable")}
+	hub := New(Dependencies{Inventory: inventory, Findings: findings, Notifications: notifications})
+	ctx := context.Background()
+
+	environment, app, _, _ := bootstrapDatabaseDiffInventory(t, ctx, hub, "wordpress")
+	now := time.Date(2026, 5, 12, 15, 30, 0, 0, time.UTC)
+	saved, err := findings.SaveHubFindings(ctx, []domain.HubFinding{{
+		OrganizationID: environment.ProjectID,
+		ProjectID:      "project-1",
+		EnvironmentID:  environment.ID,
+		AppID:          app.ID,
+		RuleID:         "wordpress-admin-user-added",
+		RuleVersion:    "2026-05-12.1",
+		DedupeKey:      "finding-key-notify-fails",
+		Severity:       domain.SeverityHigh,
+		Confidence:     domain.ConfidenceHigh,
+		Title:          "WordPress administrator added",
+		FirstEventAt:   now,
+		LastEventAt:    now,
+	}})
+	if err != nil {
+		t.Fatalf("SaveHubFindings returned error: %v", err)
+	}
+
+	updated, err := hub.UpdateHubFindingStatus(ctx, UpdateHubFindingStatusInput{
+		OrganizationSlug: "acme",
+		ProjectSlug:      "customer-site",
+		EnvironmentSlug:  "production",
+		FindingID:        string(saved[0].ID),
+		Status:           "ack",
+		Actor:            "roman",
+	})
+	if err != nil {
+		t.Fatalf("UpdateHubFindingStatus returned error: %v", err)
+	}
+	if updated.Status != "acknowledged" {
+		t.Fatalf("updated finding = %#v, want acknowledged despite notification failure", updated)
+	}
+	if len(notifications.items) != 1 {
+		t.Fatalf("notifications = %#v, want attempted delivery", notifications.items)
+	}
 }
 
 func TestAcceptHubFindingsBaselineMarksOpenFindingsAcknowledged(t *testing.T) {
