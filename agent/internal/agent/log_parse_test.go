@@ -226,6 +226,9 @@ func TestAccessLogFilterDropsRoutineSuccessfulPublicRequests(t *testing.T) {
 		{name: "public options request", method: "OPTIONS", target: "/api/products", status: 204, drop: true},
 		{name: "public post kept", method: "POST", target: "/checkout", status: 200, drop: false},
 		{name: "public api post dropped", method: "POST", target: "/api/catalog", status: 200, drop: true},
+		{name: "localized rest api login dropped", method: "POST", target: "/fr/api/restapi/user/login", status: 200, drop: true},
+		{name: "localized rest api client error dropped", method: "POST", target: "/us/api/restapi/user/login", status: 403, drop: true},
+		{name: "localized rest api server error kept", method: "POST", target: "/fr/api/restapi/user/login", status: 500, drop: false},
 		{name: "public not found kept", method: "GET", target: "/maybe-probe", status: 404, drop: false},
 		{name: "admin success kept", method: "GET", target: "/admin430oqyeka/index.php", status: 200, drop: false},
 		{name: "php script success kept", method: "GET", target: "/modules/payment/callback.php", status: 200, drop: false},
@@ -277,6 +280,38 @@ func TestAccessLogFiltersKeepPasswordResetPaths(t *testing.T) {
 			event.Labels = mergeStringMaps(event.Labels, map[string]string{"site_kind": tc.siteKind})
 			if shouldDropNoisyLogEvent(event) {
 				t.Fatalf("event = %#v, want password reset path kept", event)
+			}
+		})
+	}
+}
+
+func TestAccessLogFilterDropsWordPressCustomerPasswordRoutes(t *testing.T) {
+	cases := []struct {
+		name   string
+		method string
+		target string
+		status int
+		extra  map[string]any
+		drop   bool
+	}{
+		{name: "customer reset page", method: "GET", target: "/reset-password/", status: 200, drop: true},
+		{name: "customer reset submit", method: "POST", target: "/reset-password/", status: 302, drop: true},
+		{name: "customer lost password", method: "GET", target: "/my-account/lost-password/", status: 200, drop: true},
+		{name: "wordpress core lostpassword kept", method: "POST", target: "/wp-login.php?action=lostpassword", status: 302, drop: false},
+		{name: "tor reset page kept", method: "GET", target: "/reset-password/", status: 200, extra: map[string]any{"remote_is_tor": true}, drop: false},
+		{name: "reset error kept", method: "GET", target: "/reset-password/", status: 500, drop: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			event := logLineEvent("/var/log/nginx/access.log", logLine{
+				Text: fmt.Sprintf(`203.0.113.10 - - [12/May/2026:09:10:11 +0000] "%s %s HTTP/1.1" %d 42 "-" "Mozilla/5.0"`, tc.method, tc.target, tc.status),
+			})
+			event.Labels = mergeStringMaps(event.Labels, map[string]string{"site_kind": "wordpress"})
+			for key, value := range tc.extra {
+				event.Payload[key] = value
+			}
+			if got := shouldDropNoisyLogEvent(event); got != tc.drop {
+				t.Fatalf("shouldDropNoisyLogEvent() = %t, want %t for %#v", got, tc.drop, event)
 			}
 		})
 	}

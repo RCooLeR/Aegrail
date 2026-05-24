@@ -202,10 +202,18 @@ The access log can prove that a login or reset request was made. It cannot alway
 Global access-log filtering:
 
 - Routine successful public `GET`, `HEAD`, and `OPTIONS` requests below `400` are dropped for every platform. Routine successful public API `POST`, `PUT`, and `PATCH` requests below `400` for `/api`, `/rest`, and `/graphql` paths are also dropped. Aegrail is not a web analytics pipeline; paths like category pages, home pages, locale roots, public API polling, and ordinary public browsing should not become Hub timeline rows.
+- Localized application REST endpoints below `500`, such as `/<country>/api/restapi/*`, are dropped even when the path contains words like `login`; those are treated as customer/API traffic, not admin login evidence.
 - Routine static asset requests below `500` are dropped for every platform. This includes common CSS/JS/map/image/font/media suffixes, so PrestaShop `/modules/.../*.js` and `/modules/.../*.css` cache hits do not become log events or volume findings.
 - Static asset server errors are kept because they can explain broken deployments or infrastructure problems.
 - Non-API public `POST` requests, such as checkout or form flows, are kept unless a platform-specific filter identifies them as routine tracking noise.
 - Direct PHP probes, admin/login/account-recovery paths, Tor-marked requests, client errors, and application/server errors remain high-signal evidence.
+
+WordPress access-log filtering:
+
+- Customer-facing password pages such as `/reset-password/`, `/forgot-password/`,
+  `/lost-password/`, and `/my-account/lost-password/` are treated as routine
+  account traffic when they complete successfully. The real WordPress admin
+  reset signal, such as `/wp-login.php?action=lostpassword`, is still kept.
 
 Mautic access-log filtering:
 

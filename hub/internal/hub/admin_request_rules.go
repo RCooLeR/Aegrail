@@ -82,13 +82,19 @@ func adminRequestObservationFromEvent(event domain.TimelineEvent) (adminRequestO
 	rawPath := payloadStringAny(event.Payload, "path", event.Target)
 	path := normalizedRequestPath(rawPath)
 	requestText := requestObservationText(event.Payload, rawPath)
+	method := strings.ToUpper(payloadStringAny(event.Payload, "method", ""))
+	status := payloadInt(event.Payload, "status_code")
+	if isRoutineLocalizedRestAPIAccess(path, method, status, event.Payload) {
+		return adminRequestObservation{}, false
+	}
+	if isWordPressCustomerPasswordResetEvent(event, path, method, status) {
+		return adminRequestObservation{}, false
+	}
 	if path == "" || (!isAdminRequestPath(path) && !isPasswordResetRequestText(path, requestText)) {
 		return adminRequestObservation{}, false
 	}
-	method := strings.ToUpper(payloadStringAny(event.Payload, "method", ""))
 	remoteFingerprint, remoteKnown := remoteAddressFingerprint(event.Payload)
 	remoteAddress := remoteAddressDisplayLabel(event.Payload, remoteFingerprint)
-	status := payloadInt(event.Payload, "status_code")
 	displayPath := path
 	if isPasswordResetRequestText(path, requestText) {
 		displayPath = resetRequestDisplayPath(event.Payload, path)
@@ -105,6 +111,95 @@ func adminRequestObservationFromEvent(event domain.TimelineEvent) (adminRequestO
 		RequestText:       requestText,
 		Status:            status,
 	}, true
+}
+
+func isWordPressCustomerPasswordResetEvent(event domain.TimelineEvent, path string, method string, status int) bool {
+	if status <= 0 || status >= 400 {
+		return false
+	}
+	if payloadBoolAny(event.Payload, "remote_is_tor") || payloadBoolAny(event.Payload, "is_tor") {
+		return false
+	}
+	switch strings.ToUpper(strings.TrimSpace(method)) {
+	case "GET", "HEAD", "OPTIONS", "POST":
+	default:
+		return false
+	}
+	if !isWordPressEvent(event) {
+		return false
+	}
+	return isWordPressCustomerPasswordRoute(path)
+}
+
+func isWordPressEvent(event domain.TimelineEvent) bool {
+	for _, value := range []string{
+		event.Labels["site_kind"],
+		event.Labels["platform"],
+		payloadStringAny(event.Payload, "site_kind", ""),
+		payloadStringAny(event.Payload, "platform", ""),
+		payloadStringAny(event.Payload, "platform_hint", ""),
+	} {
+		switch strings.ToLower(strings.TrimSpace(value)) {
+		case "wordpress", "wordpress-multisite", "wp", "woocommerce":
+			return true
+		}
+	}
+	return false
+}
+
+func isWordPressCustomerPasswordRoute(path string) bool {
+	clean := "/" + strings.Trim(strings.ToLower(strings.TrimSpace(strings.Split(path, "?")[0])), "/")
+	switch clean {
+	case "/reset-password",
+		"/forgot-password",
+		"/lost-password",
+		"/my-account/lost-password":
+		return true
+	default:
+		return false
+	}
+}
+
+func isRoutineLocalizedRestAPIAccess(path string, method string, status int, payload map[string]any) bool {
+	if status <= 0 || status >= 500 {
+		return false
+	}
+	if payloadBoolAny(payload, "remote_is_tor") || payloadBoolAny(payload, "is_tor") {
+		return false
+	}
+	switch strings.ToUpper(strings.TrimSpace(method)) {
+	case "GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE":
+	default:
+		return false
+	}
+	return isLocalizedRestAPIPath(path)
+}
+
+func isLocalizedRestAPIPath(path string) bool {
+	clean := "/" + strings.Trim(strings.ToLower(strings.TrimSpace(strings.Split(path, "?")[0])), "/")
+	parts := strings.Split(strings.Trim(clean, "/"), "/")
+	return len(parts) >= 3 &&
+		isLocalePathSegment(parts[0]) &&
+		parts[1] == "api" &&
+		parts[2] == "restapi"
+}
+
+func isLocalePathSegment(value string) bool {
+	value = strings.TrimSpace(value)
+	if len(value) < 2 || len(value) > 12 {
+		return false
+	}
+	hasLetter := false
+	for _, char := range value {
+		switch {
+		case char >= 'a' && char <= 'z':
+			hasLetter = true
+		case char == '-':
+		default:
+			return false
+		}
+	}
+	return hasLetter
 }
 
 func adminSuccessAfterFailuresChains(observations []adminRequestObservation, covered map[string]struct{}) []CorrelationChain {

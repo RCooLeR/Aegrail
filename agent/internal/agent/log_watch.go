@@ -533,6 +533,12 @@ func shouldDropNoisyLogEvent(event EnqueueEventInput) bool {
 	if path == "" {
 		return false
 	}
+	if isWordPressSiteKind(siteKind) && isWordPressCustomerPasswordAccessPath(path, method, status, event.Payload) {
+		return true
+	}
+	if isRoutineLocalizedRestAPIAccess(path, method, status, event.Payload) {
+		return true
+	}
 	if !isSensitiveAccessPath(path) && isRoutineStaticAccessPath(path) {
 		return status < 500
 	}
@@ -562,6 +568,85 @@ func shouldDropNoisyLogEvent(event EnqueueEventInput) bool {
 		return true
 	}
 	return false
+}
+
+func isWordPressSiteKind(siteKind string) bool {
+	switch strings.ToLower(strings.TrimSpace(siteKind)) {
+	case "wordpress", "wordpress-multisite", "wp", "woocommerce":
+		return true
+	default:
+		return false
+	}
+}
+
+func isWordPressCustomerPasswordAccessPath(path string, method string, status int, payload map[string]any) bool {
+	if status <= 0 || status >= 500 {
+		return false
+	}
+	if payloadBool(payload, "remote_is_tor") || payloadBool(payload, "is_tor") {
+		return false
+	}
+	switch strings.ToUpper(strings.TrimSpace(method)) {
+	case "GET", "HEAD", "OPTIONS", "POST":
+	default:
+		return false
+	}
+	return isWordPressCustomerPasswordRoute(path)
+}
+
+func isWordPressCustomerPasswordRoute(path string) bool {
+	clean := "/" + strings.Trim(strings.ToLower(strings.TrimSpace(strings.Split(path, "?")[0])), "/")
+	switch clean {
+	case "/reset-password",
+		"/forgot-password",
+		"/lost-password",
+		"/my-account/lost-password":
+		return true
+	default:
+		return false
+	}
+}
+
+func isRoutineLocalizedRestAPIAccess(path string, method string, status int, payload map[string]any) bool {
+	if status <= 0 || status >= 500 {
+		return false
+	}
+	if payloadBool(payload, "remote_is_tor") || payloadBool(payload, "is_tor") {
+		return false
+	}
+	switch strings.ToUpper(strings.TrimSpace(method)) {
+	case "GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE":
+	default:
+		return false
+	}
+	return isLocalizedRestAPIPath(path)
+}
+
+func isLocalizedRestAPIPath(path string) bool {
+	clean := "/" + strings.Trim(strings.ToLower(strings.TrimSpace(strings.Split(path, "?")[0])), "/")
+	parts := strings.Split(strings.Trim(clean, "/"), "/")
+	return len(parts) >= 3 &&
+		isLocalePathSegment(parts[0]) &&
+		parts[1] == "api" &&
+		parts[2] == "restapi"
+}
+
+func isLocalePathSegment(value string) bool {
+	value = strings.TrimSpace(value)
+	if len(value) < 2 || len(value) > 12 {
+		return false
+	}
+	hasLetter := false
+	for _, char := range value {
+		switch {
+		case char >= 'a' && char <= 'z':
+			hasLetter = true
+		case char == '-':
+		default:
+			return false
+		}
+	}
+	return hasLetter
 }
 
 func isRoutineSuccessfulPublicAccessPath(path string, method string, status int, payload map[string]any) bool {
@@ -595,6 +680,7 @@ func isRoutinePublicAPIPath(path string, method string) bool {
 	clean := "/" + strings.Trim(strings.ToLower(strings.TrimSpace(path)), "/")
 	return clean == "/api" ||
 		strings.HasPrefix(clean, "/api/") ||
+		isLocalizedRestAPIPath(clean) ||
 		clean == "/rest" ||
 		strings.HasPrefix(clean, "/rest/") ||
 		clean == "/graphql" ||

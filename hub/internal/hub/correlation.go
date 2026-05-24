@@ -170,6 +170,9 @@ func isCorrelationCandidateTimelineEvent(event domain.TimelineEvent) bool {
 	if remoteNetwork == "tor_exit" || payloadBoolAny(event.Payload, "remote_is_tor") {
 		return true
 	}
+	if isRoutineLocalizedRestAPIAccess(path, method, status, event.Payload) {
+		return false
+	}
 	if status >= 400 {
 		return true
 	}
@@ -338,7 +341,11 @@ func isSuspiciousWebEvent(event domain.TimelineEvent) bool {
 		return severityRank(event.Severity) >= severityRank(domain.SeverityMedium)
 	case "log.access":
 		status := payloadInt(event.Payload, "status_code")
+		method := strings.ToUpper(strings.TrimSpace(payloadStringAny(event.Payload, "method", "")))
 		path := strings.ToLower(payloadStringAny(event.Payload, "path", event.Target))
+		if isRoutineLocalizedRestAPIAccess(path, method, status, event.Payload) {
+			return false
+		}
 		return status >= 500 ||
 			status == 401 ||
 			status == 403 ||

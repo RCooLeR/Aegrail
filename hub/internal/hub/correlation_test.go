@@ -738,6 +738,53 @@ func TestCorrelateEventsBuildsPasswordResetRequestChain(t *testing.T) {
 	}
 }
 
+func TestCorrelateEventsIgnoresWordPressCustomerPasswordRoutes(t *testing.T) {
+	now := time.Date(2026, 5, 12, 14, 20, 0, 0, time.UTC)
+	events := []domain.TimelineEvent{
+		accessEvent("evt-customer-reset-page", now, "GET", "/reset-password/", 200, "203.0.113.20", nil),
+		accessEvent("evt-customer-reset-submit", now.Add(time.Minute), "POST", "/reset-password/", 302, "203.0.113.20", nil),
+	}
+	for index := range events {
+		events[index].Labels = map[string]string{"site_kind": "wordpress"}
+	}
+
+	chains := correlateTimelineEvents(events, 30*time.Minute)
+	for _, chain := range chains {
+		if chain.RuleID == "web-password-reset-request" || chain.RuleID == "web-admin-login-request" {
+			t.Fatalf("chains = %#v, customer password route should not create admin/account finding", chains)
+		}
+	}
+}
+
+func TestCorrelateEventsIgnoresLocalizedRestAPITraffic(t *testing.T) {
+	now := time.Date(2026, 5, 12, 14, 25, 0, 0, time.UTC)
+	events := []domain.TimelineEvent{
+		accessEvent("evt-fr-api-login", now, "POST", "/fr/api/restapi/user/login", 200, "203.0.113.20", nil),
+		accessEvent("evt-us-api-login-denied", now.Add(time.Minute), "POST", "/us/api/restapi/user/login", 403, "203.0.113.21", nil),
+	}
+
+	chains := correlateTimelineEvents(events, 30*time.Minute)
+	for _, chain := range chains {
+		if strings.Contains(chain.RuleID, "admin") || strings.Contains(chain.RuleID, "password") || strings.Contains(chain.RuleID, "web-request") {
+			t.Fatalf("chains = %#v, localized API traffic should not create web/admin findings", chains)
+		}
+	}
+
+	apiServerError := accessEvent("evt-fr-api-error", now.Add(2*time.Minute), "POST", "/fr/api/restapi/user/login", 500, "203.0.113.22", nil)
+	if !isCorrelationCandidateTimelineEvent(apiServerError) {
+		t.Fatalf("server error API event should stay eligible for correlation")
+	}
+	apiClientError := domain.IngestEvent{EventType: "log.access", Target: "access.log", Payload: map[string]any{
+		"method":      "POST",
+		"path":        "/fr/api/restapi/user/login",
+		"status_code": 403,
+		"remote_addr": "203.0.113.23",
+	}}
+	if isIngestLogAccessCorrelationCandidate(apiClientError) {
+		t.Fatalf("localized API client/login traffic should not enqueue correlation")
+	}
+}
+
 func TestCorrelateEventsBuildsTrafficAndTorWebRequestChains(t *testing.T) {
 	now := time.Date(2026, 5, 12, 14, 30, 0, 0, time.UTC)
 	var events []domain.TimelineEvent

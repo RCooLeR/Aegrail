@@ -350,6 +350,9 @@ func isIngestLogAccessCorrelationCandidate(event domain.IngestEvent) bool {
 	if remoteNetwork == "tor_exit" || payloadBoolAny(event.Payload, "remote_is_tor") {
 		return true
 	}
+	if isRoutineLocalizedRestAPIAccess(path, method, status, event.Payload) {
+		return false
+	}
 	if status >= 500 || status == 401 || status == 403 {
 		return true
 	}
