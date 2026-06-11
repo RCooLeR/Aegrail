@@ -75,6 +75,12 @@ type DeleteHubUserInput struct {
 	UserID string
 }
 
+type ListHubAuthEventsInput struct {
+	Email string
+	Since time.Time
+	Limit int
+}
+
 var ErrHubTOTPNoPending = errors.New("no pending 2FA enrolment for this user")
 
 var ErrHubTOTPInvalidCode = errors.New("verification code is incorrect")
@@ -180,6 +186,25 @@ func (h *Hub) ListHubUsers(ctx context.Context) ([]domain.HubUser, error) {
 		return nil, errors.New("hub user repository is not configured")
 	}
 	return h.users.ListHubUsers(ctx)
+}
+
+func (h *Hub) ListHubAuthEvents(ctx context.Context, input ListHubAuthEventsInput) ([]domain.HubAuthEvent, error) {
+	if h.users == nil {
+		return nil, errors.New("hub user repository is not configured")
+	}
+	email := strings.TrimSpace(input.Email)
+	if email != "" {
+		normalized, err := normalizeHubUserEmail(email)
+		if err != nil {
+			return nil, err
+		}
+		email = normalized
+	}
+	since := input.Since
+	if since.IsZero() {
+		since = time.Now().UTC().Add(-24 * time.Hour)
+	}
+	return h.users.ListHubAuthEvents(ctx, email, since, input.Limit)
 }
 
 func (h *Hub) UpdateHubUser(ctx context.Context, input UpdateHubUserInput) (domain.HubUser, error) {

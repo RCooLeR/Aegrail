@@ -10,6 +10,7 @@ Current services:
 Docs:
 
 - [Install](install.md)
+- [Backup And Restore Runbook](../runbooks/backup-restore.md)
 - [Docker Examples](../../docker/examples/README.md)
 
 Code:

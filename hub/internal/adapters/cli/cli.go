@@ -38,6 +38,7 @@ func hubCommandSet(meta domain.AppMeta) []*urfavecli.Command {
 		hubBrowserScriptsCommand(meta),
 		hubModelAnalysisCommand(meta),
 		hubRulesCommand(),
+		hubUsersCommand(meta),
 		notificationsCommand(),
 		inventoryCommand(meta),
 		wireCommand(),
@@ -142,6 +143,39 @@ func hubServeCommand(meta domain.AppMeta) *urfavecli.Command {
 					Limit:    c.Int("model-analysis-limit"),
 					OnError: func(err error) {
 						container.Logger.Error().Err(err).Msg("model analysis worker failed")
+					},
+				})
+			}
+			if container.Config.Hub.MaintenanceEvery > 0 {
+				container.Hub.StartMaintenanceWorker(ctx, hubapp.MaintenanceWorkerOptions{
+					Interval:                 container.Config.Hub.MaintenanceEvery,
+					EventRetention:           container.Config.Hub.RetentionEvents,
+					ResolvedFindingRetention: container.Config.Hub.RetentionResolvedFindings,
+					ModelReportRetention:     container.Config.Hub.RetentionModelReports,
+					AuthEventRetention:       container.Config.Hub.RetentionAuthEvents,
+					BatchSize:                container.Config.Hub.RetentionBatchSize,
+					OnRun: func(result domain.HubMaintenancePruneResult) {
+						log := container.Logger.Info().
+							Int("ingest_events_deleted", result.IngestEventsDeleted).
+							Int("ingest_batches_deleted", result.IngestBatchesDeleted).
+							Int("resolved_findings_deleted", result.ResolvedFindingsDeleted).
+							Int("model_reports_deleted", result.ModelReportsDeleted).
+							Int("auth_events_deleted", result.AuthEventsDeleted)
+						if container.Config.Hub.DBSoftLimitBytes > 0 {
+							status, err := container.Hub.GetHubSystemStatus(ctx)
+							if err != nil {
+								container.Logger.Warn().Err(err).Msg("could not read hub database size after maintenance")
+							} else if status.DatabaseSizeBytes > container.Config.Hub.DBSoftLimitBytes {
+								container.Logger.Warn().
+									Int64("database_size_bytes", status.DatabaseSizeBytes).
+									Int64("soft_limit_bytes", container.Config.Hub.DBSoftLimitBytes).
+									Msg("hub database size is above configured soft limit")
+							}
+						}
+						log.Msg("hub maintenance prune completed")
+					},
+					OnError: func(err error) {
+						container.Logger.Error().Err(err).Msg("hub maintenance worker failed")
 					},
 				})
 			}

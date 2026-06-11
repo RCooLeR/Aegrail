@@ -8,9 +8,9 @@ services:
     environment:
       POSTGRES_DB: ${AEGRAIL_POSTGRES_DB:-aegrail}
       POSTGRES_USER: ${AEGRAIL_POSTGRES_USER:-aegrail}
-      POSTGRES_PASSWORD: ${AEGRAIL_POSTGRES_PASSWORD:-aegrail}
+      POSTGRES_PASSWORD: ${AEGRAIL_POSTGRES_PASSWORD:?set AEGRAIL_POSTGRES_PASSWORD}
     ports:
-      - "${AEGRAIL_POSTGRES_PORT:-55432}:5432"
+      - "${AEGRAIL_POSTGRES_BIND:-127.0.0.1}:${AEGRAIL_POSTGRES_PORT:-55432}:5432"
     volumes:
       - postgres18-data:/var/lib/postgresql
       - ./postgres18/initdb:/docker-entrypoint-initdb.d:ro
@@ -25,13 +25,22 @@ services:
     image: redis:7.4-alpine
     container_name: aegrail-redis
     restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes"]
+    environment:
+      AEGRAIL_REDIS_PASSWORD: ${AEGRAIL_REDIS_PASSWORD:?set AEGRAIL_REDIS_PASSWORD}
+    command:
+      [
+        "redis-server",
+        "--appendonly",
+        "yes",
+        "--requirepass",
+        "${AEGRAIL_REDIS_PASSWORD:?set AEGRAIL_REDIS_PASSWORD}",
+      ]
     ports:
-      - "${AEGRAIL_REDIS_PORT:-56379}:6379"
+      - "${AEGRAIL_REDIS_BIND:-127.0.0.1}:${AEGRAIL_REDIS_PORT:-56379}:6379"
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$${AEGRAIL_REDIS_PASSWORD}\" --no-auth-warning ping | grep PONG"]
       interval: 10s
       timeout: 5s
       retries: 10

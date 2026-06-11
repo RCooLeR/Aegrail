@@ -79,6 +79,10 @@ runtime:
   # Optional timezone label for operator context. Events are still sent in UTC.
   timezone: UTC
 
+  # Optional pending queue cap. 0 means unlimited. When the cap is reached,
+  # the oldest pending batch is moved to discarded before a new batch is queued.
+  max_pending_files: 10000
+
 sites:
   - # Stable site slug inside this agent config.
     slug: example-wordpress
@@ -202,11 +206,19 @@ sites:
       # Wait for tag manager activity before collecting script observations.
       wait_tag_manager: true
 
+      # In rendered mode, block image downloads to reduce memory/network load.
+      # Script and stylesheet observations still work.
+      disable_images: true
+
       # Maximum pages to crawl from the URL list. 0 uses collector defaults.
       max_pages: 5
 
-      # Browser crawl timeout.
+      # Per-page browser crawl timeout.
       timeout: 30s
+
+      # Optional total budget for the whole crawl run for this site.
+      # Empty or 0 means no additional whole-run budget.
+      total_budget: 2m
 
       # Minimum time between browser crawls. Empty or 0 runs each loop.
       schedule: 15m

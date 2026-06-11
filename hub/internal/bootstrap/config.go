@@ -81,16 +81,23 @@ type HTTPConfig struct {
 }
 
 type HubConfig struct {
-	WirePrivateKey     string
-	WireTimestampSkew  time.Duration
-	UserSecretKey      string
-	TrustedProxyCIDRs  []*net.IPNet
-	TrustedProxyErrors []string
-	ModelAnalysisAuto  bool
-	ModelAnalysisEvery time.Duration
-	ModelAnalysisLimit int
-	CorrelationWorkers int
-	IngestDebug        bool
+	WirePrivateKey            string
+	WireTimestampSkew         time.Duration
+	UserSecretKey             string
+	TrustedProxyCIDRs         []*net.IPNet
+	TrustedProxyErrors        []string
+	ModelAnalysisAuto         bool
+	ModelAnalysisEvery        time.Duration
+	ModelAnalysisLimit        int
+	CorrelationWorkers        int
+	IngestDebug               bool
+	MaintenanceEvery          time.Duration
+	RetentionEvents           time.Duration
+	RetentionResolvedFindings time.Duration
+	RetentionModelReports     time.Duration
+	RetentionAuthEvents       time.Duration
+	RetentionBatchSize        int
+	DBSoftLimitBytes          int64
 }
 
 type LoggingConfig struct {
@@ -151,16 +158,23 @@ func LoadConfig() Config {
 			Addr: envString("AEGRAIL_HTTP_ADDR", "127.0.0.1:8787"),
 		},
 		Hub: HubConfig{
-			WirePrivateKey:     envString("AEGRAIL_HUB_WIRE_PRIVATE_KEY", ""),
-			WireTimestampSkew:  envDuration("AEGRAIL_HUB_WIRE_TIMESTAMP_SKEW", 5*time.Minute),
-			UserSecretKey:      envString("AEGRAIL_HUB_USER_SECRET", ""),
-			TrustedProxyCIDRs:  trustedProxies.Networks,
-			TrustedProxyErrors: trustedProxies.Errors,
-			ModelAnalysisAuto:  envBool("AEGRAIL_MODEL_ANALYSIS_AUTO", true),
-			ModelAnalysisEvery: envDuration("AEGRAIL_MODEL_ANALYSIS_INTERVAL", time.Minute),
-			ModelAnalysisLimit: envInt("AEGRAIL_MODEL_ANALYSIS_LIMIT", 5),
-			CorrelationWorkers: envInt("AEGRAIL_CORRELATION_WORKERS", 1),
-			IngestDebug:        envBool("AEGRAIL_INGEST_DEBUG", false),
+			WirePrivateKey:            envString("AEGRAIL_HUB_WIRE_PRIVATE_KEY", ""),
+			WireTimestampSkew:         envDuration("AEGRAIL_HUB_WIRE_TIMESTAMP_SKEW", 5*time.Minute),
+			UserSecretKey:             envString("AEGRAIL_HUB_USER_SECRET", ""),
+			TrustedProxyCIDRs:         trustedProxies.Networks,
+			TrustedProxyErrors:        trustedProxies.Errors,
+			ModelAnalysisAuto:         envBool("AEGRAIL_MODEL_ANALYSIS_AUTO", true),
+			ModelAnalysisEvery:        envDuration("AEGRAIL_MODEL_ANALYSIS_INTERVAL", time.Minute),
+			ModelAnalysisLimit:        envInt("AEGRAIL_MODEL_ANALYSIS_LIMIT", 5),
+			CorrelationWorkers:        envInt("AEGRAIL_CORRELATION_WORKERS", 1),
+			IngestDebug:               envBool("AEGRAIL_INGEST_DEBUG", false),
+			MaintenanceEvery:          envDurationExtended("AEGRAIL_MAINTENANCE_INTERVAL", time.Hour),
+			RetentionEvents:           envDurationExtended("AEGRAIL_RETENTION_EVENTS", 180*24*time.Hour),
+			RetentionResolvedFindings: envDurationExtended("AEGRAIL_RETENTION_RESOLVED_FINDINGS", 180*24*time.Hour),
+			RetentionModelReports:     envDurationExtended("AEGRAIL_RETENTION_MODEL_REPORTS", 180*24*time.Hour),
+			RetentionAuthEvents:       envDurationExtended("AEGRAIL_RETENTION_AUTH_EVENTS", 180*24*time.Hour),
+			RetentionBatchSize:        envInt("AEGRAIL_RETENTION_BATCH_SIZE", 5000),
+			DBSoftLimitBytes:          envInt64("AEGRAIL_DB_SOFT_LIMIT_BYTES", 0),
 		},
 		Logging: LoggingConfig{
 			Level:  envString("AEGRAIL_LOG_LEVEL", "info"),
@@ -266,6 +280,18 @@ func envInt(key string, fallback int) int {
 	return parsed
 }
 
+func envInt64(key string, fallback int64) int64 {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
 func envDuration(key string, fallback time.Duration) time.Duration {
 	value := os.Getenv(key)
 	if value == "" {
@@ -276,4 +302,19 @@ func envDuration(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return parsed
+}
+
+func envDurationExtended(key string, fallback time.Duration) time.Duration {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	if strings.HasSuffix(value, "d") {
+		days, err := strconv.ParseFloat(strings.TrimSuffix(value, "d"), 64)
+		if err != nil {
+			return fallback
+		}
+		return time.Duration(days * float64(24*time.Hour))
+	}
+	return envDuration(key, fallback)
 }

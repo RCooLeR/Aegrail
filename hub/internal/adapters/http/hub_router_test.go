@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -113,6 +114,66 @@ func TestHubRouterListsRuleDefinitions(t *testing.T) {
 	}
 	if body.Rules[0].Version == "" || body.Rules[0].Category != "database_snapshot" {
 		t.Fatalf("first rule = %#v, want versioned database rule", body.Rules[0])
+	}
+}
+
+func TestHubRouterSetsSecurityHeadersOnAPIAndNotFound(t *testing.T) {
+	router := NewHubRouter(domain.AppMeta{Name: "Aegrail", Binary: "aegrail", Version: "test"}, hubapp.New(hubapp.Dependencies{}), HubOptions{})
+
+	apiResponse := httptest.NewRecorder()
+	router.ServeHTTP(apiResponse, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if apiResponse.Code != http.StatusOK {
+		t.Fatalf("api status = %d body = %s", apiResponse.Code, apiResponse.Body.String())
+	}
+	assertHubSecurityHeaders(t, apiResponse.Result(), false)
+
+	missingResponse := httptest.NewRecorder()
+	router.ServeHTTP(missingResponse, httptest.NewRequest(http.MethodGet, "/missing", nil))
+	if missingResponse.Code != http.StatusNotFound {
+		t.Fatalf("missing status = %d body = %s", missingResponse.Code, missingResponse.Body.String())
+	}
+	assertHubSecurityHeaders(t, missingResponse.Result(), false)
+}
+
+func TestHubRouterSetsHSTSForTrustedHTTPSForwardedRequest(t *testing.T) {
+	router := NewHubRouter(domain.AppMeta{Name: "Aegrail", Binary: "aegrail", Version: "test"}, hubapp.New(hubapp.Dependencies{}), HubOptions{})
+
+	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	request.RemoteAddr = "127.0.0.1:12345"
+	request.Header.Set("X-Forwarded-Proto", "https")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", response.Code, response.Body.String())
+	}
+	assertHubSecurityHeaders(t, response.Result(), true)
+}
+
+func assertHubSecurityHeaders(t *testing.T, response *http.Response, wantHSTS bool) {
+	t.Helper()
+	headers := map[string]string{
+		"X-Content-Type-Options": "nosniff",
+		"Referrer-Policy":        "no-referrer",
+		"X-Frame-Options":        "DENY",
+		"Permissions-Policy":     "camera=(), microphone=(), geolocation=()",
+	}
+	for name, want := range headers {
+		if got := response.Header.Get(name); got != want {
+			t.Fatalf("%s = %q, want %q", name, got, want)
+		}
+	}
+	csp := response.Header.Get("Content-Security-Policy")
+	for _, want := range []string{"default-src 'self'", "script-src 'self'", "object-src 'none'", "frame-ancestors 'none'"} {
+		if !strings.Contains(csp, want) {
+			t.Fatalf("Content-Security-Policy = %q, missing %q", csp, want)
+		}
+	}
+	hsts := response.Header.Get("Strict-Transport-Security")
+	if wantHSTS && hsts == "" {
+		t.Fatalf("Strict-Transport-Security is empty, want HTTPS response header")
+	}
+	if !wantHSTS && hsts != "" {
+		t.Fatalf("Strict-Transport-Security = %q, want empty for plain HTTP", hsts)
 	}
 }
 

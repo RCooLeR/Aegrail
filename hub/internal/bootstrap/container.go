@@ -96,6 +96,7 @@ func (c *Container) ConnectDatabase(ctx context.Context) error {
 		FileIgnoreRules:   postgres.NewHubFileIgnoreRuleRepository(pool),
 		BrowserAllowlist:  postgres.NewBrowserScriptAllowlistRepository(pool),
 		ModelReports:      postgres.NewModelAnalysisReportRepository(pool),
+		Maintenance:       postgres.NewHubMaintenanceRepository(pool),
 		Model:             c.Model,
 		Jobs:              c.redis,
 		Locks:             c.redis,

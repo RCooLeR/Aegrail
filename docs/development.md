@@ -50,13 +50,28 @@ agent/configs/               Agent YAML examples
 ```powershell
 cd agent
 go test ./...
+go vet ./...
 
 cd ..\hub
 go test ./...
+go vet ./...
 
 cd ..\dashboard
+npm ci
 npm run build
 ```
+
+GitHub Actions runs the same shape of checks for both Go modules and the
+dashboard build on pushes and pull requests.
+
+Optional local pre-push hook:
+
+```bash
+./scripts/install-hooks.sh
+```
+
+The hook runs `go vet`, `go test`, `npm ci`, and `npm run build`. It is meant as
+a safety net before pushing, not as a replacement for CI.
 
 ## Documentation Maintenance
 

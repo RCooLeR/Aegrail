@@ -1100,9 +1100,12 @@ func (r *memoryHubFindingRepository) SaveHubFindings(ctx context.Context, findin
 	for _, finding := range findings {
 		key := string(finding.EnvironmentID) + ":" + finding.RuleID + ":" + finding.DedupeKey
 		existing, ok := r.byKey[key]
+		saveCreated := !ok
 		if ok {
 			if memoryHubFindingContentEqual(existing, finding) {
-				saved = append(saved, existing)
+				returned := existing
+				markMemoryHubFindingSaveCreated(&returned, false)
+				saved = append(saved, returned)
 				continue
 			}
 			finding.ID = existing.ID
@@ -1120,9 +1123,18 @@ func (r *memoryHubFindingRepository) SaveHubFindings(ctx context.Context, findin
 		}
 		finding.UpdatedAt = now
 		r.byKey[key] = finding
-		saved = append(saved, finding)
+		returned := finding
+		markMemoryHubFindingSaveCreated(&returned, saveCreated)
+		saved = append(saved, returned)
 	}
 	return saved, nil
+}
+
+func markMemoryHubFindingSaveCreated(finding *domain.HubFinding, created bool) {
+	if finding.Metadata == nil {
+		finding.Metadata = map[string]any{}
+	}
+	finding.Metadata[domain.HubFindingMetadataSaveCreated] = created
 }
 
 func memoryHubFindingContentEqual(existing domain.HubFinding, incoming domain.HubFinding) bool {

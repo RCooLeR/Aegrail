@@ -20,10 +20,12 @@ type BrowserCrawlInput struct {
 	URLs               []string
 	MaxPages           int
 	Timeout            time.Duration
+	TotalBudget        time.Duration
 	UserAgent          string
 	FallbackUserAgents []string
 	SameHostOnly       bool
 	Rendered           bool
+	DisableImages      bool
 	NetworkIdle        time.Duration
 	Settle             time.Duration
 	WaitTagManager     bool
@@ -105,6 +107,11 @@ func (r *Runtime) CrawlBrowserPages(ctx context.Context, input BrowserCrawlInput
 	if maxPages > 25 {
 		maxPages = 25
 	}
+	if input.TotalBudget > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, input.TotalBudget)
+		defer cancel()
+	}
 	client := &http.Client{Timeout: timeout}
 	startedAt := time.Now().UTC()
 	result := BrowserCrawlResult{StartedAt: startedAt}
@@ -115,6 +122,10 @@ func (r *Runtime) CrawlBrowserPages(ctx context.Context, input BrowserCrawlInput
 	}
 
 	for _, rawURL := range input.URLs[:maxPages] {
+		if err := ctx.Err(); err != nil {
+			result.Pages = append(result.Pages, browserWarningPage(rawURL, mode, "browser crawl budget exhausted: "+err.Error()))
+			break
+		}
 		pageURL, err := normalizeCrawlURL(rawURL)
 		if err != nil {
 			result.Pages = append(result.Pages, browserWarningPage(rawURL, mode, err.Error()))

@@ -32,7 +32,9 @@ docker compose --env-file docker/examples/.env.hub -f docker/examples/hub.compos
 ```
 
 Copy the generated private key into `.env.hub`, set a strong
-`AEGRAIL_HUB_USER_SECRET`, and replace the database password placeholder.
+`AEGRAIL_HUB_USER_SECRET`, and replace the database and Redis password
+placeholders. The example builds `AEGRAIL_DATABASE_URL` from the database
+password, so use a URL-safe password or URL-encode special characters.
 Set `AEGRAIL_HUB_PUBLIC_URL` to the URL operators will use in a browser; email
 and push notifications use it for issue links.
 
@@ -57,8 +59,9 @@ docker compose --env-file docker/examples/.env.hub -f docker/examples/hub.compos
 docker compose --env-file docker/examples/.env.hub -f docker/examples/hub.compose.yaml up -d hub
 ```
 
-Hub listens on `http://127.0.0.1:8787` by default. Put HTTPS or a private
-reverse proxy in front of it before accepting non-local Agent traffic.
+Hub listens on `http://127.0.0.1:8787` by default. Set `AEGRAIL_HTTP_BIND=0.0.0.0`
+only when a trusted reverse proxy or firewall is in front of it. Put HTTPS or a
+private reverse proxy in front of Hub before accepting non-local Agent traffic.
 
 ## Agent
 
@@ -93,3 +96,11 @@ docker compose --env-file docker/examples/.env.agent -f docker/examples/agent.co
 The Agent container should mount site files and logs read-only. Queue and state
 live in the `agent-state` Docker volume and should be treated as sensitive
 runtime data.
+
+The Compose example sets `init: true` so Docker runs a tiny init process inside
+the Agent container. Keep that enabled for rendered browser crawls; Chromium can
+spawn helper processes, and a container without an init process can accumulate
+`chromium` or `chrome_crashpad` zombies. The generic example image does not
+include Chrome, so the example YAML uses non-rendered crawling by default. Use
+`rendered: true` only with a Chrome-capable image or a valid
+`AEGRAIL_BROWSER_CHROME_PATH`.

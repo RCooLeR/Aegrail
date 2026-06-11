@@ -40,7 +40,7 @@ func TestNotificationSinkBuildsEscapedMailjetMessage(t *testing.T) {
 	}
 	notification := ports.HubFindingNotification{
 		Type:   "finding.observed",
-		SentAt: time.Now().UTC(),
+		SentAt: time.Date(2026, 5, 18, 1, 5, 3, 0, time.UTC),
 		Finding: domain.HubFinding{
 			ID:           "finding-1",
 			RuleID:       "web-script",
@@ -58,6 +58,10 @@ func TestNotificationSinkBuildsEscapedMailjetMessage(t *testing.T) {
 	}
 	if !strings.Contains(message, "Script &lt;changed&gt;") || strings.Contains(message, "<script>alert") {
 		t.Fatalf("message did not escape finding content:\n%s", message)
+	}
+	if !strings.Contains(message, "Date: Mon, 18 May 2026 01:05:03 +0000") ||
+		!strings.Contains(message, "Sent</td><td>2026-05-18T01:05:03Z") {
+		t.Fatalf("message missing Hub sent timestamp:\n%s", message)
 	}
 }
 

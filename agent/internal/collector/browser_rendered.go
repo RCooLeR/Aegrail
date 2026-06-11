@@ -75,6 +75,8 @@ type renderedChromeRuntime struct {
 	Cleanup    func()
 }
 
+const renderedChromeShutdownTimeout = 5 * time.Second
+
 func newRenderedNetworkState() *renderedNetworkState {
 	return &renderedNetworkState{
 		active:   map[network.RequestID]struct{}{},
@@ -114,17 +116,18 @@ func crawlRenderedPage(ctx context.Context, pageURL *url.URL, input BrowserCrawl
 	if err != nil {
 		return page, fmt.Errorf("rendered chrome runtime setup failed: %w", err)
 	}
-	defer chromeRuntime.Cleanup()
 
-	options := renderedChromeAllocatorOptions(userAgent, chromeRuntime)
+	options := renderedChromeAllocatorOptions(userAgent, chromeRuntime, input.DisableImages)
 	allocatorCtx, cancelAllocator := chromedp.NewExecAllocator(ctx, options...)
-	defer cancelAllocator()
 
 	browserCtx, cancelBrowser := chromedp.NewContext(allocatorCtx, chromedp.WithErrorf(func(string, ...any) {}))
-	defer cancelBrowser()
 
 	pageCtx, cancelPage := context.WithTimeout(browserCtx, timeout)
-	defer cancelPage()
+	defer func() {
+		cancelPage()
+		shutdownRenderedChrome(browserCtx, cancelBrowser, cancelAllocator)
+		chromeRuntime.Cleanup()
+	}()
 
 	networkState := newRenderedNetworkState()
 	chromedp.ListenTarget(pageCtx, networkState.handleEvent)
@@ -187,6 +190,20 @@ func crawlRenderedPage(ctx context.Context, pageURL *url.URL, input BrowserCrawl
 	return page, nil
 }
 
+func shutdownRenderedChrome(browserCtx context.Context, cancelBrowser context.CancelFunc, cancelAllocator context.CancelFunc) {
+	if browserCtx != nil {
+		shutdownCtx, cancelShutdown := context.WithTimeout(browserCtx, renderedChromeShutdownTimeout)
+		_ = chromedp.Cancel(shutdownCtx)
+		cancelShutdown()
+	}
+	if cancelBrowser != nil {
+		cancelBrowser()
+	}
+	if cancelAllocator != nil {
+		cancelAllocator()
+	}
+}
+
 func newRenderedChromeRuntime() (renderedChromeRuntime, error) {
 	base := strings.TrimSpace(os.Getenv("AEGRAIL_BROWSER_TMP_DIR"))
 	if base == "" {
@@ -219,7 +236,7 @@ func newRenderedChromeRuntime() (renderedChromeRuntime, error) {
 	return runtime, nil
 }
 
-func renderedChromeAllocatorOptions(userAgent string, runtime renderedChromeRuntime) []chromedp.ExecAllocatorOption {
+func renderedChromeAllocatorOptions(userAgent string, runtime renderedChromeRuntime, disableImages bool) []chromedp.ExecAllocatorOption {
 	options := append([]chromedp.ExecAllocatorOption{}, chromedp.DefaultExecAllocatorOptions[:]...)
 	if chromePath := renderedChromeExecPath(); chromePath != "" {
 		options = append(options, chromedp.ExecPath(chromePath))
@@ -236,9 +253,14 @@ func renderedChromeAllocatorOptions(userAgent string, runtime renderedChromeRunt
 		chromedp.Flag("disable-setuid-sandbox", true),
 		chromedp.Flag("disable-crash-reporter", true),
 		chromedp.Flag("disable-crashpad", true),
+		chromedp.Flag("disable-crashpad-for-testing", true),
 		chromedp.Flag("disable-dev-shm-usage", true),
+		chromedp.Flag("no-zygote", true),
 		chromedp.Flag("crash-dumps-dir", runtime.CrashDumps),
 	)
+	if disableImages {
+		options = append(options, chromedp.Flag("blink-settings", "imagesEnabled=false"))
+	}
 	return options
 }
 

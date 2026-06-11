@@ -248,7 +248,7 @@ func agentRunCommand() *urfavecli.Command {
 						}
 					}
 				} else {
-					send, err := runtime.SendQueued(ctx, sendLimit)
+					send, err := runtime.SendQueuedAll(ctx, sendLimit, agent.DefaultSendDrainBudget)
 					if err != nil {
 						return err
 					}
@@ -675,14 +675,20 @@ func runConfiguredBrowserCrawls(ctx context.Context, runtime *agent.Runtime, con
 		if err != nil {
 			return agentBrowserRunResult{}, fmt.Errorf("site %s browser timeout: %w", site.Slug, err)
 		}
+		totalBudget, err := parseOptionalDuration(crawl.TotalBudget)
+		if err != nil {
+			return agentBrowserRunResult{}, fmt.Errorf("site %s browser total budget: %w", site.Slug, err)
+		}
 		crawlResult, err := collectorRuntime.CrawlBrowserPages(ctx, collector.BrowserCrawlInput{
 			URLs:               crawl.URLs,
 			MaxPages:           crawl.MaxPages,
 			Timeout:            timeout,
+			TotalBudget:        totalBudget,
 			UserAgent:          crawl.UserAgent,
 			FallbackUserAgents: crawl.FallbackUserAgents,
 			SameHostOnly:       true,
 			Rendered:           crawl.Rendered,
+			DisableImages:      crawl.DisableImages,
 			WaitTagManager:     crawl.WaitTagManager,
 		})
 		if err != nil {
@@ -999,7 +1005,7 @@ func agentStartCommand() *urfavecli.Command {
 					}
 				}
 
-				send, err := runtime.SendQueued(ctx, c.Int("send-limit"))
+				send, err := runtime.SendQueuedAll(ctx, c.Int("send-limit"), agent.DefaultSendDrainBudget)
 				if err != nil {
 					if c.Bool("once") {
 						return err

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -154,6 +155,190 @@ func TestAgentQueueSendReportsTotalPendingBeforeLimit(t *testing.T) {
 	}
 	if result.PendingBefore != 3 || result.Sent != 1 || result.PendingAfter != 2 {
 		t.Fatalf("result = %+v, want PendingBefore 3, Sent 1, PendingAfter 2", result)
+	}
+}
+
+func TestSendQueuedAllDrainsPendingBeyondPerPassLimit(t *testing.T) {
+	root := t.TempDir()
+	nodeSecret, _, err := wire.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("GenerateKeyPair node returned error: %v", err)
+	}
+	_, hubPublic, err := wire.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("GenerateKeyPair hub returned error: %v", err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+
+	runtime := NewRuntime(Config{
+		ConfigPath: filepath.Join(root, "agent.json"),
+		QueueDir:   filepath.Join(root, "queue"),
+	})
+	_, err = runtime.Install(context.Background(), Identity{
+		HubURL:       server.URL,
+		HubProtocol:  "aegrail-wire-v1",
+		HubPublicKey: hubPublic,
+		NodeSecret:   nodeSecret,
+		QueueDir:     filepath.Join(root, "queue"),
+		Org:          "acme",
+		Project:      "customer-site",
+		Environment:  "production",
+		Host:         "web-01",
+		AgentID:      "agt_web_01",
+	})
+	if err != nil {
+		t.Fatalf("Install returned error: %v", err)
+	}
+	for index := 0; index < 3; index++ {
+		if _, _, err := runtime.EnqueueEvent(context.Background(), EnqueueEventInput{
+			BatchID: "batch-drain-" + strconv.Itoa(index),
+			Type:    "file.created",
+			Target:  "/var/www/app/file.php",
+		}); err != nil {
+			t.Fatalf("EnqueueEvent %d returned error: %v", index, err)
+		}
+	}
+
+	result, err := runtime.SendQueuedAll(context.Background(), 1, 0)
+	if err != nil {
+		t.Fatalf("SendQueuedAll returned error: %v", err)
+	}
+	if result.PendingBefore != 3 || result.Sent != 3 || result.Failed != 0 || result.PendingAfter != 0 {
+		t.Fatalf("result = %+v, want PendingBefore 3, Sent 3, PendingAfter 0", result)
+	}
+}
+
+func TestSendQueuedAllStopsWhenNoProgress(t *testing.T) {
+	root := t.TempDir()
+	nodeSecret, _, err := wire.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("GenerateKeyPair node returned error: %v", err)
+	}
+	_, hubPublic, err := wire.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("GenerateKeyPair hub returned error: %v", err)
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	runtime := NewRuntime(Config{
+		ConfigPath: filepath.Join(root, "agent.json"),
+		QueueDir:   filepath.Join(root, "queue"),
+	})
+	_, err = runtime.Install(context.Background(), Identity{
+		HubURL:       server.URL,
+		HubProtocol:  "aegrail-wire-v1",
+		HubPublicKey: hubPublic,
+		NodeSecret:   nodeSecret,
+		QueueDir:     filepath.Join(root, "queue"),
+		Org:          "acme",
+		Project:      "customer-site",
+		Environment:  "production",
+		Host:         "web-01",
+		AgentID:      "agt_web_01",
+	})
+	if err != nil {
+		t.Fatalf("Install returned error: %v", err)
+	}
+	for index := 0; index < 2; index++ {
+		if _, _, err := runtime.EnqueueEvent(context.Background(), EnqueueEventInput{
+			BatchID: "batch-stuck-" + strconv.Itoa(index),
+			Type:    "file.created",
+			Target:  "/var/www/app/file.php",
+		}); err != nil {
+			t.Fatalf("EnqueueEvent %d returned error: %v", index, err)
+		}
+	}
+
+	result, err := runtime.SendQueuedAll(context.Background(), 1, 0)
+	if err != nil {
+		t.Fatalf("SendQueuedAll returned error: %v", err)
+	}
+	if result.Sent != 0 || result.Failed != 1 || result.PendingAfter != 2 {
+		t.Fatalf("result = %+v, want one failed pass and both batches still pending", result)
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want a single pass without retry loop", requests)
+	}
+}
+
+func TestSendQueuedAllQuarantinesPermanentHubRejectAndContinues(t *testing.T) {
+	root := t.TempDir()
+	nodeSecret, _, err := wire.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("GenerateKeyPair node returned error: %v", err)
+	}
+	_, hubPublic, err := wire.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("GenerateKeyPair hub returned error: %v", err)
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if requests == 1 {
+			http.Error(w, `{"error":"resource not found"}`, http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+
+	queueDir := filepath.Join(root, "queue")
+	runtime := NewRuntime(Config{
+		ConfigPath: filepath.Join(root, "agent.json"),
+		QueueDir:   queueDir,
+	})
+	_, err = runtime.Install(context.Background(), Identity{
+		HubURL:       server.URL,
+		HubProtocol:  "aegrail-wire-v1",
+		HubPublicKey: hubPublic,
+		NodeSecret:   nodeSecret,
+		QueueDir:     queueDir,
+		Org:          "acme",
+		Project:      "customer-site",
+		Environment:  "production",
+		Host:         "web-01",
+		AgentID:      "agt_web_01",
+	})
+	if err != nil {
+		t.Fatalf("Install returned error: %v", err)
+	}
+	for _, batchID := range []string{"a-permanent-reject", "b-good"} {
+		if _, _, err := runtime.EnqueueEvent(context.Background(), EnqueueEventInput{
+			BatchID: batchID,
+			Type:    "file.created",
+			Target:  "/var/www/app/file.php",
+		}); err != nil {
+			t.Fatalf("EnqueueEvent %q returned error: %v", batchID, err)
+		}
+	}
+
+	result, err := runtime.SendQueuedAll(context.Background(), 1, 0)
+	if err != nil {
+		t.Fatalf("SendQueuedAll returned error: %v", err)
+	}
+	if result.PendingBefore != 2 || result.Sent != 1 || result.Failed != 1 || result.PendingAfter != 0 {
+		t.Fatalf("result = %+v, want one quarantined reject, one sent, zero pending", result)
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d, want rejected batch then newer batch", requests)
+	}
+	failedFiles, err := queueFiles(filepath.Join(queueDir, "failed"))
+	if err != nil {
+		t.Fatalf("queueFiles failed returned error: %v", err)
+	}
+	if len(failedFiles) != 1 || !strings.Contains(filepath.Base(failedFiles[0]), "a-permanent-reject") {
+		t.Fatalf("failed files = %#v, want permanent reject quarantined", failedFiles)
+	}
+	if len(result.Errors) == 0 || !strings.Contains(result.Errors[0], "moved to failed queue") {
+		t.Fatalf("errors = %#v, want failed-queue message", result.Errors)
 	}
 }
 
@@ -443,6 +628,53 @@ func TestAgentDiscardPendingMovesBatchToDiscarded(t *testing.T) {
 	}
 	if status.Pending != 0 || status.Discarded != 1 {
 		t.Fatalf("status = %+v, want discarded queue count", status)
+	}
+}
+
+func TestAgentQueueMaxPendingFilesDiscardsOldest(t *testing.T) {
+	root := t.TempDir()
+	runtime := NewRuntime(Config{
+		ConfigPath:      filepath.Join(root, "agent.json"),
+		QueueDir:        filepath.Join(root, "queue"),
+		MaxPendingFiles: 2,
+	})
+	_, err := runtime.Install(context.Background(), Identity{
+		HubURL:      "https://hub.example.test",
+		QueueDir:    filepath.Join(root, "queue"),
+		Org:         "acme",
+		Project:     "customer-site",
+		Environment: "production",
+		Host:        "web-01",
+		AgentID:     "agt_web_01",
+	})
+	if err != nil {
+		t.Fatalf("Install returned error: %v", err)
+	}
+
+	for index := 1; index <= 3; index++ {
+		if _, _, err := runtime.EnqueueEvent(context.Background(), EnqueueEventInput{
+			BatchID: fmt.Sprintf("batch-%d", index),
+			Type:    "log.scan",
+			Message: fmt.Sprintf("event %d", index),
+		}); err != nil {
+			t.Fatalf("EnqueueEvent %d returned error: %v", index, err)
+		}
+	}
+
+	status, err := runtime.Status(context.Background())
+	if err != nil {
+		t.Fatalf("Status returned error: %v", err)
+	}
+	if status.Pending != 2 || status.Discarded != 1 {
+		t.Fatalf("status = %+v, want two pending and one discarded", status)
+	}
+	if _, err := os.Stat(filepath.Join(root, "queue", "pending", "batch-1.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("oldest pending batch still exists or stat returned unexpected error: %v", err)
+	}
+	for _, name := range []string{"batch-2.json", "batch-3.json"} {
+		if _, err := os.Stat(filepath.Join(root, "queue", "pending", name)); err != nil {
+			t.Fatalf("expected pending %s: %v", name, err)
+		}
 	}
 }
 
@@ -826,6 +1058,12 @@ func TestShouldSkipNoisyPathSkipsCacheVariants(t *testing.T) {
 	}
 	if !shouldSkipNoisyPath("/var/www/site/modules/reviews/logs/logs.txt") {
 		t.Fatalf("module log files should be skipped")
+	}
+	if !shouldSkipNoisyPath("/var/www/site/themes/at_petstore/profiles/id_gencode_5b02b134d274d_1526903092.tpl") {
+		t.Fatalf("generated PrestaShop theme profile templates should be skipped")
+	}
+	if shouldSkipNoisyPath("/var/www/site/themes/at_petstore/profiles/layout.tpl") {
+		t.Fatalf("normal theme profile templates should still be tracked")
 	}
 	if !shouldSkipNoisyPath("/var/www/site/public/build/assets/app.123.js") {
 		t.Fatalf("generated Laravel build assets should be skipped")
@@ -1317,6 +1555,109 @@ func TestScanLogPathsBaselinesThenQueuesAppendedLine(t *testing.T) {
 	}
 	if event.Payload["status_code"] != float64(500) {
 		t.Fatalf("status_code = %#v, want 500", event.Payload["status_code"])
+	}
+}
+
+func TestScanLogPathsBatchesAppendedLinesIntoSingleBatch(t *testing.T) {
+	t.Setenv("AEGRAIL_TOR_CHECK", "0")
+	root := t.TempDir()
+	logDir := filepath.Join(root, "logs")
+	if err := os.MkdirAll(logDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll returned error: %v", err)
+	}
+	logPath := filepath.Join(logDir, "access.log")
+	if err := os.WriteFile(logPath, []byte("127.0.0.1 - - [12/May/2026:08:00:00 +0000] \"GET / HTTP/1.1\" 200 12\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+
+	runtime := NewRuntime(Config{
+		ConfigPath: filepath.Join(root, "agent.json"),
+		QueueDir:   filepath.Join(root, "queue"),
+	})
+	runtime.now = func() time.Time { return time.Date(2026, 5, 12, 8, 0, 0, 0, time.UTC) }
+
+	if _, err := runtime.Install(context.Background(), Identity{
+		HubURL:      "http://127.0.0.1:8787",
+		QueueDir:    filepath.Join(root, "queue"),
+		Org:         "acme",
+		Project:     "customer-site",
+		Environment: "production",
+		App:         "main-web",
+		Service:     "frontend",
+		Host:        "web-01",
+		AgentID:     "agt_web_01",
+	}); err != nil {
+		t.Fatalf("Install returned error: %v", err)
+	}
+
+	if _, err := runtime.ScanLogPaths(context.Background(), LogWatchOptions{Paths: []string{logPath}}); err != nil {
+		t.Fatalf("ScanLogPaths baseline returned error: %v", err)
+	}
+
+	file, err := os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatalf("OpenFile returned error: %v", err)
+	}
+	const appended = 5
+	for index := 0; index < appended; index++ {
+		line := fmt.Sprintf("203.0.113.7 - - [12/May/2026:08:01:0%d +0000] \"GET /wp-login.php HTTP/1.1\" 500 42\n", index)
+		if _, err := file.WriteString(line); err != nil {
+			t.Fatalf("WriteString %d returned error: %v", index, err)
+		}
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+	runtime.now = func() time.Time { return time.Date(2026, 5, 12, 8, 2, 0, 0, time.UTC) }
+
+	result, err := runtime.ScanLogPaths(context.Background(), LogWatchOptions{Paths: []string{logPath}})
+	if err != nil {
+		t.Fatalf("ScanLogPaths returned error after append: %v", err)
+	}
+	if result.Queued != appended {
+		t.Fatalf("queued = %d, want %d events", result.Queued, appended)
+	}
+
+	files, err := queueFiles(filepath.Join(root, "queue", "pending"))
+	if err != nil {
+		t.Fatalf("queueFiles returned error: %v", err)
+	}
+	// One baseline-marker batch from the first scan plus a single multi-event
+	// batch for all appended lines.
+	if len(files) != 2 {
+		t.Fatalf("pending files = %d, want 2 (baseline marker + one log batch)", len(files))
+	}
+	var batch QueuedBatch
+	for _, queued := range files {
+		content, err := os.ReadFile(queued)
+		if err != nil {
+			t.Fatalf("ReadFile returned error: %v", err)
+		}
+		var candidate QueuedBatch
+		if err := json.Unmarshal(content, &candidate); err != nil {
+			t.Fatalf("Unmarshal returned error: %v", err)
+		}
+		if len(candidate.Events) > 0 && candidate.Events[0].Type == "log.access" {
+			batch = candidate
+		}
+	}
+	if !strings.HasPrefix(batch.BatchID, "log-") {
+		t.Fatalf("batch id = %q, want log prefix", batch.BatchID)
+	}
+	if len(batch.Events) != appended {
+		t.Fatalf("events in batch = %d, want %d", len(batch.Events), appended)
+	}
+	if batch.App != "main-web" || batch.Service != "frontend" {
+		t.Fatalf("batch scope = app %q service %q, want identity scope", batch.App, batch.Service)
+	}
+	for index, event := range batch.Events {
+		if event.Type != "log.access" || event.Target != filepath.Clean(logPath) {
+			t.Fatalf("event %d = %+v, want log.access for %s", index, event, logPath)
+		}
+		wantTime := time.Date(2026, 5, 12, 8, 1, index, 0, time.UTC)
+		if !event.Time.Equal(wantTime) {
+			t.Fatalf("event %d time = %s, want %s", index, event.Time, wantTime)
+		}
 	}
 }
 

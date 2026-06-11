@@ -66,6 +66,7 @@ func NewHubRouter(meta domain.AppMeta, hub *hubapp.Hub, options HubOptions) http
 	}
 
 	router := chi.NewRouter()
+	router.Use(securityHeadersMiddleware(options))
 	router.Get("/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.TrimSpace(options.DashboardDir) != "" {
 			http.Redirect(w, r, "/dashboard/", http.StatusFound)
@@ -115,6 +116,7 @@ func NewHubRouter(meta domain.AppMeta, hub *hubapp.Hub, options HubOptions) http
 	router.Post("/api/v1/notifications/push/subscriptions", withHubAuth(hub, options, "viewer", savePushSubscriptionHandler(hub)))
 	router.Delete("/api/v1/notifications/push/subscriptions", withHubAuth(hub, options, "viewer", deletePushSubscriptionHandler(hub)))
 	router.Post("/api/v1/notifications/push/subscriptions/delete", withHubAuth(hub, options, "viewer", deletePushSubscriptionHandler(hub)))
+	router.Get("/api/v1/system/status", withHubAuth(hub, options, "owner", getSystemStatusHandler(hub)))
 	router.Get("/api/v1/rules", withHubAuth(hub, options, "viewer", listRulesHandler(hub)))
 	router.Get("/api/v1/findings", withHubAuth(hub, options, "viewer", listFindingsHandler(hub)))
 	router.Post("/api/v1/findings/baseline", withHubAuth(hub, options, "operator", acceptFindingsBaselineHandler(hub)))
@@ -832,6 +834,31 @@ func requestRemoteAddr(r *http.Request) string {
 		return host
 	}
 	return remote
+}
+
+func requestAuditRemoteIP(r *http.Request, options HubOptions) string {
+	if r == nil {
+		return ""
+	}
+	if trustedForwardedHeaders(r, options) {
+		forwardedFor := strings.TrimSpace(r.Header.Get("X-Forwarded-For"))
+		if forwardedFor != "" {
+			first := strings.TrimSpace(strings.Split(forwardedFor, ",")[0])
+			if ip := net.ParseIP(strings.Trim(first, "[]")); ip != nil {
+				return ip.String()
+			}
+		}
+		forwardedRealIP := strings.TrimSpace(r.Header.Get("X-Real-IP"))
+		if forwardedRealIP != "" {
+			if ip := net.ParseIP(strings.Trim(forwardedRealIP, "[]")); ip != nil {
+				return ip.String()
+			}
+		}
+	}
+	if ip := requestRemoteIP(r); ip != nil {
+		return ip.String()
+	}
+	return ""
 }
 
 func listRulesHandler(hub *hubapp.Hub) http.HandlerFunc {
@@ -1638,10 +1665,12 @@ func loginHubUserHandler(hub *hubapp.Hub, options HubOptions) http.HandlerFunc {
 		}
 		now := options.Now().UTC()
 		result, err := hub.LoginHubUser(r.Context(), hubapp.LoginHubUserInput{
-			Email:    request.Email,
-			Password: request.Password,
-			TOTPCode: request.TOTPCode,
-			Now:      now,
+			Email:     request.Email,
+			Password:  request.Password,
+			TOTPCode:  request.TOTPCode,
+			Now:       now,
+			RemoteIP:  requestAuditRemoteIP(r, options),
+			UserAgent: r.UserAgent(),
 		})
 		if errors.Is(err, hubapp.ErrHubMFARequired) {
 			writeJSON(w, http.StatusUnauthorized, map[string]any{
@@ -1681,7 +1710,7 @@ func logoutHubUserHandler(hub *hubapp.Hub, options HubOptions) http.HandlerFunc 
 			return
 		}
 		if cookie, err := r.Cookie(hubSessionCookieName); err == nil {
-			if err := hub.LogoutHubUser(r.Context(), cookie.Value, options.Now().UTC()); err != nil {
+			if err := hub.LogoutHubUserWithAudit(r.Context(), cookie.Value, options.Now().UTC(), requestAuditRemoteIP(r, options), r.UserAgent()); err != nil {
 				writeError(w, http.StatusInternalServerError, "could not revoke session")
 				return
 			}
@@ -1778,6 +1807,25 @@ func getPushNotificationConfigHandler(options HubOptions) http.HandlerFunc {
 		writeJSON(w, http.StatusOK, pushNotificationConfigResponse{
 			Enabled:   publicKey != "",
 			PublicKey: publicKey,
+		})
+	}
+}
+
+func getSystemStatusHandler(hub *hubapp.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hub == nil {
+			writeError(w, http.StatusServiceUnavailable, "hub is not configured")
+			return
+		}
+		status, err := hub.GetHubSystemStatus(r.Context())
+		if err != nil {
+			writeHubError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"database_size_bytes": status.DatabaseSizeBytes,
+			"tables":              status.Tables,
+			"generated_at":        status.GeneratedAt,
 		})
 	}
 }
@@ -3347,6 +3395,34 @@ func clearHubSessionCookie(r *http.Request, options HubOptions) *http.Cookie {
 
 func isSecureRequest(r *http.Request, options HubOptions) bool {
 	return r.TLS != nil || (trustedForwardedHeaders(r, options) && strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https"))
+}
+
+func securityHeadersMiddleware(options HubOptions) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			header := w.Header()
+			header.Set("X-Content-Type-Options", "nosniff")
+			header.Set("Referrer-Policy", "no-referrer")
+			header.Set("X-Frame-Options", "DENY")
+			header.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+			header.Set("Content-Security-Policy", strings.Join([]string{
+				"default-src 'self'",
+				"script-src 'self'",
+				"style-src 'self' 'unsafe-inline'",
+				"img-src 'self' data: blob:",
+				"font-src 'self' data:",
+				"connect-src 'self'",
+				"object-src 'none'",
+				"base-uri 'self'",
+				"frame-ancestors 'none'",
+				"form-action 'self'",
+			}, "; "))
+			if isSecureRequest(r, options) {
+				header.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 func decodeIngestBody(r *http.Request, body []byte, hub *hubapp.Hub, options HubOptions) ([]byte, string, error) {

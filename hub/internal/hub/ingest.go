@@ -52,6 +52,7 @@ const (
 	autoCorrelationWindow             = 30 * time.Minute
 	autoCorrelationLimit              = 5000
 	autoCorrelationEnqueueMinInterval = 30 * time.Second
+	autoCorrelationInlineTimeout      = 45 * time.Second
 )
 
 func (h *Hub) IngestEvents(ctx context.Context, input IngestEventsInput) (IngestEventsResult, error) {
@@ -122,10 +123,13 @@ func (h *Hub) IngestEvents(ctx context.Context, input IngestEventsInput) (Ingest
 		return IngestEventsResult{}, err
 	}
 	if created {
-		if h.jobs != nil && h.findings != nil && shouldAutoCorrelateIngestEvents(savedEvents) {
-			h.enqueueAutoCorrelation(ctx, scope.Organization.Slug, scope.Project.Slug, scope.Environment.Slug, scope.App.Slug, savedEvents)
-		} else {
-			h.autoCorrelateIngestEvents(ctx, scope.Organization.Slug, scope.Project.Slug, scope.Environment.Slug, scope.App.Slug, savedEvents)
+		if err := h.autoCorrelateIngestEvents(context.Background(), scope.Organization.Slug, scope.Project.Slug, scope.Environment.Slug, scope.App.Slug, savedEvents); err != nil {
+			if h.backgroundError != nil {
+				h.backgroundError(err)
+			}
+			if h.jobs != nil {
+				h.enqueueAutoCorrelation(ctx, scope.Organization.Slug, scope.Project.Slug, scope.Environment.Slug, scope.App.Slug, savedEvents)
+			}
 		}
 	}
 	return IngestEventsResult{
@@ -238,15 +242,26 @@ func (h *Hub) enqueueAutoCorrelation(ctx context.Context, organizationSlug strin
 	return true
 }
 
-func (h *Hub) autoCorrelateIngestEvents(ctx context.Context, organizationSlug string, projectSlug string, environmentSlug string, appSlug string, events []domain.IngestEvent) {
+func (h *Hub) autoCorrelateIngestEvents(ctx context.Context, organizationSlug string, projectSlug string, environmentSlug string, appSlug string, events []domain.IngestEvent) error {
 	if h.findings == nil || len(events) == 0 || !shouldAutoCorrelateIngestEvents(events) {
-		return
+		return nil
+	}
+	scopeKey := autoCorrelationScopeKey(organizationSlug, projectSlug, environmentSlug, appSlug)
+	reservedAt := time.Now().UTC()
+	if !h.reserveAutoCorrelationRun(scopeKey, reservedAt) {
+		return nil
 	}
 	since := earliestIngestEventTime(events)
 	if since.IsZero() {
 		since = time.Now().UTC()
 	}
-	if _, err := h.CorrelateEvents(ctx, CorrelateEventsInput{
+	runCtx := ctx
+	cancel := func() {}
+	if _, ok := runCtx.Deadline(); !ok {
+		runCtx, cancel = context.WithTimeout(runCtx, autoCorrelationInlineTimeout)
+	}
+	defer cancel()
+	if _, err := h.CorrelateEvents(runCtx, CorrelateEventsInput{
 		OrganizationSlug: organizationSlug,
 		ProjectSlug:      projectSlug,
 		EnvironmentSlug:  environmentSlug,
@@ -255,9 +270,11 @@ func (h *Hub) autoCorrelateIngestEvents(ctx context.Context, organizationSlug st
 		Window:           autoCorrelationWindow,
 		Limit:            autoCorrelationLimit,
 		SaveFindings:     true,
-	}); err != nil && h.backgroundError != nil {
-		h.backgroundError(err)
+	}); err != nil {
+		h.releaseAutoCorrelationRun(scopeKey, reservedAt)
+		return err
 	}
+	return nil
 }
 
 func shouldAutoCorrelateIngestEvents(events []domain.IngestEvent) bool {
@@ -331,6 +348,20 @@ func (h *Hub) reserveAutoCorrelationRun(scopeKey string, now time.Time) bool {
 		}
 	}
 	return true
+}
+
+func (h *Hub) releaseAutoCorrelationRun(scopeKey string, reservedAt time.Time) {
+	if h == nil {
+		return
+	}
+	h.correlationRunMu.Lock()
+	defer h.correlationRunMu.Unlock()
+	if h.correlationRunLast == nil {
+		return
+	}
+	if h.correlationRunLast[scopeKey].Equal(reservedAt) {
+		delete(h.correlationRunLast, scopeKey)
+	}
 }
 
 func autoCorrelationScopeKey(organizationSlug string, projectSlug string, environmentSlug string, appSlug string) string {

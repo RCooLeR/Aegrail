@@ -21,8 +21,8 @@ Copy-Item configs\hub.env.example .env.local
 Set the equivalent environment values in your shell/service manager:
 
 ```powershell
-$env:AEGRAIL_DATABASE_URL = "postgres://aegrail:aegrail@localhost:55432/aegrail?sslmode=disable"
-$env:AEGRAIL_REDIS_URL = "redis://localhost:56379/0"
+$env:AEGRAIL_DATABASE_URL = "postgres://aegrail:replace-with-url-encoded-password@localhost:55432/aegrail?sslmode=disable"
+$env:AEGRAIL_REDIS_URL = "redis://:replace-with-redis-password@localhost:56379/0"
 $env:AEGRAIL_REDIS_KEY_PREFIX = "aegrail"
 $env:AEGRAIL_CORRELATION_WORKERS = "1"
 $env:AEGRAIL_HUB_USER_SECRET = "replace-with-strong-user-secret"
@@ -37,6 +37,41 @@ Redis is optional for very small local tests. For the normal 20+ site setup, con
 
 On small NAS hardware, keep `AEGRAIL_CORRELATION_WORKERS=1`. Increase it only
 after the Hub stays comfortably below CPU limits during agent backlog replay.
+
+Built-in retention worker:
+
+```text
+AEGRAIL_MAINTENANCE_INTERVAL=1h
+AEGRAIL_RETENTION_EVENTS=180d
+AEGRAIL_RETENTION_RESOLVED_FINDINGS=180d
+AEGRAIL_RETENTION_MODEL_REPORTS=180d
+AEGRAIL_RETENTION_AUTH_EVENTS=180d
+AEGRAIL_RETENTION_BATCH_SIZE=5000
+AEGRAIL_DB_SOFT_LIMIT_BYTES=0
+```
+
+The worker runs inside `hub serve` on startup and then at the interval. It
+prunes old ingest events not linked to open/acknowledged findings, empty old
+ingest batches, old resolved/false-positive findings, old model-analysis
+reports not linked to active findings, and old authentication audit events.
+The default window is six months (`180d`) for every retained data class.
+Durations support Go syntax such as `4320h` and day syntax such as `180d`.
+Set `AEGRAIL_MAINTENANCE_INTERVAL=0` to disable the worker temporarily.
+Owners can inspect database size and core table estimates through
+`GET /api/v1/system/status`.
+
+Dashboard authentication lockout:
+
+- Ten failed password/TOTP attempts for an existing user lock that user for 15 minutes.
+- A correct password during the lockout window is still rejected.
+- Successful login resets the failed counter.
+- Login success/failure, TOTP failure, lockout, and logout events are stored in `hub_auth_events`.
+
+CLI audit lookup:
+
+```powershell
+go run ./cmd/hub users auth-events --email operator@example.test --since 24h --limit 100
+```
 
 Temporary ingest troubleshooting:
 
@@ -193,7 +228,11 @@ Serve the API and built dashboard:
 go run ./cmd/hub serve --dashboard-dir ..\dashboard\dist
 ```
 
-When Redis is configured, `serve` starts correlation workers automatically. Agents still send HTTPS/HTTP requests to the Hub API or your reverse proxy; they never connect to Redis.
+When Redis is configured, `serve` starts correlation workers automatically.
+Normal ingest still runs an immediate coalesced correlation pass; Redis is a
+fallback/catch-up queue and should not be the reason notifications wait for a
+daily batch. Agents still send HTTPS/HTTP requests to the Hub API or your
+reverse proxy; they never connect to Redis.
 
 Default local API address is:
 

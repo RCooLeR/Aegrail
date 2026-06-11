@@ -40,6 +40,24 @@ func TestSuspiciousFilePathRuleStillFlagsPHPInPrestaShopAssetPath(t *testing.T) 
 	}
 }
 
+func TestSuspiciousFilePathRuleSkipsGeneratedPrestaShopThemeProfiles(t *testing.T) {
+	event := testFilePathEvent("file.modified", "themes/at_petstore/profiles/id_gencode_5b02b134d274d_1526903092.tpl", nil)
+	if rule, ok := suspiciousFilePathRuleForEvent(event); ok {
+		t.Fatalf("rule = %#v, want generated PrestaShop theme profile to be ignored", rule)
+	}
+}
+
+func TestSuspiciousFilePathRuleKeepsNormalThemeProfileTemplates(t *testing.T) {
+	event := testFilePathEvent("file.modified", "themes/at_petstore/profiles/layout.tpl", nil)
+	rule, ok := suspiciousFilePathRuleForEvent(event)
+	if !ok {
+		t.Fatalf("expected normal theme profile template to remain visible")
+	}
+	if rule.RuleID != "file-plugin-theme-module-changed" {
+		t.Fatalf("rule = %#v, want theme/module change rule", rule)
+	}
+}
+
 func testFilePathEvent(eventType string, path string, payload map[string]any) domain.TimelineEvent {
 	if payload == nil {
 		payload = map[string]any{}

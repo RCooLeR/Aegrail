@@ -352,6 +352,105 @@ func (r *HubUserRepository) DisableHubUserTOTP(ctx context.Context, userID domai
 	return user, err
 }
 
+func (r *HubUserRepository) RegisterHubLoginFailure(ctx context.Context, userID domain.ID, now time.Time, threshold int, lockDuration time.Duration) (domain.HubUser, bool, error) {
+	if threshold <= 0 {
+		threshold = 10
+	}
+	if lockDuration <= 0 {
+		lockDuration = 15 * time.Minute
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	const query = `
+		UPDATE hub_users
+		SET failed_login_attempts = failed_login_attempts + 1,
+			locked_until = CASE
+				WHEN failed_login_attempts + 1 >= $3 THEN greatest(coalesce(locked_until, '-infinity'::timestamptz), $2::timestamptz + $4::interval)
+				ELSE locked_until
+			END,
+			updated_at = now()
+		WHERE id = $1
+		RETURNING ` + hubUserColumns + `,
+			(failed_login_attempts >= $3 AND locked_until IS NOT NULL AND locked_until > $2::timestamptz)
+	`
+	var user domain.HubUser
+	var locked bool
+	err := r.pool.QueryRow(ctx, query, userID, now.UTC(), threshold, lockDuration).Scan(hubUserScanDest(&user, &locked)...)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.HubUser{}, false, ports.ErrHubNotFound
+	}
+	return user, locked, err
+}
+
+func (r *HubUserRepository) ResetHubLoginFailures(ctx context.Context, userID domain.ID) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE hub_users
+		SET failed_login_attempts = 0,
+			locked_until = NULL,
+			updated_at = now()
+		WHERE id = $1
+	`, userID)
+	return err
+}
+
+func (r *HubUserRepository) SaveHubAuthEvent(ctx context.Context, event domain.HubAuthEvent) error {
+	if event.CreatedAt.IsZero() {
+		event.CreatedAt = time.Now().UTC()
+	}
+	const query = `
+		INSERT INTO hub_auth_events (user_id, email_normalized, event, remote_ip, user_agent, created_at)
+		VALUES (nullif($1::text, '')::uuid, $2, $3, nullif($4, '')::inet, $5, $6)
+	`
+	_, err := r.pool.Exec(ctx, query, string(event.UserID), event.EmailNormalized, event.Event, event.RemoteIP, event.UserAgent, event.CreatedAt.UTC())
+	return err
+}
+
+func (r *HubUserRepository) ListHubAuthEvents(ctx context.Context, email string, since time.Time, limit int) ([]domain.HubAuthEvent, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	if since.IsZero() {
+		since = time.Now().UTC().Add(-24 * time.Hour)
+	}
+	email = strings.TrimSpace(strings.ToLower(email))
+	const baseQuery = `
+		SELECT id::text, coalesce(user_id::text, ''), email_normalized, event, coalesce(remote_ip::text, ''), user_agent, created_at
+		FROM hub_auth_events
+		WHERE created_at >= $1
+	`
+	query := baseQuery + `
+		ORDER BY created_at DESC
+		LIMIT $2
+	`
+	args := []any{since.UTC(), limit}
+	if email != "" {
+		query = baseQuery + `
+			AND lower(email_normalized) = lower($2)
+			ORDER BY created_at DESC
+			LIMIT $3
+		`
+		args = []any{since.UTC(), email, limit}
+	}
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var events []domain.HubAuthEvent
+	for rows.Next() {
+		var event domain.HubAuthEvent
+		if err := rows.Scan(&event.ID, &event.UserID, &event.EmailNormalized, &event.Event, &event.RemoteIP, &event.UserAgent, &event.CreatedAt); err != nil {
+			return nil, err
+		}
+		events = append(events, event)
+	}
+	return events, rows.Err()
+}
+
 func (r *HubUserRepository) SaveHubUserSession(ctx context.Context, session domain.HubUserSession) (domain.HubUserSession, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -392,7 +491,7 @@ func (r *HubUserRepository) FindHubUserBySessionTokenHash(ctx context.Context, t
 			u.id::text, u.email, u.display_name, u.access_level, u.status, u.password_hash, u.password_set_at,
 			u.two_factor_required, u.two_factor_enabled, u.totp_secret_ciphertext,
 			u.totp_enrolled_at, u.pending_totp_secret_ciphertext, u.pending_totp_started_at,
-			u.last_login_at, u.created_at, u.updated_at,
+			u.last_login_at, u.failed_login_attempts, u.locked_until, u.created_at, u.updated_at,
 			s.id::text, s.user_id::text, s.token_hash, s.expires_at, s.revoked_at, s.created_at, s.last_seen_at
 		FROM hub_user_sessions s
 		JOIN hub_users u ON u.id = s.user_id
@@ -418,6 +517,8 @@ func (r *HubUserRepository) FindHubUserBySessionTokenHash(ctx context.Context, t
 		&user.PendingTOTPSecretCiphertext,
 		&user.PendingTOTPStartedAt,
 		&user.LastLoginAt,
+		&user.FailedLoginAttempts,
+		&user.LockedUntil,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 		&session.ID,
@@ -450,7 +551,7 @@ func (r *HubUserRepository) RevokeHubUserSession(ctx context.Context, tokenHash 
 const hubUserColumns = `id::text, email, display_name, access_level, status, password_hash, password_set_at,
 	two_factor_required, two_factor_enabled, totp_secret_ciphertext,
 	totp_enrolled_at, pending_totp_secret_ciphertext, pending_totp_started_at,
-	last_login_at, created_at, updated_at`
+	last_login_at, failed_login_attempts, locked_until, created_at, updated_at`
 
 type hubUserScanner interface {
 	Scan(dest ...any) error
@@ -458,7 +559,12 @@ type hubUserScanner interface {
 
 func scanHubUser(row hubUserScanner) (domain.HubUser, error) {
 	var user domain.HubUser
-	err := row.Scan(
+	err := row.Scan(hubUserScanDest(&user)...)
+	return user, err
+}
+
+func hubUserScanDest(user *domain.HubUser, extra ...any) []any {
+	dest := []any{
 		&user.ID,
 		&user.Email,
 		&user.DisplayName,
@@ -473,8 +579,10 @@ func scanHubUser(row hubUserScanner) (domain.HubUser, error) {
 		&user.PendingTOTPSecretCiphertext,
 		&user.PendingTOTPStartedAt,
 		&user.LastLoginAt,
+		&user.FailedLoginAttempts,
+		&user.LockedUntil,
 		&user.CreatedAt,
 		&user.UpdatedAt,
-	)
-	return user, err
+	}
+	return append(dest, extra...)
 }

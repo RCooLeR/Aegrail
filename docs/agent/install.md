@@ -26,6 +26,9 @@ Required config areas:
 - `hub.node_secret` or `hub.node_secret_env`: node private key shown once when the Hub creates the node.
 - `identity`: organization, project, environment, host, agent ID, labels.
 - `runtime.queue_dir` and `runtime.state_dir`: local sensitive runtime directories.
+- `runtime.max_pending_files`: optional pending queue cap. When set, the Agent
+  moves oldest pending batches to `discarded` before accepting new batches that
+  would exceed the cap.
 - `sites[]`: one or more monitored sites.
 
 Database DSNs should be stored in environment variables referenced by `dsn_env`. Literal DSNs with credentials are rejected by validation.
@@ -103,6 +106,19 @@ docker compose --env-file docker/examples/.env.agent -f docker/examples/agent.co
 
 Mount site files and logs read-only. Keep queue/state volumes, database DSNs,
 node secrets, and PII keys out of Git.
+
+For Docker agents that use rendered browser crawls, keep Compose `init: true`
+or run the container with Docker `--init`. Chromium may spawn helper processes
+for rendering and crash handling; without an init process in the container,
+orphaned helpers can remain as `<defunct>` zombies. Existing zombies cannot be
+killed directly; recreate or restart the affected Agent container after adding
+the init process.
+
+For weak servers or NAS deployments, prefer non-rendered browser crawls unless
+rendered script detection is required. When rendered crawling is enabled, set
+`browser_crawl.disable_images: true`, keep `browser_crawl.max_pages` small, and
+set `browser_crawl.total_budget` so one site cannot spend the whole loop inside
+Chrome.
 
 ## Verification
 

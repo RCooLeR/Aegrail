@@ -25,6 +25,10 @@ type HubUserRepository interface {
 	FindHubUserByEmail(ctx context.Context, email string) (domain.HubUser, bool, error)
 	FindHubUserByID(ctx context.Context, userID domain.ID) (domain.HubUser, bool, error)
 	UpdateHubUser(ctx context.Context, userID domain.ID, update domain.HubUserUpdate) (domain.HubUser, error)
+	RegisterHubLoginFailure(ctx context.Context, userID domain.ID, now time.Time, threshold int, lockDuration time.Duration) (domain.HubUser, bool, error)
+	ResetHubLoginFailures(ctx context.Context, userID domain.ID) error
+	SaveHubAuthEvent(ctx context.Context, event domain.HubAuthEvent) error
+	ListHubAuthEvents(ctx context.Context, email string, since time.Time, limit int) ([]domain.HubAuthEvent, error)
 	StartHubUserTOTP(ctx context.Context, userID domain.ID, start domain.HubUserTOTPStart) (domain.HubUser, error)
 	ActivateHubUserTOTP(ctx context.Context, userID domain.ID, activation domain.HubUserTOTPActivation) (domain.HubUser, error)
 	DisableHubUserTOTP(ctx context.Context, userID domain.ID) (domain.HubUser, error)

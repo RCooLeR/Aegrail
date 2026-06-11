@@ -87,12 +87,13 @@ func TestIngestEventsAutoSavesWordPressAdminFinding(t *testing.T) {
 	}
 }
 
-func TestIngestEventsQueuesCorrelationWhenJobQueueConfigured(t *testing.T) {
+func TestIngestEventsRunsImmediateCorrelationWhenJobQueueConfigured(t *testing.T) {
 	inventory := newMemoryInventoryRepository()
 	ingest := &memoryIngestRepository{}
 	findings := newMemoryHubFindingRepository()
 	queue := &memoryJobQueue{}
-	hub := New(Dependencies{Inventory: inventory, Ingest: ingest, Findings: findings, Jobs: queue})
+	notifications := &memoryNotificationSink{}
+	hub := New(Dependencies{Inventory: inventory, Ingest: ingest, Findings: findings, Jobs: queue, Notifications: notifications})
 	ctx := context.Background()
 
 	bootstrapDatabaseDiffInventory(t, ctx, hub, "wordpress")
@@ -142,8 +143,8 @@ func TestIngestEventsQueuesCorrelationWhenJobQueueConfigured(t *testing.T) {
 	if result.Reused || len(result.Events) != 1 {
 		t.Fatalf("ingest result = %#v, want one newly stored event", result)
 	}
-	if len(queue.enqueued[ingestCorrelationQueueName]) != 1 {
-		t.Fatalf("queued jobs = %#v, want one correlation job", queue.enqueued)
+	if got := len(queue.enqueued[ingestCorrelationQueueName]); got != 0 {
+		t.Fatalf("queued jobs = %d, want immediate correlation without queue backlog", got)
 	}
 	stored, err := hub.ListHubFindings(ctx, ListHubFindingsInput{
 		OrganizationSlug: "acme",
@@ -154,10 +155,80 @@ func TestIngestEventsQueuesCorrelationWhenJobQueueConfigured(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListHubFindings returned error: %v", err)
 	}
-	if len(stored) != 0 {
-		t.Fatalf("stored findings = %#v, want no inline correlation when queue is configured", stored)
+	if len(stored) != 1 || stored[0].RuleID != "wordpress-admin-user-added" {
+		t.Fatalf("stored findings = %#v, want immediate queued-scope correlation finding", stored)
 	}
+	if len(notifications.items) != 1 || notifications.items[0].Type != "finding.observed" {
+		t.Fatalf("notifications = %#v, want immediate observed notification", notifications.items)
+	}
+}
 
+func TestHandleCorrelationJobSavesQueuedCorrelationFinding(t *testing.T) {
+	inventory := newMemoryInventoryRepository()
+	ingest := &memoryIngestRepository{}
+	findings := newMemoryHubFindingRepository()
+	queue := &memoryJobQueue{}
+	hub := New(Dependencies{Inventory: inventory, Ingest: ingest, Findings: findings, Jobs: queue})
+	ctx := context.Background()
+
+	environment, app, host, agent := bootstrapDatabaseDiffInventory(t, ctx, hub, "wordpress")
+	now := time.Date(2026, 5, 14, 2, 2, 51, 0, time.UTC)
+	_, _, _, err := ingest.SaveIngestBatch(ctx, domain.IngestBatch{
+		ExternalID:     "manual-batch",
+		OrganizationID: "org-001",
+		ProjectID:      environment.ProjectID,
+		EnvironmentID:  environment.ID,
+		AppID:          app.ID,
+		ServiceID:      "service-001",
+		HostID:         host.ID,
+		AgentID:        agent.ID,
+	}, []domain.IngestEvent{
+		{
+			ID:             "evt-manual-admin-added",
+			OrganizationID: "org-001",
+			ProjectID:      "project-001",
+			EnvironmentID:  environment.ID,
+			AppID:          app.ID,
+			ServiceID:      "service-001",
+			HostID:         host.ID,
+			AgentID:        agent.ID,
+			EventTime:      now,
+			EventType:      "db.entity.added",
+			Target:         "wordpress:wordpress_user:wordpress_user:abc",
+			Severity:       domain.SeverityHigh,
+			Message:        "Privileged database entity wordpress_user added for wordpress",
+			Labels: map[string]string{
+				"db_profile":     "wordpress",
+				"db_entity_type": "wordpress_user",
+			},
+			Payload: map[string]any{
+				"database":    "wordpress",
+				"profile":     "wordpress",
+				"entity_type": "wordpress_user",
+				"entity_key":  "wordpress_user:abc",
+				"current": map[string]any{
+					"type":       "wordpress_user",
+					"key":        "wordpress_user:abc",
+					"privileged": true,
+					"signature":  "sig-admin",
+					"attributes": map[string]any{
+						"administrator":   true,
+						"account_display": "roman@example.test",
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("SaveIngestBatch returned error: %v", err)
+	}
+	if !hub.enqueueAutoCorrelation(ctx, "acme", "customer-site", "production", "main-web", []domain.IngestEvent{{
+		EventTime: now,
+		EventType: "db.entity.added",
+		Severity:  domain.SeverityHigh,
+	}}) {
+		t.Fatalf("enqueueAutoCorrelation returned false")
+	}
 	var job ingestCorrelationJob
 	if err := json.Unmarshal(queue.enqueued[ingestCorrelationQueueName][0], &job); err != nil {
 		t.Fatalf("correlation job is not valid JSON: %v", err)
@@ -168,7 +239,7 @@ func TestIngestEventsQueuesCorrelationWhenJobQueueConfigured(t *testing.T) {
 	if err := hub.HandleCorrelationJob(ctx, queue.enqueued[ingestCorrelationQueueName][0]); err != nil {
 		t.Fatalf("HandleCorrelationJob returned error: %v", err)
 	}
-	stored, err = hub.ListHubFindings(ctx, ListHubFindingsInput{
+	stored, err := hub.ListHubFindings(ctx, ListHubFindingsInput{
 		OrganizationSlug: "acme",
 		ProjectSlug:      "customer-site",
 		EnvironmentSlug:  "production",

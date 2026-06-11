@@ -43,11 +43,12 @@ type ServerIdentityConfig struct {
 }
 
 type ServerRuntimeConfig struct {
-	QueueDir      string `yaml:"queue_dir"`
-	StateDir      string `yaml:"state_dir"`
-	Interval      string `yaml:"interval"`
-	SentRetention string `yaml:"sent_retention"`
-	Timezone      string `yaml:"timezone"`
+	QueueDir        string `yaml:"queue_dir"`
+	StateDir        string `yaml:"state_dir"`
+	Interval        string `yaml:"interval"`
+	SentRetention   string `yaml:"sent_retention"`
+	Timezone        string `yaml:"timezone"`
+	MaxPendingFiles int    `yaml:"max_pending_files"`
 }
 
 type ServerSiteConfig struct {
@@ -99,8 +100,10 @@ type ServerBrowserCrawlConfig struct {
 	Enabled            bool     `yaml:"enabled"`
 	Rendered           bool     `yaml:"rendered"`
 	WaitTagManager     bool     `yaml:"wait_tag_manager"`
+	DisableImages      bool     `yaml:"disable_images"`
 	MaxPages           int      `yaml:"max_pages"`
 	Timeout            string   `yaml:"timeout"`
+	TotalBudget        string   `yaml:"total_budget"`
 	Schedule           string   `yaml:"schedule"`
 	UserAgent          string   `yaml:"user_agent"`
 	FallbackUserAgents []string `yaml:"fallback_user_agents"`
@@ -249,6 +252,7 @@ func NormalizeServerConfig(config ServerConfig) ServerConfig {
 			db.Schedule = strings.TrimSpace(db.Schedule)
 		}
 		site.BrowserCrawl.Timeout = strings.TrimSpace(site.BrowserCrawl.Timeout)
+		site.BrowserCrawl.TotalBudget = strings.TrimSpace(site.BrowserCrawl.TotalBudget)
 		site.BrowserCrawl.Schedule = strings.TrimSpace(site.BrowserCrawl.Schedule)
 		site.BrowserCrawl.URLs = normalizeStringSlice(site.BrowserCrawl.URLs, false)
 		for wpIndex := range site.WordPress.NetworkSites {
@@ -305,6 +309,9 @@ func ValidateServerConfig(config ServerConfig) error {
 	}
 	if _, err := config.RuntimeSentRetention(); err != nil {
 		issues = append(issues, "runtime.sent_retention must be a valid duration")
+	}
+	if config.Runtime.MaxPendingFiles < 0 {
+		issues = append(issues, "runtime.max_pending_files must be zero or greater")
 	}
 	if len(config.Sites) == 0 {
 		issues = append(issues, "at least one site is required")
@@ -395,6 +402,11 @@ func ValidateServerConfig(config ServerConfig) error {
 				issues = append(issues, prefix+".browser_crawl.timeout must be a valid duration")
 			}
 		}
+		if site.BrowserCrawl.TotalBudget != "" {
+			if _, err := time.ParseDuration(site.BrowserCrawl.TotalBudget); err != nil {
+				issues = append(issues, prefix+".browser_crawl.total_budget must be a valid duration")
+			}
+		}
 		if site.BrowserCrawl.Schedule != "" {
 			if _, err := time.ParseDuration(site.BrowserCrawl.Schedule); err != nil {
 				issues = append(issues, prefix+".browser_crawl.schedule must be a valid duration")
@@ -464,6 +476,7 @@ func (r *Runtime) RunServerConfigOnce(ctx context.Context, config ServerConfig, 
 		return ServerRunResult{}, err
 	}
 	r.Config.SentRetention = sentRetention
+	r.Config.MaxPendingFiles = config.Runtime.MaxPendingFiles
 	if err := ensureQueueDirs(identity.QueueDir); err != nil {
 		return ServerRunResult{}, err
 	}
@@ -531,7 +544,7 @@ func (r *Runtime) RunServerConfigOnce(ctx context.Context, config ServerConfig, 
 		}
 		result.Pending = status.Pending
 	} else {
-		sendResult, err := r.SendQueued(ctx, sendLimit)
+		sendResult, err := r.SendQueuedAll(ctx, sendLimit, DefaultSendDrainBudget)
 		if err != nil {
 			return result, err
 		}

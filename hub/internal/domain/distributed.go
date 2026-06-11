@@ -137,6 +137,8 @@ type DeploymentMarker struct {
 	CreatedAt     time.Time
 }
 
+const HubFindingMetadataSaveCreated = "_aegrail_save_created"
+
 type HubFinding struct {
 	ID              ID
 	OrganizationID  ID
@@ -253,6 +255,8 @@ type HubUser struct {
 	PendingTOTPSecretCiphertext string
 	PendingTOTPStartedAt        *time.Time
 	LastLoginAt                 *time.Time
+	FailedLoginAttempts         int
+	LockedUntil                 *time.Time
 	CreatedAt                   time.Time
 	UpdatedAt                   time.Time
 }
@@ -283,6 +287,47 @@ type HubUserSession struct {
 	RevokedAt  *time.Time
 	CreatedAt  time.Time
 	LastSeenAt time.Time
+}
+
+type HubAuthEvent struct {
+	ID              ID
+	UserID          ID
+	EmailNormalized string
+	Event           string
+	RemoteIP        string
+	UserAgent       string
+	CreatedAt       time.Time
+}
+
+type HubMaintenancePruneOptions struct {
+	Now                      time.Time
+	EventRetention           time.Duration
+	ResolvedFindingRetention time.Duration
+	ModelReportRetention     time.Duration
+	AuthEventRetention       time.Duration
+	BatchSize                int
+}
+
+type HubMaintenancePruneResult struct {
+	IngestEventsDeleted     int
+	IngestBatchesDeleted    int
+	ResolvedFindingsDeleted int
+	ModelReportsDeleted     int
+	AuthEventsDeleted       int
+	StartedAt               time.Time
+	FinishedAt              time.Time
+}
+
+type HubSystemTableStats struct {
+	Name  string
+	Rows  int64
+	Bytes int64
+}
+
+type HubSystemStatus struct {
+	DatabaseSizeBytes int64
+	Tables            []HubSystemTableStats
+	GeneratedAt       time.Time
 }
 
 type HubPushSubscription struct {

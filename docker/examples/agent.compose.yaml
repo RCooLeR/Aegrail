@@ -3,6 +3,7 @@ name: aegrail-agent-example
 services:
   agent:
     image: aegrail-agent:example
+    init: true
     build:
       context: ../..
       dockerfile: docker/examples/agent.Dockerfile

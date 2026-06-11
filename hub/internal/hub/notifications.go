@@ -19,10 +19,14 @@ func (h *Hub) notifyHubFindings(ctx context.Context, eventType string, findings 
 	}
 	failed := 0
 	var firstErr error
-	for _, finding := range findings {
+	for index := range findings {
+		finding := findings[index]
 		if !shouldNotifyHubFinding(eventType, finding) {
+			stripHubFindingSaveMetadata(&findings[index])
 			continue
 		}
+		stripHubFindingSaveMetadata(&finding)
+		stripHubFindingSaveMetadata(&findings[index])
 		// Notification transports are best-effort. Findings are durable evidence;
 		// webhook/email/push outages must not make correlation or ingest jobs fail.
 		if err := h.notifyHubFinding(ctx, eventType, finding, metadata); err != nil {
@@ -43,7 +47,29 @@ func shouldNotifyHubFinding(eventType string, finding domain.HubFinding) bool {
 		return true
 	}
 	status := findingStatusValue(strings.TrimSpace(finding.Status))
-	return status == "open"
+	return status == "open" && hubFindingSaveCreated(finding)
+}
+
+func hubFindingSaveCreated(finding domain.HubFinding) bool {
+	value, ok := finding.Metadata[domain.HubFindingMetadataSaveCreated]
+	if !ok {
+		return false
+	}
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case string:
+		return strings.EqualFold(strings.TrimSpace(typed), "true") || strings.TrimSpace(typed) == "1"
+	default:
+		return false
+	}
+}
+
+func stripHubFindingSaveMetadata(finding *domain.HubFinding) {
+	if finding == nil || finding.Metadata == nil {
+		return
+	}
+	delete(finding.Metadata, domain.HubFindingMetadataSaveCreated)
 }
 
 func (h *Hub) notifyHubFinding(ctx context.Context, eventType string, finding domain.HubFinding, metadata map[string]any) error {

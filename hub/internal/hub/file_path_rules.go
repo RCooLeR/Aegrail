@@ -160,6 +160,9 @@ func suspiciousFilePathRuleForEvent(event domain.TimelineEvent) (filePathRule, b
 	if path == "" {
 		return filePathRule{}, false
 	}
+	if filePathIsGeneratedPrestaShopThemeProfile(path) {
+		return filePathRule{}, false
+	}
 	switch {
 	case filePathIsSensitiveConfig(path):
 		return filePathRule{
@@ -232,6 +235,44 @@ func displayFileEventPath(event domain.TimelineEvent) string {
 		path = strings.ReplaceAll(path, "//", "/")
 	}
 	return strings.TrimPrefix(path, "./")
+}
+
+func filePathIsGeneratedPrestaShopThemeProfile(path string) bool {
+	path = "/" + strings.Trim(strings.ToLower(strings.ReplaceAll(path, "\\", "/")), "/")
+	if !strings.Contains(path, "/themes/") || !strings.Contains(path, "/profiles/") {
+		return false
+	}
+	filename := path[strings.LastIndex(path, "/")+1:]
+	if !strings.HasPrefix(filename, "id_gencode_") || !strings.HasSuffix(filename, ".tpl") {
+		return false
+	}
+	stem := strings.TrimSuffix(strings.TrimPrefix(filename, "id_gencode_"), ".tpl")
+	parts := strings.Split(stem, "_")
+	return len(parts) == 2 && filePathIsLowerHexString(parts[0]) && filePathIsDecimalString(parts[1])
+}
+
+func filePathIsLowerHexString(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, char := range value {
+		if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f')) {
+			return false
+		}
+	}
+	return true
+}
+
+func filePathIsDecimalString(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func filePathIsSensitiveConfig(path string) bool {

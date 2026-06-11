@@ -88,7 +88,7 @@ func (r *HubFindingRepository) SaveHubFindings(ctx context.Context, findings []d
 			coalesce(app_id::text, ''), rule_id, rule_version, dedupe_key, severity,
 			confidence, title, summary, description, event_ids, first_event_at,
 			last_event_at, status, status_reason, status_note, status_actor,
-			status_updated_at, metadata, created_at, updated_at
+			status_updated_at, metadata, created_at, updated_at, (xmax = 0)
 	`
 
 	batch := &pgx.Batch{}
@@ -118,7 +118,7 @@ func (r *HubFindingRepository) SaveHubFindings(ctx context.Context, findings []d
 	missing := make([]int, 0)
 	var scanErr error
 	for index := range findings {
-		item, err := scanHubFinding(results.QueryRow())
+		item, err := scanHubFindingSaveResult(results.QueryRow())
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				missing = append(missing, index)
@@ -143,6 +143,7 @@ func (r *HubFindingRepository) SaveHubFindings(ctx context.Context, findings []d
 		if err != nil {
 			return nil, err
 		}
+		markHubFindingSaveCreated(&item, false)
 		saved[index] = item
 	}
 
@@ -150,6 +151,54 @@ func (r *HubFindingRepository) SaveHubFindings(ctx context.Context, findings []d
 		return nil, err
 	}
 	return saved, nil
+}
+
+func scanHubFindingSaveResult(row hubFindingScanner) (domain.HubFinding, error) {
+	var item domain.HubFinding
+	var eventIDs []string
+	var inserted bool
+	if err := row.Scan(
+		&item.ID,
+		&item.OrganizationID,
+		&item.ProjectID,
+		&item.EnvironmentID,
+		&item.AppID,
+		&item.RuleID,
+		&item.RuleVersion,
+		&item.DedupeKey,
+		&item.Severity,
+		&item.Confidence,
+		&item.Title,
+		&item.Summary,
+		&item.Description,
+		&eventIDs,
+		&item.FirstEventAt,
+		&item.LastEventAt,
+		&item.Status,
+		&item.StatusReason,
+		&item.StatusNote,
+		&item.StatusActor,
+		&item.StatusUpdatedAt,
+		&item.Metadata,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+		&inserted,
+	); err != nil {
+		return domain.HubFinding{}, err
+	}
+	item.EventIDs = domainIDs(eventIDs)
+	if item.Metadata == nil {
+		item.Metadata = map[string]any{}
+	}
+	markHubFindingSaveCreated(&item, inserted)
+	return item, nil
+}
+
+func markHubFindingSaveCreated(finding *domain.HubFinding, created bool) {
+	if finding.Metadata == nil {
+		finding.Metadata = map[string]any{}
+	}
+	finding.Metadata[domain.HubFindingMetadataSaveCreated] = created
 }
 
 func (r *HubFindingRepository) getHubFindingByDedupeKey(ctx context.Context, row hubFindingQuerier, environmentID domain.ID, appID domain.ID, ruleID string, dedupeKey string) (domain.HubFinding, error) {

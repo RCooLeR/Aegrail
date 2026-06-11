@@ -10,8 +10,8 @@ x-hub-common: &hub-common
   environment:
     AEGRAIL_HTTP_ADDR: 0.0.0.0:8787
     AEGRAIL_MIGRATIONS_DIR: /app/migrations
-    AEGRAIL_DATABASE_URL: postgres://aegrail:${AEGRAIL_POSTGRES_PASSWORD:-replace-with-db-password}@postgres18:5432/aegrail?sslmode=disable
-    AEGRAIL_REDIS_URL: redis://redis:6379/0
+    AEGRAIL_DATABASE_URL: postgres://aegrail:${AEGRAIL_POSTGRES_PASSWORD:?set AEGRAIL_POSTGRES_PASSWORD}@postgres18:5432/aegrail?sslmode=disable
+    AEGRAIL_REDIS_URL: redis://:${AEGRAIL_REDIS_PASSWORD:?set AEGRAIL_REDIS_PASSWORD}@redis:6379/0
   volumes:
     - hub-data:/var/lib/aegrail/hub
   extra_hosts:
@@ -29,7 +29,7 @@ services:
     environment:
       POSTGRES_DB: aegrail
       POSTGRES_USER: aegrail
-      POSTGRES_PASSWORD: ${AEGRAIL_POSTGRES_PASSWORD:-replace-with-db-password}
+      POSTGRES_PASSWORD: ${AEGRAIL_POSTGRES_PASSWORD:?set AEGRAIL_POSTGRES_PASSWORD}
     volumes:
       - postgres18-data:/var/lib/postgresql/data
       - ../../services/postgres18/initdb:/docker-entrypoint-initdb.d:ro
@@ -43,11 +43,20 @@ services:
   redis:
     image: redis:7.4-alpine
     restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes"]
+    environment:
+      AEGRAIL_REDIS_PASSWORD: ${AEGRAIL_REDIS_PASSWORD:?set AEGRAIL_REDIS_PASSWORD}
+    command:
+      [
+        "redis-server",
+        "--appendonly",
+        "yes",
+        "--requirepass",
+        "${AEGRAIL_REDIS_PASSWORD:?set AEGRAIL_REDIS_PASSWORD}",
+      ]
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$${AEGRAIL_REDIS_PASSWORD}\" --no-auth-warning ping | grep PONG"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -63,7 +72,7 @@ services:
     <<: *hub-common
     restart: unless-stopped
     ports:
-      - "${AEGRAIL_HTTP_PORT:-8787}:8787"
+      - "${AEGRAIL_HTTP_BIND:-127.0.0.1}:${AEGRAIL_HTTP_PORT:-8787}:8787"
 
 volumes:
   hub-data:

@@ -26,6 +26,7 @@ type Hub struct {
 	locks                      ports.LockManager
 	rateLimiter                ports.RateLimiter
 	users                      ports.HubUserRepository
+	maintenance                ports.HubMaintenanceRepository
 	pushSubscriptions          ports.PushSubscriptionRepository
 	notifications              ports.NotificationSink
 	userSecretKey              string
@@ -57,6 +58,7 @@ type Dependencies struct {
 	Locks             ports.LockManager
 	RateLimiter       ports.RateLimiter
 	Users             ports.HubUserRepository
+	Maintenance       ports.HubMaintenanceRepository
 	PushSubscriptions ports.PushSubscriptionRepository
 	Notifications     ports.NotificationSink
 	UserSecretKey     string
@@ -77,6 +79,7 @@ func New(deps Dependencies) *Hub {
 		locks:                  deps.Locks,
 		rateLimiter:            deps.RateLimiter,
 		users:                  deps.Users,
+		maintenance:            deps.Maintenance,
 		pushSubscriptions:      deps.PushSubscriptions,
 		notifications:          deps.Notifications,
 		userSecretKey:          strings.TrimSpace(deps.UserSecretKey),

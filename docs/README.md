@@ -12,6 +12,7 @@ This directory contains the maintained project documentation. Keep implementatio
 - [Docker Examples](../docker/examples/README.md): example Hub and Agent images plus compose files.
 - [Security And Data Handling](security.md): privacy, redaction, transport, storage, and operating checklist.
 - [Development Notes](development.md): engineering standards and verification commands.
+- [Backup And Restore Runbook](runbooks/backup-restore.md): PostgreSQL backup, restore, and drill steps.
 - [Project Tracker](tracker.md): cross-project status and links to app-specific trackers.
 - [Brand Assets](brand/README.md): logos and visual assets.
 
@@ -22,6 +23,7 @@ docs/agent/       Agent docs: install, internals, tracker.
 docs/hub/         Hub docs: install, internals, Agent API, Dashboard API, tracker.
 docs/dashboard/   Dashboard docs: install, UI model, tracker.
 docs/services/    Local service docs: PostgreSQL, Redis, and Compose setup.
+docs/runbooks/    Production operation runbooks.
 docs/brand/       Brand assets and favicon/logo notes.
 docker/examples/  Example Hub and Agent Dockerfiles, Compose files, and env/config templates.
 ```

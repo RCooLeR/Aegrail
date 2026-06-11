@@ -36,6 +36,7 @@ func TestHubRouterServesDashboardAssets(t *testing.T) {
 	if assetResponse.Code != http.StatusOK {
 		t.Fatalf("asset status = %d body = %s", assetResponse.Code, assetResponse.Body.String())
 	}
+	assertHubSecurityHeaders(t, assetResponse.Result(), false)
 	if !strings.Contains(assetResponse.Body.String(), "dashboard") {
 		t.Fatalf("asset body = %q, want dashboard asset", assetResponse.Body.String())
 	}
@@ -45,6 +46,7 @@ func TestHubRouterServesDashboardAssets(t *testing.T) {
 	if spaResponse.Code != http.StatusOK {
 		t.Fatalf("spa status = %d body = %s", spaResponse.Code, spaResponse.Body.String())
 	}
+	assertHubSecurityHeaders(t, spaResponse.Result(), false)
 	if !strings.Contains(spaResponse.Body.String(), `id="root"`) {
 		t.Fatalf("spa body = %q, want dashboard index", spaResponse.Body.String())
 	}

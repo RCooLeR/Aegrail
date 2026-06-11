@@ -11,9 +11,9 @@ flowchart LR
   Ingest --> Verify["Node key lookup, decrypt, timestamp check"]
   Verify --> Inventory["Resolve org/project/env/app/service/host/agent"]
   Inventory --> Store["Store batch and events"]
-  Store --> Queue["Redis correlation queue if configured"]
-  Store --> Rules["Inline correlation fallback"]
-  Queue --> Rules["Deterministic rules and correlation workers"]
+  Store --> Rules["Immediate deterministic correlation"]
+  Store --> Queue["Redis fallback/catch-up queue"]
+  Queue --> Rules
   Rules --> Findings["Findings"]
   Findings --> Dashboard["Dashboard APIs"]
   Findings --> Reports["Reports and model analysis"]
@@ -29,7 +29,9 @@ PostgreSQL stores:
 - deployment markers
 - model analysis reports and provenance
 - dashboard users, sessions, and encrypted TOTP material
+- dashboard authentication audit events
 - browser-push subscriptions for dashboard users
+- maintenance run summaries
 
 Dashboard inventory tree reads use a fixed-query PostgreSQL path so the
 overview does not generate one query per company/site/node. Topology reads for
@@ -37,7 +39,12 @@ one environment use a scoped query path instead of loading the full tree. Test
 and custom repositories can fall back to the slower nested walk without
 changing the API.
 
-Redis is optional but recommended when monitoring many sites. Hub uses it for short-lived ingest-correlation jobs, distributed worker locks, and shared auth rate limiting. Durable evidence, findings, users, sessions, and reports stay in PostgreSQL.
+Redis is optional but recommended when monitoring many sites. Hub uses it for
+short-lived fallback/catch-up ingest-correlation jobs, distributed worker locks,
+and shared auth rate limiting. Normal ingest still kicks a coalesced immediate
+correlation pass so findings and notifications are not delayed until a queue
+backlog drains. Durable evidence, findings, users, sessions, and reports stay in
+PostgreSQL.
 
 Correlation workers use a purpose-built timeline query for candidate evidence:
 database diffs, file mutations, PHP errors, and security-relevant access logs.
@@ -51,6 +58,13 @@ Agent ingest can decrypt wire envelopes, and `AEGRAIL_HUB_USER_SECRET` is
 required before dashboard TOTP material and CSRF tokens can be used safely.
 Hub derives the TOTP-at-rest encryption key with HKDF-SHA-256 and stores only
 AES-GCM ciphertext for pending and active TOTP secrets.
+
+Dashboard authentication keeps a small audit trail in PostgreSQL. The Hub records
+login successes, login failures, TOTP failures, lockouts, and logouts with the
+normalized email, user ID when known, source IP resolved through trusted proxy
+rules, User-Agent, and timestamp. Ten failed password/TOTP attempts lock the
+existing account for 15 minutes. Lockout is per user account and successful
+login resets the counter.
 
 ## Ingest
 
@@ -67,7 +81,8 @@ The Hub:
 7. resolves inventory scope from slugs
 8. stores the external batch ID idempotently
 9. stores normalized events
-10. queues correlation work in Redis when configured, or runs correlation inline when Redis is not configured
+10. runs one coalesced immediate correlation pass for security-relevant events
+11. queues Redis fallback correlation work only when the immediate pass fails
 
 Wire v1 encrypts the JSON payload and authenticates it through the node key. Raw JSON ingest is rejected. Use HTTPS or a trusted private network outside local development because HTTP metadata, cookies, and operator sessions still need transport protection.
 
@@ -104,6 +119,9 @@ The Hub can also accept the current open findings as baseline. Baseline acceptan
 ## Noise Controls
 
 - File ignore rules suppress future matching file findings for a scoped app/environment.
+- Built-in file noise rules ignore known generated artifacts such as PrestaShop
+  `themes/<theme>/profiles/id_gencode_<hash>_<timestamp>.tpl` profile cache
+  templates.
 - Browser script allowlists approve known domains, inline hashes, or tag-manager IDs.
 - Deployment markers acknowledge open expected file/browser findings inside the confirmed time window and prevent future expected file/browser drift findings for that window. High-risk findings still stay open.
 - Config coverage records what the Agent says is enabled/disabled, including sanitized ignore paths.
@@ -141,20 +159,34 @@ The HTTP server sets read-header, read, write, and idle timeouts. Background
 correlation and model-analysis workers are attached to the process context and
 the Hub waits briefly for them during graceful shutdown.
 
+Hub also runs an optional in-process maintenance worker. It starts immediately
+with `hub serve`, then repeats at `AEGRAIL_MAINTENANCE_INTERVAL`. The worker
+deletes old ingest events that are not linked to open/acknowledged findings,
+old empty ingest batches, old resolved/false-positive findings, old
+model-analysis reports not tied to active findings, and old authentication
+audit events. Batch size is capped so pruning does not monopolize PostgreSQL.
+Owners can call `GET /api/v1/system/status` to inspect database size and core
+table row/byte estimates.
+
 ## Notifications
 
 Findings publish internal notification events after deterministic correlation:
 
-- `finding.observed`: an open finding was created or refreshed from Agent
-  evidence. Findings that an operator already marked `acknowledged`,
-  `resolved`, or `false_positive` are still refreshed in storage when matching
-  evidence appears again, but Hub does not send another observed notification
-  for those closed/non-open statuses.
+- `finding.observed`: a new open finding was created from Agent evidence.
+  Repeated evidence for an existing open finding refreshes the stored timeline
+  and metadata, but it does not send another observed notification. Findings
+  that an operator already marked `acknowledged`, `resolved`, or
+  `false_positive` are still refreshed in storage when matching evidence appears
+  again, but Hub does not send another observed notification for those
+  closed/non-open statuses.
 - `finding.status_updated`: an operator changed a finding status.
 
-Hub fans those events out to every configured sink. Notification delivery
-failures are reported to the worker/error log, while the finding remains stored
-in PostgreSQL as the source of truth.
+Hub fans those events out to every configured sink immediately after finding
+creation/status update. There is no notification cron or daily digest job in Hub.
+If operators see a batch at the same wall-clock time, inspect whether correlation
+was processing fallback backlog or whether the mail/browser provider delayed
+delivery. Notification delivery failures are reported to the worker/error log,
+while the finding remains stored in PostgreSQL as the source of truth.
 
 Webhook notifications are enabled with `AEGRAIL_NOTIFICATION_WEBHOOK_URL`.
 Hub posts JSON containing the event type, send time, finding, and metadata. If
@@ -169,7 +201,9 @@ Email notifications are enabled by setting SMTP credentials:
 `AEGRAIL_NOTIFICATION_EMAIL_SMTP_HOST` and
 `AEGRAIL_NOTIFICATION_EMAIL_SMTP_PORT` for your provider. The SMTP adapter uses STARTTLS when advertised, applies
 event/severity filters, and sends escaped HTML summaries with dashboard links
-when `AEGRAIL_HUB_PUBLIC_URL` is set.
+when `AEGRAIL_HUB_PUBLIC_URL` is set. Email includes Hub's notification
+`Sent` timestamp so provider/client delivery delays can be distinguished from
+Hub-side delays.
 
 Browser push notifications are enabled with a VAPID key pair generated by
 `hub notifications vapid-keys`. Dashboard users opt in from Settings. The

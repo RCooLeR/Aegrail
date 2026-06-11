@@ -389,6 +389,79 @@ func TestHubAuthRateLimiterIsScopedPerRouter(t *testing.T) {
 	}
 }
 
+func TestHubLoginFailuresLockAccountTemporarily(t *testing.T) {
+	users := newHTTPTestHubUserRepository()
+	now := time.Date(2026, 5, 14, 13, 0, 0, 0, time.UTC)
+	router := NewHubRouter(
+		domain.AppMeta{Name: "Aegrail", Binary: "aegrail", Version: "test"},
+		hubapp.New(hubapp.Dependencies{Users: users, UserSecretKey: "local-test-secret"}),
+		HubOptions{
+			DashboardCSRFSecret: "local-test-secret",
+			Now:                 func() time.Time { return now },
+			authRateLimiter:     newHubAuthRateLimiter(100, time.Minute),
+		},
+	)
+	createRequest := httptest.NewRequest(http.MethodPost, "/api/v1/access/users", bytes.NewBufferString(`{
+		"email":"lockout@example.test",
+		"display_name":"Lockout Test",
+		"access_level":"owner",
+		"password":"correct horse battery staple",
+		"status":"active",
+		"two_factor_required":false
+	}`))
+	createResponse := httptest.NewRecorder()
+	router.ServeHTTP(createResponse, createRequest)
+	if createResponse.Code != http.StatusCreated {
+		t.Fatalf("create status = %d body = %s", createResponse.Code, createResponse.Body.String())
+	}
+	var createBody struct {
+		User struct {
+			ID string `json:"id"`
+		} `json:"user"`
+	}
+	if err := json.NewDecoder(createResponse.Body).Decode(&createBody); err != nil {
+		t.Fatalf("Decode create returned error: %v", err)
+	}
+
+	for attempt := 0; attempt < hubapp.HubLoginLockoutThreshold; attempt++ {
+		response := performLogin(router, "lockout@example.test", "wrong wrong wrong")
+		if response.Code != http.StatusUnauthorized {
+			t.Fatalf("bad login attempt %d status = %d body = %s", attempt+1, response.Code, response.Body.String())
+		}
+	}
+	lockedUser := users.users[domain.ID(createBody.User.ID)]
+	if lockedUser.LockedUntil == nil || !lockedUser.LockedUntil.After(now) {
+		t.Fatalf("user lock = %#v, want locked until after now", lockedUser.LockedUntil)
+	}
+
+	lockedCorrect := performLogin(router, "lockout@example.test", "correct horse battery staple")
+	if lockedCorrect.Code != http.StatusUnauthorized {
+		t.Fatalf("locked correct login status = %d body = %s", lockedCorrect.Code, lockedCorrect.Body.String())
+	}
+
+	now = now.Add(hubapp.HubLoginLockoutDuration + time.Second)
+	unlockedCorrect := performLogin(router, "lockout@example.test", "correct horse battery staple")
+	if unlockedCorrect.Code != http.StatusOK {
+		t.Fatalf("unlocked correct login status = %d body = %s", unlockedCorrect.Code, unlockedCorrect.Body.String())
+	}
+	userAfterSuccess := users.users[domain.ID(createBody.User.ID)]
+	if userAfterSuccess.FailedLoginAttempts != 0 || userAfterSuccess.LockedUntil != nil {
+		t.Fatalf("user after success = %#v, want failures reset", userAfterSuccess)
+	}
+	var sawLockout, sawSuccess bool
+	for _, event := range users.authEvents {
+		if event.Event == "lockout" {
+			sawLockout = true
+		}
+		if event.Event == "login_success" {
+			sawSuccess = true
+		}
+	}
+	if !sawLockout || !sawSuccess {
+		t.Fatalf("auth events = %#v, want lockout and login_success", users.authEvents)
+	}
+}
+
 func TestHubUserDashboardReadyDoesNotRequireOptional2FA(t *testing.T) {
 	if !hubUserDashboardReady(domain.HubUser{TwoFactorRequired: false}) {
 		t.Fatalf("optional 2FA user should be dashboard-ready without enrollment")
@@ -430,9 +503,13 @@ func newRateLimitTestRouter(t *testing.T) http.Handler {
 }
 
 func performBadLogin(router http.Handler) *httptest.ResponseRecorder {
+	return performLogin(router, "admin@example.test", "wrong wrong wrong")
+}
+
+func performLogin(router http.Handler, email string, password string) *httptest.ResponseRecorder {
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(`{
-		"email":"admin@example.test",
-		"password":"wrong wrong wrong"
+		"email":`+fmt.Sprintf("%q", email)+`,
+		"password":`+fmt.Sprintf("%q", password)+`
 	}`))
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
@@ -466,10 +543,12 @@ func computeTestTOTP(t *testing.T, secret string, at time.Time) string {
 }
 
 type httpTestHubUserRepository struct {
-	sessions map[string]domain.HubUserSession
-	users    map[domain.ID]domain.HubUser
-	next     int
-	nextSess int
+	authEvents []domain.HubAuthEvent
+	sessions   map[string]domain.HubUserSession
+	users      map[domain.ID]domain.HubUser
+	next       int
+	nextEvent  int
+	nextSess   int
 }
 
 func newHTTPTestHubUserRepository() *httpTestHubUserRepository {
@@ -593,6 +672,61 @@ func (r *httpTestHubUserRepository) DisableHubUserTOTP(ctx context.Context, user
 	user.UpdatedAt = time.Date(2026, 5, 14, 12, 9, 0, 0, time.UTC)
 	r.users[userID] = user
 	return user, nil
+}
+
+func (r *httpTestHubUserRepository) RegisterHubLoginFailure(ctx context.Context, userID domain.ID, now time.Time, threshold int, lockDuration time.Duration) (domain.HubUser, bool, error) {
+	user, ok := r.users[userID]
+	if !ok {
+		return domain.HubUser{}, false, hubapp.ErrHubNotFound
+	}
+	user.FailedLoginAttempts++
+	locked := false
+	if threshold > 0 && user.FailedLoginAttempts >= threshold {
+		lockedUntil := now.UTC().Add(lockDuration)
+		user.LockedUntil = &lockedUntil
+		locked = true
+	}
+	user.UpdatedAt = now.UTC()
+	r.users[userID] = user
+	return user, locked, nil
+}
+
+func (r *httpTestHubUserRepository) ResetHubLoginFailures(ctx context.Context, userID domain.ID) error {
+	user, ok := r.users[userID]
+	if !ok {
+		return hubapp.ErrHubNotFound
+	}
+	user.FailedLoginAttempts = 0
+	user.LockedUntil = nil
+	r.users[userID] = user
+	return nil
+}
+
+func (r *httpTestHubUserRepository) SaveHubAuthEvent(ctx context.Context, event domain.HubAuthEvent) error {
+	r.nextEvent++
+	event.ID = domain.ID(fmt.Sprintf("auth-event-%d", r.nextEvent))
+	if event.CreatedAt.IsZero() {
+		event.CreatedAt = time.Now().UTC()
+	}
+	r.authEvents = append(r.authEvents, event)
+	return nil
+}
+
+func (r *httpTestHubUserRepository) ListHubAuthEvents(ctx context.Context, email string, since time.Time, limit int) ([]domain.HubAuthEvent, error) {
+	events := make([]domain.HubAuthEvent, 0, len(r.authEvents))
+	for _, event := range r.authEvents {
+		if email != "" && event.EmailNormalized != email {
+			continue
+		}
+		if !since.IsZero() && event.CreatedAt.Before(since) {
+			continue
+		}
+		events = append(events, event)
+	}
+	if limit > 0 && len(events) > limit {
+		events = events[:limit]
+	}
+	return events, nil
 }
 
 func (r *httpTestHubUserRepository) SaveHubUserSession(ctx context.Context, session domain.HubUserSession) (domain.HubUserSession, error) {

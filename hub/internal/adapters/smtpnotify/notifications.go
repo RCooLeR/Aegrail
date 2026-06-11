@@ -160,10 +160,15 @@ func (s *NotificationSink) send(ctx context.Context, _ string, message []byte) e
 func (s *NotificationSink) emailMessage(notification ports.HubFindingNotification, subject string) []byte {
 	finding := notification.Finding
 	link := s.findingURL(finding.ID)
+	sentAt := notification.SentAt.UTC()
+	if sentAt.IsZero() {
+		sentAt = time.Now().UTC()
+	}
 	var body bytes.Buffer
 	fmt.Fprintf(&body, "From: %s\r\n", sanitizeHeader(s.from))
 	fmt.Fprintf(&body, "To: %s\r\n", sanitizeHeader(strings.Join(s.to, ", ")))
 	fmt.Fprintf(&body, "Subject: %s\r\n", subject)
+	fmt.Fprintf(&body, "Date: %s\r\n", sentAt.Format(time.RFC1123Z))
 	body.WriteString("MIME-Version: 1.0\r\n")
 	body.WriteString("Content-Type: text/html; charset=UTF-8\r\n")
 	body.WriteString("\r\n")
@@ -176,6 +181,10 @@ func (s *NotificationSink) emailMessage(notification ports.HubFindingNotificatio
 	emailRow(&body, "Event", notification.Type)
 	emailRow(&body, "Rule", finding.RuleID)
 	emailRow(&body, "Status", findingStatus(finding))
+	emailRow(&body, "Sent", sentAt.Format(time.RFC3339))
+	if !finding.CreatedAt.IsZero() {
+		emailRow(&body, "Finding created", finding.CreatedAt.UTC().Format(time.RFC3339))
+	}
 	emailRow(&body, "First event", finding.FirstEventAt.UTC().Format(time.RFC3339))
 	emailRow(&body, "Last event", finding.LastEventAt.UTC().Format(time.RFC3339))
 	if link != "" {

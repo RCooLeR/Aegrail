@@ -25,6 +25,7 @@ runtime:
   sent_retention: 0s
   interval: 30s
   timezone: UTC
+  max_pending_files: 10000
 
 sites:
   - slug: example-wordpress
@@ -71,10 +72,12 @@ sites:
 
     browser_crawl:
       enabled: true
-      rendered: true
-      wait_tag_manager: true
+      rendered: false
+      wait_tag_manager: false
+      disable_images: true
       max_pages: 5
       timeout: 30s
+      total_budget: 2m
       schedule: 15m
       user_agent: ""
       fallback_user_agents: []

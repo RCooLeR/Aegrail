@@ -53,6 +53,7 @@ It ignores obvious noise:
 - common generated media under writable asset paths like `uploads`, `upload`, and `img`
 - low-signal binary assets under package/code trees such as plugin/theme images, fonts, maps, audio/video, and PDFs
 - dependency installs and generated frontend output such as `node_modules`, `bower_components`, `dist`, `build`, and `public/build` for low-signal static assets
+- generated PrestaShop theme profile templates such as `themes/<theme>/profiles/id_gencode_<hash>_<timestamp>.tpl`
 - Mautic runtime/cache/log/session/spool/temp directories
 
 The file scanner intentionally does not trust a parent directory timestamp as proof that the whole subtree is unchanged. On normal filesystems, editing an existing PHP file changes the file metadata, not necessarily the parent directory metadata. A pure "directory hash" shortcut would be fast, but it could miss timestomped or same-name file edits. Aegrail instead keeps a local state index, checks cheap file metadata every pass, reuses content hashes when metadata is unchanged, and periodically forces content rehashing.
@@ -608,6 +609,17 @@ SELECT users/usermeta
 
 For each configured URL, the browser collector crawls same-host pages up to `max_pages`, using rendered or non-rendered mode depending on config.
 
+Resource controls:
+
+- `browser_crawl.timeout` is the per-page timeout.
+- `browser_crawl.total_budget` is an optional whole-run budget for that site.
+  When it expires, remaining URLs are skipped with a coverage warning.
+- `browser_crawl.disable_images: true` tells rendered Chrome to block image
+  downloads. Script observation still works and catalogs/media-heavy pages use
+  less memory and bandwidth.
+- Crawls are sequential per Agent process; keep `max_pages` small on NAS or
+  shared hosting nodes.
+
 Crawler identity:
 
 - The default primary User-Agent is `AegrailBot/0.1 (+https://aegrail.local/monitoring; Aegrail bot)`.
@@ -679,6 +691,18 @@ the local JSON by default. `sent` is only used when
 `runtime.sent_retention` is set to a positive duration such as `1h` for
 transport debugging. Do not use sent retention on production nodes unless you
 intentionally want a short local audit cache.
+
+`runtime.max_pending_files` is an optional pending queue cap. If a new batch
+would exceed the cap, the Agent moves the oldest pending batch files into
+`discarded` before writing the new one. This keeps a down Hub or bad network
+from growing local disk usage without pretending old batches were delivered.
+Use `agent status` to see pending, sent, failed, and discarded counts.
+
+Retryable delivery failures stay in `pending`: network errors, TLS/DNS
+failures, HTTP `408`, `425`, `429`, and Hub `5xx` responses. Permanent Hub
+rejections such as bad scope, bad authentication, duplicate/conflicting data,
+or oversized payloads (`4xx` except the retryable statuses above) are moved to
+`failed` so one stale rejected batch cannot block newer evidence behind it.
 
 Queue and state files are written defensively. The Agent writes JSON state to a
 temporary file in the same directory, flushes it, renames it into place, and

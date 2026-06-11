@@ -32,6 +32,8 @@ const (
 	hubPasswordSaltLength    = 16
 	HubSessionTTL            = 12 * time.Hour
 	HubSessionTouchInterval  = time.Minute
+	HubLoginLockoutThreshold = 10
+	HubLoginLockoutDuration  = 15 * time.Minute
 )
 
 var (
@@ -48,10 +50,12 @@ type totpReplayKey struct {
 }
 
 type LoginHubUserInput struct {
-	Email    string
-	Password string
-	TOTPCode string
-	Now      time.Time
+	Email     string
+	Password  string
+	TOTPCode  string
+	Now       time.Time
+	RemoteIP  string
+	UserAgent string
 }
 
 type LoginHubUserResult struct {
@@ -119,26 +123,63 @@ func (h *Hub) LoginHubUser(ctx context.Context, input LoginHubUserInput) (LoginH
 	if err != nil {
 		return LoginHubUserResult{}, ErrHubInvalidCredentials
 	}
+	now := input.Now.UTC()
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
 	user, ok, err := h.users.FindHubUserByEmail(ctx, email)
 	if err != nil {
 		return LoginHubUserResult{}, err
 	}
-	if !ok || user.Status != "active" || !verifyHubPassword(input.Password, user.PasswordHash) {
+	if !ok {
+		if err := h.recordHubAuthEvent(ctx, domain.HubAuthEvent{
+			EmailNormalized: email,
+			Event:           "login_failure",
+			RemoteIP:        input.RemoteIP,
+			UserAgent:       input.UserAgent,
+			CreatedAt:       now,
+		}); err != nil {
+			return LoginHubUserResult{}, err
+		}
+		return LoginHubUserResult{}, ErrHubInvalidCredentials
+	}
+	if user.LockedUntil != nil && user.LockedUntil.After(now) {
+		if err := h.recordHubAuthEvent(ctx, domain.HubAuthEvent{
+			UserID:          user.ID,
+			EmailNormalized: email,
+			Event:           "login_failure",
+			RemoteIP:        input.RemoteIP,
+			UserAgent:       input.UserAgent,
+			CreatedAt:       now,
+		}); err != nil {
+			return LoginHubUserResult{}, err
+		}
+		return LoginHubUserResult{}, ErrHubInvalidCredentials
+	}
+	if user.Status != "active" || !verifyHubPassword(input.Password, user.PasswordHash) {
+		if err := h.registerHubLoginFailure(ctx, user, email, "login_failure", input.RemoteIP, input.UserAgent, now); err != nil {
+			return LoginHubUserResult{}, err
+		}
 		return LoginHubUserResult{}, ErrHubInvalidCredentials
 	}
 	if user.TwoFactorEnabled && strings.TrimSpace(user.TOTPSecretCiphertext) != "" {
+		if strings.TrimSpace(input.TOTPCode) == "" {
+			return LoginHubUserResult{}, ErrHubMFARequired
+		}
 		valid, err := h.verifyHubUserTOTP(user, input.TOTPCode, input.Now)
 		if err != nil {
 			return LoginHubUserResult{}, err
 		}
 		if !valid {
+			if err := h.registerHubLoginFailure(ctx, user, email, "totp_failure", input.RemoteIP, input.UserAgent, now); err != nil {
+				return LoginHubUserResult{}, err
+			}
 			return LoginHubUserResult{}, ErrHubMFARequired
 		}
 	}
 
-	now := input.Now.UTC()
-	if now.IsZero() {
-		now = time.Now().UTC()
+	if err := h.users.ResetHubLoginFailures(ctx, user.ID); err != nil {
+		return LoginHubUserResult{}, err
 	}
 	token, tokenHash, err := newHubSessionToken()
 	if err != nil {
@@ -154,6 +195,16 @@ func (h *Hub) LoginHubUser(ctx context.Context, input LoginHubUserInput) (LoginH
 	if err != nil {
 		return LoginHubUserResult{}, err
 	}
+	if err := h.recordHubAuthEvent(ctx, domain.HubAuthEvent{
+		UserID:          user.ID,
+		EmailNormalized: email,
+		Event:           "login_success",
+		RemoteIP:        input.RemoteIP,
+		UserAgent:       input.UserAgent,
+		CreatedAt:       now,
+	}); err != nil {
+		return LoginHubUserResult{}, err
+	}
 	user.LastLoginAt = &now
 	return LoginHubUserResult{
 		User:      user,
@@ -161,6 +212,48 @@ func (h *Hub) LoginHubUser(ctx context.Context, input LoginHubUserInput) (LoginH
 		Token:     token,
 		ExpiresAt: session.ExpiresAt,
 	}, nil
+}
+
+func (h *Hub) registerHubLoginFailure(ctx context.Context, user domain.HubUser, email string, event string, remoteIP string, userAgent string, now time.Time) error {
+	updated, locked, err := h.users.RegisterHubLoginFailure(ctx, user.ID, now, HubLoginLockoutThreshold, HubLoginLockoutDuration)
+	if err != nil {
+		return err
+	}
+	if err := h.recordHubAuthEvent(ctx, domain.HubAuthEvent{
+		UserID:          user.ID,
+		EmailNormalized: email,
+		Event:           event,
+		RemoteIP:        remoteIP,
+		UserAgent:       userAgent,
+		CreatedAt:       now,
+	}); err != nil {
+		return err
+	}
+	if locked {
+		return h.recordHubAuthEvent(ctx, domain.HubAuthEvent{
+			UserID:          updated.ID,
+			EmailNormalized: email,
+			Event:           "lockout",
+			RemoteIP:        remoteIP,
+			UserAgent:       userAgent,
+			CreatedAt:       now,
+		})
+	}
+	return nil
+}
+
+func (h *Hub) recordHubAuthEvent(ctx context.Context, event domain.HubAuthEvent) error {
+	if h == nil || h.users == nil {
+		return nil
+	}
+	event.EmailNormalized = strings.ToLower(strings.TrimSpace(event.EmailNormalized))
+	event.Event = strings.TrimSpace(event.Event)
+	event.RemoteIP = strings.TrimSpace(event.RemoteIP)
+	event.UserAgent = strings.TrimSpace(event.UserAgent)
+	if event.CreatedAt.IsZero() {
+		event.CreatedAt = time.Now().UTC()
+	}
+	return h.users.SaveHubAuthEvent(ctx, event)
 }
 
 func (h *Hub) HubUserForSession(ctx context.Context, token string, now time.Time) (domain.HubUser, bool, error) {
@@ -192,6 +285,10 @@ func (h *Hub) HubUserForSession(ctx context.Context, token string, now time.Time
 }
 
 func (h *Hub) LogoutHubUser(ctx context.Context, token string, now time.Time) error {
+	return h.LogoutHubUserWithAudit(ctx, token, now, "", "")
+}
+
+func (h *Hub) LogoutHubUserWithAudit(ctx context.Context, token string, now time.Time, remoteIP string, userAgent string) error {
 	if h.users == nil {
 		return nil
 	}
@@ -202,7 +299,25 @@ func (h *Hub) LogoutHubUser(ctx context.Context, token string, now time.Time) er
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
-	return h.users.RevokeHubUserSession(ctx, hashHubSessionToken(token), now.UTC())
+	tokenHash := hashHubSessionToken(token)
+	user, _, ok, err := h.users.FindHubUserBySessionTokenHash(ctx, tokenHash, now.UTC())
+	if err != nil {
+		return err
+	}
+	if err := h.users.RevokeHubUserSession(ctx, tokenHash, now.UTC()); err != nil {
+		return err
+	}
+	if ok {
+		return h.recordHubAuthEvent(ctx, domain.HubAuthEvent{
+			UserID:          user.ID,
+			EmailNormalized: user.Email,
+			Event:           "logout",
+			RemoteIP:        remoteIP,
+			UserAgent:       userAgent,
+			CreatedAt:       now.UTC(),
+		})
+	}
+	return nil
 }
 
 func HubUserHasAccess(user domain.HubUser, minimum string) bool {

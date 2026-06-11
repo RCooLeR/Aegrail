@@ -28,6 +28,13 @@ const (
 	maxLogLineBytes     = 64 << 10
 	maxLogReadBytes     = 1 << 20
 	maxLogEventsPerScan = 500
+
+	// Queued log events are shipped as multi-event batches so one scan produces
+	// a handful of hub requests instead of one request per log line. The hub
+	// ingest endpoint caps request bodies at 2 MiB and the wire envelope adds
+	// base64 overhead, so chunks stay well below that.
+	maxLogEventsPerBatch = 100
+	maxLogBatchBytes     = 256 << 10
 )
 
 type LogWatchOptions struct {
@@ -138,21 +145,11 @@ func (r *Runtime) ScanLogPaths(ctx context.Context, options LogWatchOptions) (Lo
 				return LogWatchResult{}, err
 			}
 			offset = nextOffset
-			for _, line := range lines {
-				event := logLineEvent(target.Path, line)
-				enrichAccessLogEventWithTor(&event, torMatcher)
-				event.App = options.App
-				event.Service = options.Service
-				event.Region = options.Region
-				event.Labels = mergeStringMaps(event.Labels, options.Labels)
-				if shouldDropNoisyLogEvent(event) {
-					continue
-				}
-				if _, _, err := r.EnqueueEvent(ctx, event); err != nil {
-					return LogWatchResult{}, err
-				}
-				result.Queued++
+			queued, err := r.enqueueLogLineBatches(ctx, target.Path, lines, torMatcher, options)
+			if err != nil {
+				return LogWatchResult{}, err
 			}
+			result.Queued += queued
 		}
 		current[target.Path] = logFileState{
 			Path:      target.Path,
@@ -192,6 +189,65 @@ func (r *Runtime) ScanLogPaths(ctx context.Context, options LogWatchOptions) (Lo
 		return LogWatchResult{}, err
 	}
 	return result, nil
+}
+
+// enqueueLogLineBatches turns the new log lines of one file into queued
+// multi-event batches. Batch IDs are deterministic over (path, line offsets,
+// line contents), so a rescan of the same byte range after a crash produces
+// the same batch IDs and is deduplicated locally (pending file already
+// exists) and by the hub (external batch ID reuse).
+func (r *Runtime) enqueueLogLineBatches(ctx context.Context, path string, lines []logLine, torMatcher torExitMatcher, options LogWatchOptions) (int, error) {
+	queued := 0
+	var chunk []EnqueueEventInput
+	chunkBytes := 0
+	hasher := sha256.New()
+	flush := func() error {
+		if len(chunk) == 0 {
+			return nil
+		}
+		batchID := "log-" + hex.EncodeToString(hasher.Sum(nil))[:24]
+		if _, _, err := r.EnqueueEvents(ctx, EnqueueEventsInput{
+			BatchID: batchID,
+			App:     options.App,
+			Service: options.Service,
+			Region:  options.Region,
+			Labels:  options.Labels,
+			Events:  chunk,
+		}); err != nil {
+			return err
+		}
+		queued += len(chunk)
+		chunk = nil
+		chunkBytes = 0
+		hasher.Reset()
+		return nil
+	}
+	for _, line := range lines {
+		event := logLineEvent(path, line)
+		enrichAccessLogEventWithTor(&event, torMatcher)
+		event.App = options.App
+		event.Service = options.Service
+		event.Region = options.Region
+		event.Labels = mergeStringMaps(event.Labels, options.Labels)
+		if shouldDropNoisyLogEvent(event) {
+			continue
+		}
+		if len(chunk) == 0 {
+			fmt.Fprintf(hasher, "%s\n", path)
+		}
+		fmt.Fprintf(hasher, "%d\n%s\n", line.Offset, line.Text)
+		chunk = append(chunk, event)
+		chunkBytes += line.Bytes
+		if len(chunk) >= maxLogEventsPerBatch || chunkBytes >= maxLogBatchBytes {
+			if err := flush(); err != nil {
+				return queued, err
+			}
+		}
+	}
+	if err := flush(); err != nil {
+		return queued, err
+	}
+	return queued, nil
 }
 
 func logBaselineCreatedEvent(watchedLogs int) EnqueueEventInput {

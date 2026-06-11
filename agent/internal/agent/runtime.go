@@ -34,10 +34,11 @@ type Runtime struct {
 }
 
 type Config struct {
-	ConfigPath    string
-	QueueDir      string
-	SentRetention time.Duration
-	Identity      *Identity
+	ConfigPath      string
+	QueueDir        string
+	SentRetention   time.Duration
+	MaxPendingFiles int
+	Identity        *Identity
 }
 
 type Identity struct {
@@ -351,6 +352,9 @@ func (r *Runtime) EnqueueEvents(ctx context.Context, input EnqueueEventsInput) (
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return QueuedBatch{}, "", err
 	}
+	if err := enforcePendingQueueLimit(identity.QueueDir, r.Config.MaxPendingFiles, 1); err != nil {
+		return QueuedBatch{}, "", err
+	}
 	if err := fsutil.WriteFileAtomicSync(path, append(content, '\n'), 0o600); err != nil {
 		if errors.Is(err, os.ErrExist) {
 			return batch, path, nil
@@ -358,6 +362,35 @@ func (r *Runtime) EnqueueEvents(ctx context.Context, input EnqueueEventsInput) (
 		return QueuedBatch{}, "", err
 	}
 	return batch, path, nil
+}
+
+func enforcePendingQueueLimit(queueDir string, maxFiles int, incoming int) error {
+	if maxFiles <= 0 || incoming <= 0 {
+		return nil
+	}
+	pendingDir := filepath.Join(queueDir, "pending")
+	discardedDir := filepath.Join(queueDir, "discarded")
+	files, err := queueFiles(pendingDir)
+	if err != nil {
+		return err
+	}
+	if len(files)+incoming <= maxFiles {
+		return nil
+	}
+	if err := os.MkdirAll(discardedDir, 0o700); err != nil {
+		return err
+	}
+	toDiscard := len(files) + incoming - maxFiles
+	if toDiscard > len(files) {
+		toDiscard = len(files)
+	}
+	for _, path := range files[:toDiscard] {
+		destination := filepath.Join(discardedDir, filepath.Base(path))
+		if err := os.Rename(path, uniquePath(destination)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (r *Runtime) SendQueued(ctx context.Context, limit int) (SendResult, error) {
@@ -424,6 +457,15 @@ func (r *Runtime) SendQueued(ctx context.Context, limit int) (SendResult, error)
 		}
 		if err := r.sendBatch(ctx, identity, nodeSecret, content); err != nil {
 			result.Failed++
+			var hubErr hubSendError
+			if errors.As(err, &hubErr) && hubErr.Permanent() {
+				if quarantineErr := quarantineQueuedBatch(path, failedDir); quarantineErr != nil {
+					result.Errors = append(result.Errors, fmt.Sprintf("%s: %v; failed to move to failed queue: %v", filepath.Base(path), err, quarantineErr))
+					continue
+				}
+				result.Errors = append(result.Errors, fmt.Sprintf("%s: %v; moved to failed queue", filepath.Base(path), err))
+				continue
+			}
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", filepath.Base(path), err))
 			continue
 		}
@@ -442,6 +484,48 @@ func (r *Runtime) SendQueued(ctx context.Context, limit int) (SendResult, error)
 	return result, nil
 }
 
+// DefaultSendDrainBudget bounds how long one drain pass may keep sending
+// before yielding back to the scan loop. The queue must drain faster than
+// scans refill it or findings (and their notifications) arrive hours late.
+const DefaultSendDrainBudget = 2 * time.Minute
+
+// SendQueuedAll repeatedly calls SendQueued until the pending queue is empty,
+// a pass makes no progress (for example the hub is unreachable), the context
+// is cancelled, or the budget elapses. Quarantining a permanently rejected
+// batch counts as progress because it unblocks newer batches. A budget of 0
+// means no time limit.
+func (r *Runtime) SendQueuedAll(ctx context.Context, limit int, budget time.Duration) (SendResult, error) {
+	total := SendResult{}
+	startedAt := r.now()
+	first := true
+	for {
+		result, err := r.SendQueued(ctx, limit)
+		if first {
+			total.PendingBefore = result.PendingBefore
+			first = false
+		}
+		total.Sent += result.Sent
+		total.Failed += result.Failed
+		total.Errors = append(total.Errors, result.Errors...)
+		total.PendingAfter = result.PendingAfter
+		if err != nil {
+			return total, err
+		}
+		if result.PendingAfter == 0 {
+			return total, nil
+		}
+		if result.Sent == 0 && result.PendingAfter >= result.PendingBefore {
+			return total, nil
+		}
+		if ctx.Err() != nil {
+			return total, ctx.Err()
+		}
+		if budget > 0 && r.now().Sub(startedAt) >= budget {
+			return total, nil
+		}
+	}
+}
+
 func queuedBatchAgentID(content []byte) (string, error) {
 	var header struct {
 		AgentID string `json:"agent_id"`
@@ -458,6 +542,30 @@ func quarantineQueuedBatch(path string, failedDir string) error {
 	}
 	destination := filepath.Join(failedDir, filepath.Base(path))
 	return os.Rename(path, uniquePath(destination))
+}
+
+type hubSendError struct {
+	StatusCode int
+	Status     string
+	Body       string
+}
+
+func (e hubSendError) Error() string {
+	if strings.TrimSpace(e.Body) == "" {
+		return fmt.Sprintf("Hub returned %s", e.Status)
+	}
+	return fmt.Sprintf("Hub returned %s: %s", e.Status, e.Body)
+}
+
+func (e hubSendError) Permanent() bool {
+	switch e.StatusCode {
+	case http.StatusRequestTimeout, http.StatusTooEarly, http.StatusTooManyRequests:
+		return false
+	}
+	if e.StatusCode >= 500 {
+		return false
+	}
+	return e.StatusCode >= 400
 }
 
 func (r *Runtime) archiveOrDeleteSentBatch(path string, sentDir string) error {
@@ -530,7 +638,11 @@ func (r *Runtime) sendBatch(ctx context.Context, identity Identity, nodeSecret s
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
-		return fmt.Errorf("Hub returned %s: %s", response.Status, strings.TrimSpace(string(body)))
+		return hubSendError{
+			StatusCode: response.StatusCode,
+			Status:     response.Status,
+			Body:       strings.TrimSpace(string(body)),
+		}
 	}
 	return nil
 }

@@ -23,6 +23,7 @@ runtime:
   state_dir: /var/lib/aegrail/state
   interval: 30s
   timezone: UTC
+  max_pending_files: 10000
 
 sites:
   - slug: example-com

@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+echo "==> agent: go vet"
+(cd "$ROOT/agent" && go vet ./...)
+
+echo "==> agent: go test"
+(cd "$ROOT/agent" && go test ./...)
+
+echo "==> hub: go vet"
+(cd "$ROOT/hub" && go vet ./...)
+
+echo "==> hub: go test"
+(cd "$ROOT/hub" && go test ./...)
+
+if [ -f "$ROOT/dashboard/package-lock.json" ]; then
+  echo "==> dashboard: npm ci"
+  (cd "$ROOT/dashboard" && npm ci)
+else
+  echo "==> dashboard: npm install"
+  (cd "$ROOT/dashboard" && npm install)
+fi
+
+echo "==> dashboard: npm run build"
+(cd "$ROOT/dashboard" && npm run build)
+
+echo "All pre-push checks passed."
