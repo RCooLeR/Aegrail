@@ -28,6 +28,7 @@ export type InstanceModel = {
   data: DashboardInstanceSnapshot["data"];
   environmentName: string;
   environmentSlug: string;
+  findingCountsExact: boolean;
   highFindings: number;
   iconUrls: string[];
   key: string;
@@ -43,6 +44,7 @@ export type InstanceModel = {
   status: EstateStatus;
   statusReason: string;
   totalFindings: number;
+  totalFindingsExact: boolean;
   worstFinding?: HubFinding;
 };
 
@@ -51,6 +53,7 @@ export type CompanyModel = {
   companySlug: string;
   coverageWarnings: number;
   criticalFindings: number;
+  findingCountsExact: boolean;
   highFindings: number;
   iconUrls: string[];
   instances: InstanceModel[];
@@ -62,6 +65,7 @@ export type CompanyModel = {
   status: EstateStatus;
   statusReason: string;
   totalFindings: number;
+  totalFindingsExact: boolean;
   worstFinding?: HubFinding;
 };
 
@@ -74,9 +78,12 @@ export type EstateModel = {
     criticalFindings: number;
     highFindings: number;
     instances: number;
+    findingCountsExact: boolean;
     openFindings: number;
     sites: number;
     staleAgents: number;
+    totalFindings: number;
+    totalFindingsExact: boolean;
     warningInstances: number;
   };
 };
@@ -116,9 +123,12 @@ export function buildEstateModel(snapshots: DashboardInstanceSnapshot[]): Estate
       criticalFindings: sum(instances, (instance) => instance.criticalFindings),
       highFindings: sum(instances, (instance) => instance.highFindings),
       instances: instances.length,
+      findingCountsExact: instances.every((instance) => instance.findingCountsExact),
       openFindings: sum(instances, (instance) => instance.openFindings),
       sites: siteKeys.size,
       staleAgents: sum(instances, (instance) => instance.staleAgents),
+      totalFindings: sum(instances, (instance) => instance.totalFindings),
+      totalFindingsExact: instances.every((instance) => instance.totalFindingsExact),
       warningInstances: instances.filter((instance) => instance.status !== "healthy").length
     }
   };
@@ -176,11 +186,20 @@ function instanceIconCandidates(snapshot: DashboardInstanceSnapshot) {
 function buildInstanceModel(snapshot: DashboardInstanceSnapshot): InstanceModel {
   const data = snapshot.data;
   const rawOpenFindings = data.findings.data.filter((finding) => finding.status === "open");
-  const openFindings = uniqueFindingGroups(rawOpenFindings);
-  const worstFinding = sortFindings(openFindings)[0] ?? sortFindings(data.findings.data)[0];
-  const criticalFindings = openFindings.filter((finding) => finding.severity === "critical").length;
-  const highFindings = openFindings.filter((finding) => finding.severity === "high").length;
-  const mediumFindings = openFindings.filter((finding) => finding.severity === "medium").length;
+  const loadedOpenFindings = uniqueFindingGroups(rawOpenFindings);
+  // Only an open finding may explain an active node status. Falling back to
+  // the full loaded history can make an acknowledged or resolved finding look
+  // like the reason a stale/unhealthy node is currently critical.
+  const worstFinding = sortFindings(loadedOpenFindings)[0];
+  const summary = data.findings.summary;
+  const findingCountsExact = data.findings.complete || Boolean(summary?.statusCounts && summary.openSeverityCounts);
+  const openFindings = summary?.statusCounts?.open ?? loadedOpenFindings.length;
+  const criticalFindings = summary?.openSeverityCounts?.critical ??
+    loadedOpenFindings.filter((finding) => finding.severity === "critical").length;
+  const highFindings = summary?.openSeverityCounts?.high ??
+    loadedOpenFindings.filter((finding) => finding.severity === "high").length;
+  const mediumFindings = summary?.openSeverityCounts?.medium ??
+    loadedOpenFindings.filter((finding) => finding.severity === "medium").length;
   const latestCoverage = latestCoverageRecord(data.coverage.data);
   const coverageWarnings = data.coverage.data.filter((record) => isCoverageProblem(record.coverage_level)).length;
   const collectors = buildCollectorStates(data.timeline.data, latestCoverage);
@@ -228,13 +247,14 @@ function buildInstanceModel(snapshot: DashboardInstanceSnapshot): InstanceModel 
     data,
     environmentName: snapshot.environment.name || snapshot.environment.slug,
     environmentSlug: snapshot.environment.slug,
+    findingCountsExact,
     highFindings,
     iconUrls: instanceIconCandidates(snapshot),
     key: instanceScopeKey(snapshot.scope),
     lastSignalAt,
     latestCoverage,
     mediumFindings,
-    openFindings: openFindings.length,
+    openFindings,
     projectName: snapshot.project.name || snapshot.project.slug,
     projectSlug: snapshot.project.slug,
     scope: snapshot.scope,
@@ -242,6 +262,7 @@ function buildInstanceModel(snapshot: DashboardInstanceSnapshot): InstanceModel 
     staleAgents: staleAgents.length,
     status,
     statusReason: instanceStatusReason(status, {
+      criticalFindings,
       coverageWarnings,
       highFindings,
       lastSignalAt,
@@ -249,7 +270,8 @@ function buildInstanceModel(snapshot: DashboardInstanceSnapshot): InstanceModel 
       staleAgents: staleAgents.length,
       worstFinding
     }),
-    totalFindings: data.findings.data.length,
+    totalFindings: data.findings.totalExact ? data.findings.total : data.findings.data.length,
+    totalFindingsExact: data.findings.totalExact || data.findings.complete,
     worstFinding
   };
 }
@@ -265,6 +287,7 @@ function buildCompanyModel(instances: InstanceModel[]): CompanyModel {
     companySlug: first?.companySlug ?? "",
     coverageWarnings: sum(instances, (instance) => instance.coverageWarnings),
     criticalFindings: sum(instances, (instance) => instance.criticalFindings),
+    findingCountsExact: instances.every((instance) => instance.findingCountsExact),
     highFindings: sum(instances, (instance) => instance.highFindings),
     iconUrls: uniqueStrings(instances.flatMap((instance) => instance.iconUrls)),
     instances,
@@ -276,6 +299,7 @@ function buildCompanyModel(instances: InstanceModel[]): CompanyModel {
     status,
     statusReason: companyStatusReason(status, instances, worstFinding),
     totalFindings: sum(instances, (instance) => instance.totalFindings),
+    totalFindingsExact: instances.every((instance) => instance.totalFindingsExact),
     worstFinding
   };
 }
@@ -384,8 +408,17 @@ function companyStatus(instances: InstanceModel[]): EstateStatus {
 }
 
 function companyStatusReason(status: EstateStatus, instances: InstanceModel[], worstFinding?: HubFinding) {
-  if (status === "critical" && worstFinding) {
+  const criticalFindings = sum(instances, (instance) => instance.criticalFindings);
+  const highFindings = sum(instances, (instance) => instance.highFindings);
+  if (status === "critical" && worstFinding &&
+    (worstFinding.severity === "critical" || (criticalFindings === 0 && worstFinding.severity === "high"))) {
     return worstFinding.title;
+  }
+  if (criticalFindings > 0) {
+    return `${criticalFindings} critical finding${criticalFindings === 1 ? "" : "s"}`;
+  }
+  if (highFindings > 0) {
+    return `${highFindings} high finding${highFindings === 1 ? "" : "s"}`;
   }
   const staleAgents = sum(instances, (instance) => instance.staleAgents);
   if (staleAgents > 0) {
@@ -434,6 +467,7 @@ export function collectorIsProblem(collector: CollectorState) {
 function instanceStatusReason(
   status: EstateStatus,
   input: {
+    criticalFindings: number;
     coverageWarnings: number;
     highFindings: number;
     lastSignalAt?: string;
@@ -442,8 +476,16 @@ function instanceStatusReason(
     worstFinding?: HubFinding;
   }
 ) {
-  if (status === "critical" && input.worstFinding) {
+  if (status === "critical" && input.worstFinding &&
+    (input.worstFinding.severity === "critical" ||
+      (input.criticalFindings === 0 && input.worstFinding.severity === "high"))) {
     return input.worstFinding.title;
+  }
+  if (input.criticalFindings > 0) {
+    return `${input.criticalFindings} critical finding${input.criticalFindings === 1 ? "" : "s"}`;
+  }
+  if (input.highFindings > 0) {
+    return `${input.highFindings} high finding${input.highFindings === 1 ? "" : "s"}`;
   }
   if (input.staleAgents > 0) {
     return `${input.staleAgents} stale agent${input.staleAgents === 1 ? "" : "s"}`;

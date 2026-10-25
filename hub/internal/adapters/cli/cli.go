@@ -5,6 +5,7 @@ import (
 	"fmt"
 	nethttp "net/http"
 	"os/signal"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -14,15 +15,21 @@ import (
 	"github.com/rcooler/aegrail/hub/internal/domain"
 	hubapp "github.com/rcooler/aegrail/hub/internal/hub"
 	"github.com/rcooler/aegrail/hub/internal/wire"
-	urfavecli "github.com/urfave/cli/v2"
+	urfavecli "github.com/urfave/cli/v3"
 )
 
-func New(meta domain.AppMeta) *urfavecli.App {
-	return &urfavecli.App{
-		Name:     meta.Binary,
-		Usage:    "Aegrail Hub: ingest, store, report, and triage agent evidence",
-		Version:  meta.Version,
-		Commands: hubCommandSet(meta),
+const (
+	hubMaxHeaderValueCount = 256
+	hubGracefulStopTimeout = 5 * time.Second
+)
+
+func New(meta domain.AppMeta) *urfavecli.Command {
+	return &urfavecli.Command{
+		Name:                  meta.Binary,
+		Usage:                 "Aegrail Hub: ingest, store, report, and triage agent evidence",
+		Version:               meta.Version,
+		EnableShellCompletion: true,
+		Commands:              hubCommandSet(meta),
 	}
 }
 
@@ -30,6 +37,7 @@ func hubCommandSet(meta domain.AppMeta) []*urfavecli.Command {
 	return []*urfavecli.Command{
 		versionCommand(meta),
 		dbCommand(meta),
+		hubHealthcheckCommand(meta),
 		hubServeCommand(meta),
 		hubIngestCommand(meta),
 		hubBaselineCommand(meta),
@@ -51,17 +59,17 @@ func wireCommand() *urfavecli.Command {
 	return &urfavecli.Command{
 		Name:  "wire",
 		Usage: "manage Agent-Hub encrypted wire protocol keys",
-		Subcommands: []*urfavecli.Command{
+		Commands: []*urfavecli.Command{
 			{
 				Name:  "keygen",
 				Usage: "generate a Hub X25519 private/public key pair",
-				Action: func(c *urfavecli.Context) error {
+				Action: func(ctx context.Context, c *urfavecli.Command) error {
 					privateKey, publicKey, err := wire.GenerateKeyPair()
 					if err != nil {
 						return err
 					}
-					fmt.Fprintf(c.App.Writer, "AEGRAIL_HUB_WIRE_PRIVATE_KEY=%s\n", privateKey)
-					fmt.Fprintf(c.App.Writer, "hub_public_key=%s\n", publicKey)
+					fmt.Fprintf(c.Root().Writer, "AEGRAIL_HUB_WIRE_PRIVATE_KEY=%s\n", privateKey)
+					fmt.Fprintf(c.Root().Writer, "hub_public_key=%s\n", publicKey)
 					return nil
 				},
 			},
@@ -77,56 +85,56 @@ func hubServeCommand(meta domain.AppMeta) *urfavecli.Command {
 			&urfavecli.StringFlag{
 				Name:    "addr",
 				Usage:   "HTTP listen address",
-				EnvVars: []string{"AEGRAIL_HTTP_ADDR"},
+				Sources: urfavecli.EnvVars("AEGRAIL_HTTP_ADDR"),
 				Value:   "127.0.0.1:8787",
 			},
 			&urfavecli.StringFlag{
 				Name:    "wire-private-key",
 				Usage:   "Hub X25519 private key for encrypted Agent wire envelopes",
-				EnvVars: []string{"AEGRAIL_HUB_WIRE_PRIVATE_KEY"},
+				Sources: urfavecli.EnvVars("AEGRAIL_HUB_WIRE_PRIVATE_KEY"),
 			},
 			&urfavecli.DurationFlag{
 				Name:    "wire-timestamp-skew",
 				Usage:   "accepted timestamp skew for encrypted Agent wire envelopes",
-				EnvVars: []string{"AEGRAIL_HUB_WIRE_TIMESTAMP_SKEW"},
+				Sources: urfavecli.EnvVars("AEGRAIL_HUB_WIRE_TIMESTAMP_SKEW"),
 				Value:   5 * time.Minute,
 			},
 			&urfavecli.StringFlag{
 				Name:    "dashboard-dir",
 				Usage:   "built dashboard directory to serve under /dashboard",
-				EnvVars: []string{"AEGRAIL_DASHBOARD_DIR"},
+				Sources: urfavecli.EnvVars("AEGRAIL_DASHBOARD_DIR"),
 			},
 			&urfavecli.BoolFlag{
 				Name:    "model-analysis-auto",
 				Usage:   "automatically generate missing model analysis reports for open findings",
-				EnvVars: []string{"AEGRAIL_MODEL_ANALYSIS_AUTO"},
+				Sources: urfavecli.EnvVars("AEGRAIL_MODEL_ANALYSIS_AUTO"),
 				Value:   true,
 			},
 			&urfavecli.DurationFlag{
 				Name:    "model-analysis-interval",
 				Usage:   "how often the Hub scans open findings for missing model analysis",
-				EnvVars: []string{"AEGRAIL_MODEL_ANALYSIS_INTERVAL"},
+				Sources: urfavecli.EnvVars("AEGRAIL_MODEL_ANALYSIS_INTERVAL"),
 				Value:   time.Minute,
 			},
 			&urfavecli.IntFlag{
 				Name:    "model-analysis-limit",
 				Usage:   "maximum open findings checked per automatic model-analysis pass",
-				EnvVars: []string{"AEGRAIL_MODEL_ANALYSIS_LIMIT"},
+				Sources: urfavecli.EnvVars("AEGRAIL_MODEL_ANALYSIS_LIMIT"),
 				Value:   5,
 			},
 			&urfavecli.IntFlag{
 				Name:    "correlation-workers",
 				Usage:   "number of Redis-backed ingest correlation workers; ignored when Redis is not configured",
-				EnvVars: []string{"AEGRAIL_CORRELATION_WORKERS"},
+				Sources: urfavecli.EnvVars("AEGRAIL_CORRELATION_WORKERS"),
 				Value:   1,
 			},
 		},
-		Action: func(c *urfavecli.Context) error {
-			container, cleanup, err := newDatabaseContainer(c.Context, meta)
+		Action: func(ctx context.Context, c *urfavecli.Command) error {
+			container, err := bootstrap.NewContainer(meta)
 			if err != nil {
 				return err
 			}
-			defer cleanup()
+			defer container.Close()
 			wirePrivateKey := strings.TrimSpace(c.String("wire-private-key"))
 			if wirePrivateKey != "" {
 				container.Config.Hub.WirePrivateKey = wirePrivateKey
@@ -134,9 +142,44 @@ func hubServeCommand(meta domain.AppMeta) *urfavecli.Command {
 			if err := container.Config.ValidateServe(); err != nil {
 				return err
 			}
+			if err := container.ConnectDatabase(ctx); err != nil {
+				return err
+			}
+			if container.Config.Hub.MigrateOnStart {
+				container.Logger.Info().Msg("AEGRAIL_MIGRATE_ON_START is enabled; applying database migrations before starting hub serve")
+				if err := container.MigrateDatabase(ctx); err != nil {
+					return err
+				}
+			}
+			if !container.Config.Hub.AllowPendingMigrations {
+				if err := container.EnsureDatabaseCurrent(ctx); err != nil {
+					return err
+				}
+			} else {
+				container.Logger.Warn().Msg("AEGRAIL_ALLOW_PENDING_MIGRATIONS is enabled; hub serve is skipping the migration currency check")
+			}
 
-			ctx, stop := signal.NotifyContext(c.Context, syscall.SIGINT, syscall.SIGTERM)
+			ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
+			if container.Hub.StartTrafficBackfillWorker(ctx, hubapp.TrafficBackfillWorkerOptions{
+				OnComplete: func(projected int) {
+					if projected > 0 {
+						container.Logger.Info().Int("projected", projected).Msg("completed recent access traffic backfill")
+					}
+				},
+				OnError: func(err error) {
+					container.Logger.Error().Err(err).Msg("recent access traffic backfill failed")
+				},
+			}) {
+				container.Logger.Debug().Msg("started bounded recent access traffic backfill")
+			}
+			if container.Hub.StartNotificationOutboxWorker(ctx, hubapp.NotificationOutboxWorkerOptions{
+				OnError: func(err error) {
+					container.Logger.Error().Err(err).Msg("notification outbox worker failed")
+				},
+			}) {
+				container.Logger.Info().Msg("started durable notification outbox worker")
+			}
 			if c.Bool("model-analysis-auto") {
 				container.Hub.StartModelAnalysisWorker(ctx, hubapp.ModelAnalysisWorkerOptions{
 					Interval: c.Duration("model-analysis-interval"),
@@ -200,23 +243,17 @@ func hubServeCommand(meta domain.AppMeta) *urfavecli.Command {
 			}
 
 			addr := c.String("addr")
-			server := &nethttp.Server{
-				Addr: addr,
-				Handler: httpadapter.NewHubRouter(meta, container.Hub, httpadapter.HubOptions{
-					WirePrivateKey:      container.Config.Hub.WirePrivateKey,
-					WireTimestampSkew:   c.Duration("wire-timestamp-skew"),
-					DashboardDir:        c.String("dashboard-dir"),
-					DashboardCSRFSecret: container.Config.Hub.UserSecretKey,
-					PushVAPIDPublicKey:  container.Config.Notifications.Push.VAPIDPublicKey,
-					TrustedProxyCIDRs:   container.Config.Hub.TrustedProxyCIDRs,
-					HealthCheck:         container.HealthCheck,
-					IngestDebugLog:      ingestDebugLog,
-				}),
-				ReadHeaderTimeout: 5 * time.Second,
-				ReadTimeout:       15 * time.Second,
-				WriteTimeout:      60 * time.Second,
-				IdleTimeout:       60 * time.Second,
-			}
+			handler := httpadapter.NewHubRouter(meta, container.Hub, httpadapter.HubOptions{
+				WirePrivateKey:      container.Config.Hub.WirePrivateKey,
+				WireTimestampSkew:   c.Duration("wire-timestamp-skew"),
+				DashboardDir:        c.String("dashboard-dir"),
+				DashboardCSRFSecret: container.Config.Hub.UserSecretKey,
+				PushVAPIDPublicKey:  container.Config.Notifications.Push.VAPIDPublicKey,
+				TrustedProxyCIDRs:   container.Config.Hub.TrustedProxyCIDRs,
+				HealthCheck:         container.HealthCheck,
+				IngestDebugLog:      ingestDebugLog,
+			})
+			server := newHubHTTPServer(addr, handler)
 
 			errCh := make(chan error, 1)
 			go func() {
@@ -231,10 +268,12 @@ func hubServeCommand(meta domain.AppMeta) *urfavecli.Command {
 				}
 				return err
 			case <-ctx.Done():
-				shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				shutdownCtx, cancel := newHubShutdownContext(ctx)
 				defer cancel()
 				container.Logger.Info().Msg("stopping aegrail hub api")
 				shutdownErr := server.Shutdown(shutdownCtx)
+				workerWaitCtx, cancelWorkerWait := newHubShutdownContext(ctx)
+				defer cancelWorkerWait()
 				workersDone := make(chan struct{})
 				go func() {
 					container.Hub.WaitForWorkers()
@@ -242,7 +281,7 @@ func hubServeCommand(meta domain.AppMeta) *urfavecli.Command {
 				}()
 				select {
 				case <-workersDone:
-				case <-time.After(5 * time.Second):
+				case <-workerWaitCtx.Done():
 					container.Logger.Warn().Msg("timed out waiting for background workers")
 				}
 				return shutdownErr
@@ -251,15 +290,102 @@ func hubServeCommand(meta domain.AppMeta) *urfavecli.Command {
 	}
 }
 
+func newHubShutdownContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(parent), hubGracefulStopTimeout)
+}
+
+func newHubHTTPServer(addr string, handler nethttp.Handler) *nethttp.Server {
+	return &nethttp.Server{
+		Addr:                addr,
+		Handler:             handler,
+		ReadHeaderTimeout:   5 * time.Second,
+		ReadTimeout:         15 * time.Second,
+		WriteTimeout:        60 * time.Second,
+		IdleTimeout:         60 * time.Second,
+		MaxHeaderValueCount: hubMaxHeaderValueCount,
+	}
+}
+
+func hubHealthcheckCommand(meta domain.AppMeta) *urfavecli.Command {
+	return &urfavecli.Command{
+		Name:  "healthcheck",
+		Usage: "check Hub dependencies for container health probes",
+		Flags: []urfavecli.Flag{
+			&urfavecli.DurationFlag{
+				Name:    "timeout",
+				Usage:   "maximum healthcheck duration",
+				Sources: urfavecli.EnvVars("AEGRAIL_HEALTHCHECK_TIMEOUT"),
+				Value:   3 * time.Second,
+			},
+		},
+		Action: func(ctx context.Context, c *urfavecli.Command) error {
+			ctx, cancel := context.WithTimeout(ctx, c.Duration("timeout"))
+			defer cancel()
+
+			container, err := bootstrap.NewContainer(meta)
+			if err != nil {
+				return err
+			}
+			defer container.Close()
+			if err := container.Config.ValidateServe(); err != nil {
+				return err
+			}
+			if err := container.ConnectDatabase(ctx); err != nil {
+				return err
+			}
+			if !container.Config.Hub.AllowPendingMigrations {
+				if err := container.EnsureDatabaseCurrent(ctx); err != nil {
+					return err
+				}
+			}
+			checks := container.HealthCheck(ctx)
+			status, healthy := hubHealthStatus(checks)
+			fmt.Fprintf(c.Root().Writer, "status: %s\n", status)
+			names := make([]string, 0, len(checks))
+			for name := range checks {
+				names = append(names, name)
+			}
+			sort.Strings(names)
+			for _, name := range names {
+				fmt.Fprintf(c.Root().Writer, "%s: %s\n", name, checks[name])
+			}
+			if !healthy {
+				return urfavecli.Exit("hub healthcheck failed", 1)
+			}
+			return nil
+		},
+	}
+}
+
+func hubHealthStatus(checks map[string]string) (string, bool) {
+	status := "ok"
+	healthy := true
+	for name, value := range checks {
+		if value == "ok" || strings.HasPrefix(value, "ok: ") || value == "offline" {
+			continue
+		}
+		if isOptionalCLIHealthCheck(name) {
+			status = "degraded"
+			continue
+		}
+		return "unhealthy", false
+	}
+	return status, healthy
+}
+
+func isOptionalCLIHealthCheck(name string) bool {
+	return name == "ollama"
+}
+
 func analyzeReportCommand(meta domain.AppMeta) *urfavecli.Command {
 	return &urfavecli.Command{
 		Name:  "analyze",
 		Usage: "inspect the model gateway and generate model-assisted reports",
-		Subcommands: []*urfavecli.Command{
+		Commands: []*urfavecli.Command{
 			{
 				Name:  "model",
 				Usage: "inspect the model gateway and generate reports",
-				Subcommands: []*urfavecli.Command{
+				Commands: []*urfavecli.Command{
 					modelStatusCommand(meta),
 					modelPromptCommand(meta),
 					modelEmbedCommand(meta),
@@ -274,7 +400,7 @@ func reportCommand(meta domain.AppMeta) *urfavecli.Command {
 	return &urfavecli.Command{
 		Name:  "report",
 		Usage: "generate reports from findings and timelines",
-		Subcommands: []*urfavecli.Command{
+		Commands: []*urfavecli.Command{
 			hubFindingsReportCommand(meta),
 			findingReviewReportCommand(meta),
 			evidenceBundleReportCommand(meta),
@@ -288,10 +414,10 @@ func versionCommand(meta domain.AppMeta) *urfavecli.Command {
 	return &urfavecli.Command{
 		Name:  "version",
 		Usage: "print build information",
-		Action: func(c *urfavecli.Context) error {
-			fmt.Fprintf(c.App.Writer, "%s %s\n", meta.Binary, meta.Version)
-			fmt.Fprintf(c.App.Writer, "commit: %s\n", meta.Commit)
-			fmt.Fprintf(c.App.Writer, "built:  %s\n", meta.BuildDate)
+		Action: func(ctx context.Context, c *urfavecli.Command) error {
+			fmt.Fprintf(c.Root().Writer, "%s %s\n", meta.Binary, meta.Version)
+			fmt.Fprintf(c.Root().Writer, "commit: %s\n", meta.Commit)
+			fmt.Fprintf(c.Root().Writer, "built:  %s\n", meta.BuildDate)
 			return nil
 		},
 	}
@@ -301,35 +427,35 @@ func dbCommand(meta domain.AppMeta) *urfavecli.Command {
 	return &urfavecli.Command{
 		Name:  "db",
 		Usage: "manage the Aegrail database",
-		Subcommands: []*urfavecli.Command{
+		Commands: []*urfavecli.Command{
 			{
 				Name:  "migrate",
 				Usage: "apply database migrations",
-				Action: func(c *urfavecli.Context) error {
-					container, cleanup, err := newDatabaseContainer(c.Context, meta)
+				Action: func(ctx context.Context, c *urfavecli.Command) error {
+					container, cleanup, err := newDatabaseContainer(ctx, meta)
 					if err != nil {
 						return err
 					}
 					defer cleanup()
 
-					if err := container.MigrateDatabase(c.Context); err != nil {
+					if err := container.MigrateDatabase(ctx); err != nil {
 						return err
 					}
-					fmt.Fprintln(c.App.Writer, "Database migrations applied.")
+					fmt.Fprintln(c.Root().Writer, "Database migrations applied.")
 					return nil
 				},
 			},
 			{
 				Name:  "status",
 				Usage: "show database migration status",
-				Action: func(c *urfavecli.Context) error {
-					container, cleanup, err := newDatabaseContainer(c.Context, meta)
+				Action: func(ctx context.Context, c *urfavecli.Command) error {
+					container, cleanup, err := newDatabaseContainer(ctx, meta)
 					if err != nil {
 						return err
 					}
 					defer cleanup()
 
-					return container.DatabaseStatus(c.Context)
+					return container.DatabaseStatus(ctx)
 				},
 			},
 		},

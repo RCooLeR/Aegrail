@@ -52,7 +52,7 @@ func (h *Hub) StartModelAnalysisWorker(ctx context.Context, options ModelAnalysi
 		interval = defaultModelAnalysisQueueInterval
 	}
 	h.workersWG.Add(1)
-	go func() {
+	go runHubWorker(ctx, "model-analysis", func(ctx context.Context) {
 		defer h.workersWG.Done()
 		h.runModelAnalysisQueueOnce(ctx, options)
 		ticker := time.NewTicker(interval)
@@ -65,7 +65,7 @@ func (h *Hub) StartModelAnalysisWorker(ctx context.Context, options ModelAnalysi
 				h.runModelAnalysisQueueOnce(ctx, options)
 			}
 		}
-	}()
+	})
 }
 
 func (h *Hub) runModelAnalysisQueueOnce(ctx context.Context, options ModelAnalysisWorkerOptions) {
@@ -242,13 +242,7 @@ func modelAnalysisQueueFetchLimit(limit int) int {
 	if limit <= 0 {
 		limit = defaultModelAnalysisQueueLimit
 	}
-	fetchLimit := limit * 5
-	if fetchLimit < 50 {
-		fetchLimit = 50
-	}
-	if fetchLimit > 500 {
-		fetchLimit = 500
-	}
+	fetchLimit := min(max(limit*5, 50), 500)
 	return fetchLimit
 }
 

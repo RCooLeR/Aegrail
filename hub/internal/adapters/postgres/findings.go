@@ -3,8 +3,8 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -13,11 +13,16 @@ import (
 )
 
 type HubFindingRepository struct {
-	pool *pgxpool.Pool
+	pool                   *pgxpool.Pool
+	notificationTransports []string
 }
 
 type hubFindingQuerier interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+type hubFindingRowsQuerier interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 }
 
 type hubFindingScanner interface {
@@ -29,6 +34,14 @@ func NewHubFindingRepository(pool *pgxpool.Pool) *HubFindingRepository {
 }
 
 func (r *HubFindingRepository) SaveHubFindings(ctx context.Context, findings []domain.HubFinding) ([]domain.HubFinding, error) {
+	return r.saveHubFindings(ctx, findings, nil)
+}
+
+func (r *HubFindingRepository) SaveHubFindingsObserved(ctx context.Context, findings []domain.HubFinding, source string) ([]domain.HubFinding, error) {
+	return r.saveHubFindings(ctx, findings, &source)
+}
+
+func (r *HubFindingRepository) saveHubFindings(ctx context.Context, findings []domain.HubFinding, notificationSource *string) ([]domain.HubFinding, error) {
 	if len(findings) == 0 {
 		return nil, nil
 	}
@@ -69,9 +82,13 @@ func (r *HubFindingRepository) SaveHubFindings(ctx context.Context, findings []d
 			title = EXCLUDED.title,
 			summary = EXCLUDED.summary,
 			description = EXCLUDED.description,
-			event_ids = EXCLUDED.event_ids,
-			first_event_at = EXCLUDED.first_event_at,
-			last_event_at = EXCLUDED.last_event_at,
+			event_ids = ARRAY(
+				SELECT DISTINCT merged.event_id
+				FROM unnest(hub_findings.event_ids || EXCLUDED.event_ids) AS merged(event_id)
+				ORDER BY merged.event_id
+			),
+			first_event_at = LEAST(hub_findings.first_event_at, EXCLUDED.first_event_at),
+			last_event_at = GREATEST(hub_findings.last_event_at, EXCLUDED.last_event_at),
 			metadata = EXCLUDED.metadata,
 			updated_at = now()
 		WHERE hub_findings.rule_version IS DISTINCT FROM EXCLUDED.rule_version
@@ -80,9 +97,13 @@ func (r *HubFindingRepository) SaveHubFindings(ctx context.Context, findings []d
 			OR hub_findings.title IS DISTINCT FROM EXCLUDED.title
 			OR hub_findings.summary IS DISTINCT FROM EXCLUDED.summary
 			OR hub_findings.description IS DISTINCT FROM EXCLUDED.description
-			OR hub_findings.event_ids IS DISTINCT FROM EXCLUDED.event_ids
-			OR hub_findings.first_event_at IS DISTINCT FROM EXCLUDED.first_event_at
-			OR hub_findings.last_event_at IS DISTINCT FROM EXCLUDED.last_event_at
+			OR hub_findings.event_ids IS DISTINCT FROM ARRAY(
+				SELECT DISTINCT merged.event_id
+				FROM unnest(hub_findings.event_ids || EXCLUDED.event_ids) AS merged(event_id)
+				ORDER BY merged.event_id
+			)
+			OR hub_findings.first_event_at IS DISTINCT FROM LEAST(hub_findings.first_event_at, EXCLUDED.first_event_at)
+			OR hub_findings.last_event_at IS DISTINCT FROM GREATEST(hub_findings.last_event_at, EXCLUDED.last_event_at)
 			OR hub_findings.metadata IS DISTINCT FROM EXCLUDED.metadata
 		RETURNING id::text, organization_id::text, project_id::text, environment_id::text,
 			coalesce(app_id::text, ''), rule_id, rule_version, dedupe_key, severity,
@@ -147,6 +168,11 @@ func (r *HubFindingRepository) SaveHubFindings(ctx context.Context, findings []d
 		saved[index] = item
 	}
 
+	if notificationSource != nil {
+		if err := r.enqueueObservedFindingNotifications(ctx, tx, saved, *notificationSource); err != nil {
+			return nil, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
@@ -294,42 +320,86 @@ func scanHubFinding(row hubFindingScanner) (domain.HubFinding, error) {
 }
 
 func (r *HubFindingRepository) ListHubFindings(ctx context.Context, environmentID domain.ID, appID domain.ID, limit int) ([]domain.HubFinding, error) {
+	return listHubFindingRows(ctx, r.pool, environmentID, appID, ports.HubFindingPageOptions{
+		Limit: normalizeHubFindingPageLimit(limit),
+	})
+}
+
+func (r *HubFindingRepository) ListHubFindingsPage(ctx context.Context, environmentID domain.ID, appID domain.ID, options ports.HubFindingPageOptions) (ports.HubFindingPage, error) {
+	options.Limit = normalizeHubFindingPageLimit(options.Limit)
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{
+		IsoLevel:   pgx.RepeatableRead,
+		AccessMode: pgx.ReadOnly,
+	})
+	if err != nil {
+		return ports.HubFindingPage{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	var summary ports.HubFindingSummary
+	summaryIncluded := !options.SkipSummary
+	var matchedTotal int64
+	matchedTotalIncluded := !options.SkipSummary
+	if summaryIncluded {
+		summary, err = queryHubFindingSummary(ctx, tx, environmentID, appID)
+		if err != nil {
+			return ports.HubFindingPage{}, err
+		}
+		if hubFindingPageHasFilters(options) {
+			matchedTotal, err = queryHubFindingMatchedTotal(ctx, tx, environmentID, appID, options)
+			if err != nil {
+				return ports.HubFindingPage{}, err
+			}
+		} else {
+			matchedTotal = summary.Total
+		}
+	}
+	queryOptions := options
+	queryOptions.Limit++
+	findings, err := listHubFindingRows(ctx, tx, environmentID, appID, queryOptions)
+	if err != nil {
+		return ports.HubFindingPage{}, err
+	}
+	hasMore := len(findings) > options.Limit
+	if hasMore {
+		findings = findings[:options.Limit]
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ports.HubFindingPage{}, err
+	}
+	return ports.HubFindingPage{
+		Findings:             findings,
+		Summary:              summary,
+		SummaryIncluded:      summaryIncluded,
+		MatchedTotal:         matchedTotal,
+		MatchedTotalIncluded: matchedTotalIncluded,
+		HasMore:              hasMore,
+	}, nil
+}
+
+func listHubFindingRows(ctx context.Context, querier hubFindingRowsQuerier, environmentID domain.ID, appID domain.ID, options ports.HubFindingPageOptions) ([]domain.HubFinding, error) {
+	limit := normalizeHubFindingPageLimit(options.Limit)
+	if options.Limit > 500 {
+		// The paginated repository fetches one extra record to determine
+		// has_more, while public callers remain capped at 500 records.
+		limit = 501
+	}
 	if limit <= 0 {
 		limit = 20
 	}
-	if limit > 500 {
-		limit = 500
-	}
-	const environmentQuery = `
+	where, args := hubFindingPageWhere(environmentID, appID, options)
+	args = append(args, limit)
+	query := `
 		SELECT id::text, organization_id::text, project_id::text, environment_id::text,
 			coalesce(app_id::text, ''), rule_id, rule_version, dedupe_key, severity,
 			confidence, title, summary, description, event_ids, first_event_at,
 			last_event_at, status, status_reason, status_note, status_actor,
 			status_updated_at, metadata, created_at, updated_at
 		FROM hub_findings
-		WHERE environment_id = $1
-		ORDER BY first_event_at DESC, created_at DESC
-		LIMIT $2
-	`
-	const appQuery = `
-		SELECT id::text, organization_id::text, project_id::text, environment_id::text,
-			coalesce(app_id::text, ''), rule_id, rule_version, dedupe_key, severity,
-			confidence, title, summary, description, event_ids, first_event_at,
-			last_event_at, status, status_reason, status_note, status_actor,
-			status_updated_at, metadata, created_at, updated_at
-		FROM hub_findings
-		WHERE environment_id = $1
-			AND app_id = $2::uuid
-		ORDER BY first_event_at DESC, created_at DESC
-		LIMIT $3
-	`
-	query := environmentQuery
-	args := []any{environmentID, limit}
-	if strings.TrimSpace(string(appID)) != "" {
-		query = appQuery
-		args = []any{environmentID, string(appID), limit}
-	}
-	rows, err := r.pool.Query(ctx, query, args...)
+		WHERE ` + where + `
+		ORDER BY created_at DESC, id DESC
+		LIMIT ` + fmt.Sprintf("$%d", len(args))
+	rows, err := querier.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -337,40 +407,152 @@ func (r *HubFindingRepository) ListHubFindings(ctx context.Context, environmentI
 
 	var findings []domain.HubFinding
 	for rows.Next() {
-		var item domain.HubFinding
-		var eventIDs []string
-		if err := rows.Scan(
-			&item.ID,
-			&item.OrganizationID,
-			&item.ProjectID,
-			&item.EnvironmentID,
-			&item.AppID,
-			&item.RuleID,
-			&item.RuleVersion,
-			&item.DedupeKey,
-			&item.Severity,
-			&item.Confidence,
-			&item.Title,
-			&item.Summary,
-			&item.Description,
-			&eventIDs,
-			&item.FirstEventAt,
-			&item.LastEventAt,
-			&item.Status,
-			&item.StatusReason,
-			&item.StatusNote,
-			&item.StatusActor,
-			&item.StatusUpdatedAt,
-			&item.Metadata,
-			&item.CreatedAt,
-			&item.UpdatedAt,
-		); err != nil {
+		item, err := scanHubFinding(rows)
+		if err != nil {
 			return nil, err
 		}
-		item.EventIDs = domainIDs(eventIDs)
 		findings = append(findings, item)
 	}
 	return findings, rows.Err()
+}
+
+func hubFindingPageWhere(environmentID domain.ID, appID domain.ID, options ports.HubFindingPageOptions) (string, []any) {
+	clauses := []string{"environment_id = $1"}
+	args := []any{environmentID}
+	if strings.TrimSpace(string(appID)) != "" {
+		args = append(args, string(appID))
+		clauses = append(clauses, fmt.Sprintf("app_id = $%d::uuid", len(args)))
+	}
+	if len(options.Statuses) > 0 {
+		args = append(args, options.Statuses)
+		clauses = append(clauses, fmt.Sprintf("status = ANY($%d::text[])", len(args)))
+	}
+	if len(options.Severities) > 0 {
+		args = append(args, options.Severities)
+		clauses = append(clauses, fmt.Sprintf("severity = ANY($%d::text[])", len(args)))
+	}
+	if query := strings.ToLower(strings.TrimSpace(options.Query)); query != "" {
+		args = append(args, escapeHubFindingLikePattern(query))
+		placeholder := fmt.Sprintf("$%d::text", len(args))
+		clauses = append(clauses, fmt.Sprintf(`(
+			lower(
+				coalesce(title, '') || E'\x1f' ||
+				coalesce(summary, '') || E'\x1f' ||
+				coalesce(description, '') || E'\x1f' ||
+				coalesce(rule_id, '') || E'\x1f' ||
+				coalesce(dedupe_key, '')
+			) LIKE '%%' || %[1]s || '%%' ESCAPE E'\\'
+		)`, placeholder))
+	}
+	if options.After != nil {
+		args = append(args, options.After.CreatedAt.UTC())
+		createdAtPlaceholder := len(args)
+		args = append(args, string(options.After.ID))
+		clauses = append(clauses, fmt.Sprintf(
+			"(created_at, id) < ($%d, $%d::uuid)",
+			createdAtPlaceholder,
+			len(args),
+		))
+	}
+	return strings.Join(clauses, "\n\t\t\tAND "), args
+}
+
+func escapeHubFindingLikePattern(value string) string {
+	return strings.NewReplacer(
+		`\`, `\\`,
+		`%`, `\%`,
+		`_`, `\_`,
+	).Replace(strings.ToLower(strings.TrimSpace(value)))
+}
+
+func hubFindingPageHasFilters(options ports.HubFindingPageOptions) bool {
+	return len(options.Statuses) > 0 || len(options.Severities) > 0 || strings.TrimSpace(options.Query) != ""
+}
+
+func queryHubFindingMatchedTotal(ctx context.Context, querier hubFindingQuerier, environmentID domain.ID, appID domain.ID, options ports.HubFindingPageOptions) (int64, error) {
+	options.After = nil
+	where, args := hubFindingPageWhere(environmentID, appID, options)
+	var total int64
+	if err := querier.QueryRow(ctx, "SELECT count(*)::bigint FROM hub_findings WHERE "+where, args...).Scan(&total); err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
+func normalizeHubFindingPageLimit(limit int) int {
+	if limit <= 0 {
+		return 20
+	}
+	if limit > 500 {
+		return 500
+	}
+	return limit
+}
+
+func queryHubFindingSummary(ctx context.Context, querier hubFindingRowsQuerier, environmentID domain.ID, appID domain.ID) (ports.HubFindingSummary, error) {
+	const environmentQuery = `
+		SELECT lower(coalesce(nullif(btrim(status), ''), 'open')) AS finding_status,
+			lower(coalesce(nullif(btrim(severity), ''), 'unknown')) AS finding_severity,
+			count(*)::bigint
+		FROM hub_findings
+		WHERE environment_id = $1
+		GROUP BY 1, 2
+	`
+	const appQuery = `
+		SELECT lower(coalesce(nullif(btrim(status), ''), 'open')) AS finding_status,
+			lower(coalesce(nullif(btrim(severity), ''), 'unknown')) AS finding_severity,
+			count(*)::bigint
+		FROM hub_findings
+		WHERE environment_id = $1
+			AND app_id = $2::uuid
+		GROUP BY 1, 2
+	`
+	query := environmentQuery
+	args := []any{environmentID}
+	if strings.TrimSpace(string(appID)) != "" {
+		query = appQuery
+		args = []any{environmentID, string(appID)}
+	}
+	rows, err := querier.Query(ctx, query, args...)
+	if err != nil {
+		return ports.HubFindingSummary{}, err
+	}
+	defer rows.Close()
+
+	summary := newHubFindingSummary()
+	for rows.Next() {
+		var status string
+		var severity string
+		var count int64
+		if err := rows.Scan(&status, &severity, &count); err != nil {
+			return ports.HubFindingSummary{}, err
+		}
+		summary.Total += count
+		summary.StatusCounts[status] += count
+		summary.SeverityCounts[severity] += count
+		if status == "open" {
+			summary.OpenSeverityCounts[severity] += count
+		}
+	}
+	return summary, rows.Err()
+}
+
+func newHubFindingSummary() ports.HubFindingSummary {
+	statusCounts := map[string]int64{}
+	for _, status := range []string{"open", "acknowledged", "false_positive", "resolved"} {
+		statusCounts[status] = 0
+	}
+	severityCounts := map[string]int64{}
+	openSeverityCounts := map[string]int64{}
+	for _, severity := range []string{"info", "low", "medium", "high", "critical"} {
+		severityCounts[severity] = 0
+		openSeverityCounts[severity] = 0
+	}
+	return ports.HubFindingSummary{
+		StatusCounts:       statusCounts,
+		SeverityCounts:     severityCounts,
+		OpenSeverityCounts: openSeverityCounts,
+	}
 }
 
 func (r *HubFindingRepository) GetHubFinding(ctx context.Context, findingID domain.ID, environmentID domain.ID, appID domain.ID) (domain.HubFinding, error) {
@@ -534,6 +716,7 @@ func (r *HubFindingRepository) UpdateOpenHubFindingStatuses(ctx context.Context,
 			updated_at = now()
 		WHERE environment_id = $1
 			AND status = 'open'
+			AND severity NOT IN ('high', 'critical')
 	`
 	const appQuery = `
 		UPDATE hub_findings
@@ -546,58 +729,13 @@ func (r *HubFindingRepository) UpdateOpenHubFindingStatuses(ctx context.Context,
 		WHERE environment_id = $1
 			AND app_id = $2::uuid
 			AND status = 'open'
+			AND severity NOT IN ('high', 'critical')
 	`
 	query := environmentQuery
 	args := []any{environmentID, update.Status, update.Reason, update.Note, update.Actor}
 	if strings.TrimSpace(string(appID)) != "" {
 		query = appQuery
 		args = []any{environmentID, string(appID), update.Status, update.Reason, update.Note, update.Actor}
-	}
-	commandTag, err := r.pool.Exec(ctx, query, args...)
-	if err != nil {
-		return 0, err
-	}
-	return int(commandTag.RowsAffected()), nil
-}
-
-func (r *HubFindingRepository) UpdateOpenHubFindingStatusesForRulesInWindow(ctx context.Context, environmentID domain.ID, appID domain.ID, ruleIDs []string, windowStart time.Time, windowEnd time.Time, update domain.HubFindingStatusUpdate) (int, error) {
-	if len(ruleIDs) == 0 || windowStart.IsZero() || windowEnd.IsZero() {
-		return 0, nil
-	}
-	const environmentQuery = `
-		UPDATE hub_findings
-		SET status = $2,
-			status_reason = $3,
-			status_note = $4,
-			status_actor = $5,
-			status_updated_at = now(),
-			updated_at = now()
-		WHERE environment_id = $1
-			AND status = 'open'
-			AND rule_id = ANY($6::text[])
-			AND first_event_at <= $8
-			AND last_event_at >= $7
-	`
-	const appQuery = `
-		UPDATE hub_findings
-		SET status = $3,
-			status_reason = $4,
-			status_note = $5,
-			status_actor = $6,
-			status_updated_at = now(),
-			updated_at = now()
-		WHERE environment_id = $1
-			AND app_id = $2::uuid
-			AND status = 'open'
-			AND rule_id = ANY($7::text[])
-			AND first_event_at <= $9
-			AND last_event_at >= $8
-	`
-	query := environmentQuery
-	args := []any{environmentID, update.Status, update.Reason, update.Note, update.Actor, ruleIDs, windowStart.UTC(), windowEnd.UTC()}
-	if strings.TrimSpace(string(appID)) != "" {
-		query = appQuery
-		args = []any{environmentID, string(appID), update.Status, update.Reason, update.Note, update.Actor, ruleIDs, windowStart.UTC(), windowEnd.UTC()}
 	}
 	commandTag, err := r.pool.Exec(ctx, query, args...)
 	if err != nil {

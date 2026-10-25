@@ -2,9 +2,10 @@ name: aegrail-services
 
 services:
   postgres18:
-    image: pgvector/pgvector:0.8.2-pg18-trixie
+    image: pgvector/pgvector:0.8.7-pg18-trixie@sha256:9d9c930220cb9bf2f956d10a8f909cf9973d9672ca0278aef2c1e6facccad2e0
     container_name: aegrail-postgres18
     restart: unless-stopped
+    stop_grace_period: 1m
     environment:
       POSTGRES_DB: ${AEGRAIL_POSTGRES_DB:-aegrail}
       POSTGRES_USER: ${AEGRAIL_POSTGRES_USER:-aegrail}
@@ -22,9 +23,10 @@ services:
       start_period: 10s
 
   redis:
-    image: redis:7.4-alpine
+    image: redis:8.10.2-alpine3.23@sha256:0bf6577d7774e592b29d093e3ac9390eb91e13d72c21e506afce736de5e0eeb0
     container_name: aegrail-redis
     restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       AEGRAIL_REDIS_PASSWORD: ${AEGRAIL_REDIS_PASSWORD:?set AEGRAIL_REDIS_PASSWORD}
     command:

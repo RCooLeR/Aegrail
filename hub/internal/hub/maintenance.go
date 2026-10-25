@@ -62,7 +62,7 @@ func (h *Hub) StartMaintenanceWorker(ctx context.Context, options MaintenanceWor
 		interval = time.Hour
 	}
 	h.workersWG.Add(1)
-	go func() {
+	go runHubWorker(ctx, "maintenance", func(ctx context.Context) {
 		defer h.workersWG.Done()
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
@@ -97,7 +97,7 @@ func (h *Hub) StartMaintenanceWorker(ctx context.Context, options MaintenanceWor
 				run()
 			}
 		}
-	}()
+	})
 }
 
 func minDuration(a time.Duration, b time.Duration) time.Duration {

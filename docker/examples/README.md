@@ -15,8 +15,8 @@ The Hub example builds:
 - the React dashboard into `/app/dashboard`
 - the standalone Hub binary into `/usr/local/bin/aegrail-hub`
 - migrations into `/app/migrations`
-- Debian CA certificates into the runtime image so HTTPS notification providers
-  such as FCM validate correctly
+- the Debian 13 distroless CA bundle used for HTTPS notification providers such
+  as FCM
 
 Prepare local env:
 
@@ -55,9 +55,27 @@ Optional Mailjet email notifications use
 Run migrations and start Hub:
 
 ```powershell
-docker compose --env-file docker/examples/.env.hub -f docker/examples/hub.compose.yaml run --rm hub-migrate
-docker compose --env-file docker/examples/.env.hub -f docker/examples/hub.compose.yaml up -d hub
+docker compose --env-file docker/examples/.env.hub -f docker/examples/hub.compose.yaml build --pull hub
+docker compose --env-file docker/examples/.env.hub -f docker/examples/hub.compose.yaml pull postgres18 redis
+docker compose --env-file docker/examples/.env.hub -f docker/examples/hub.compose.yaml up -d --wait postgres18 redis
+docker compose --env-file docker/examples/.env.hub -f docker/examples/hub.compose.yaml run --rm --no-deps hub-migrate
+docker compose --env-file docker/examples/.env.hub -f docker/examples/hub.compose.yaml up -d --no-build hub
 ```
+
+This order also applies to upgrades: it recreates PostgreSQL with the new image
+before running extension migrations, so the matching pgvector update scripts
+are available. Hub checks migration state during startup. If it refuses to
+start because the database is behind the image, rerun `hub-migrate` with the
+same image and then start Hub again.
+
+The example Hub container uses the binary `healthcheck` command, so it works in
+the distroless image without `/bin/sh` or `curl`.
+
+PostgreSQL 18 stores its data in a major-version-specific directory and expects
+the volume at `/var/lib/postgresql`; this example follows that layout. Before
+recreating a deployment made with an older example that mounted
+`/var/lib/postgresql/data`, back up the database and verify its active `PGDATA`.
+Changing the mount target does not migrate an existing volume automatically.
 
 Hub listens on `http://127.0.0.1:8787` by default. Set `AEGRAIL_HTTP_BIND=0.0.0.0`
 only when a trusted reverse proxy or firewall is in front of it. Put HTTPS or a

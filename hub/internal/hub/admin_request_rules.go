@@ -28,12 +28,14 @@ type adminRequestObservation struct {
 }
 
 type adminRequestRule struct {
-	RuleID     string
-	Title      string
-	Severity   domain.Severity
-	Confidence domain.Confidence
-	Summary    string
-	Events     []adminRequestObservation
+	RuleID      string
+	Title       string
+	Severity    domain.Severity
+	Confidence  domain.Confidence
+	Summary     string
+	DedupeGroup string
+	WindowStart time.Time
+	Events      []adminRequestObservation
 }
 
 func buildAdminRequestAnomalyChains(events []domain.TimelineEvent, coveredWebEvents map[string]struct{}) []CorrelationChain {
@@ -237,12 +239,14 @@ func adminSuccessAfterFailuresChains(observations []adminRequestObservation, cov
 			covered[item.Key] = struct{}{}
 		}
 		chains = append(chains, buildAdminRequestChain(adminRequestRule{
-			RuleID:     "web-admin-success-after-failures",
-			Title:      "Admin request succeeded after failures",
-			Severity:   domain.SeverityHigh,
-			Confidence: domain.ConfidenceMedium,
-			Summary:    fmt.Sprintf("admin request from remote %s succeeded after %d failed/probe request(s)", observation.RemoteAddress, len(failures)),
-			Events:     ruleEvents,
+			RuleID:      "web-admin-success-after-failures",
+			Title:       "Admin request succeeded after failures",
+			Severity:    domain.SeverityHigh,
+			Confidence:  domain.ConfidenceMedium,
+			Summary:     fmt.Sprintf("admin request from remote %s succeeded after %d failed/probe request(s)", observation.RemoteAddress, len(failures)),
+			DedupeGroup: observation.RemoteFingerprint,
+			WindowStart: observation.Event.EventTime.Truncate(adminAnomalyWindow),
+			Events:      ruleEvents,
 		}))
 	}
 	return chains
@@ -285,12 +289,14 @@ func adminBurstChainsByKind(observations []adminRequestObservation, covered map[
 			covered[item.Key] = struct{}{}
 		}
 		chains = append(chains, buildAdminRequestChain(adminRequestRule{
-			RuleID:     ruleID,
-			Title:      title,
-			Severity:   severity,
-			Confidence: confidence,
-			Summary:    fmt.Sprintf("%d admin request(s) from remote %s within %s", len(group), observation.RemoteAddress, adminAnomalyWindow),
-			Events:     group,
+			RuleID:      ruleID,
+			Title:       title,
+			Severity:    severity,
+			Confidence:  confidence,
+			Summary:     fmt.Sprintf("%d admin request(s) from remote %s within %s", len(group), observation.RemoteAddress, adminAnomalyWindow),
+			DedupeGroup: observation.RemoteFingerprint,
+			WindowStart: observation.Event.EventTime.Truncate(adminAnomalyWindow),
+			Events:      group,
 		}))
 	}
 	return chains
@@ -306,12 +312,14 @@ func adminToolProbeChains(observations []adminRequestObservation, covered map[st
 		}
 		covered[observation.Key] = struct{}{}
 		chains = append(chains, buildAdminRequestChain(adminRequestRule{
-			RuleID:     "web-admin-tool-probe",
-			Title:      "Admin tool probe",
-			Severity:   domain.SeverityLow,
-			Confidence: domain.ConfidenceMedium,
-			Summary:    fmt.Sprintf("admin tool probe from remote %s: %s", observation.RemoteAddress, observation.Path),
-			Events:     []adminRequestObservation{observation},
+			RuleID:      "web-admin-tool-probe",
+			Title:       "Admin tool probe",
+			Severity:    domain.SeverityLow,
+			Confidence:  domain.ConfidenceMedium,
+			Summary:     fmt.Sprintf("admin tool probe from remote %s: %s", observation.RemoteAddress, observation.Path),
+			DedupeGroup: observation.RemoteFingerprint + ":" + observation.Path,
+			WindowStart: observation.Event.EventTime.Truncate(adminAnomalyWindow),
+			Events:      []adminRequestObservation{observation},
 		}))
 	}
 	return chains
@@ -398,12 +406,14 @@ func adminRequestWindowChains(observations []adminRequestObservation, covered ma
 			covered[item.Key] = struct{}{}
 		}
 		chains = append(chains, buildAdminRequestChain(adminRequestRule{
-			RuleID:     rule.ruleID,
-			Title:      rule.title,
-			Severity:   rule.severity,
-			Confidence: rule.confidence,
-			Summary:    rule.summary(group),
-			Events:     group,
+			RuleID:      rule.ruleID,
+			Title:       rule.title,
+			Severity:    rule.severity,
+			Confidence:  rule.confidence,
+			Summary:     rule.summary(group),
+			DedupeGroup: rule.groupKey(observation),
+			WindowStart: windowStart,
+			Events:      group,
 		}))
 	}
 	return chains
@@ -423,7 +433,7 @@ func buildAdminRequestChain(rule adminRequestRule) CorrelationChain {
 		})
 	}
 	return CorrelationChain{
-		ID:         adminRequestChainID(rule.RuleID, rule.Events),
+		ID:         adminRequestChainID(rule.RuleID, rule.DedupeGroup, rule.WindowStart),
 		RuleID:     rule.RuleID,
 		Title:      rule.Title,
 		Severity:   rule.Severity,
@@ -433,13 +443,13 @@ func buildAdminRequestChain(rule adminRequestRule) CorrelationChain {
 	}
 }
 
-func adminRequestChainID(ruleID string, events []adminRequestObservation) string {
-	parts := []string{ruleID}
-	if len(events) > 0 {
-		parts = append(parts, events[0].RemoteFingerprint, events[0].Event.EventTime.Truncate(adminAnomalyWindow).Format(time.RFC3339))
-	}
-	for _, event := range events {
-		parts = append(parts, string(event.Event.ID), event.Path, fmt.Sprint(event.Status))
+func adminRequestChainID(ruleID string, dedupeGroup string, windowStart time.Time) string {
+	// Keep the identifier stable as more requests arrive in the same anomaly
+	// window. Event IDs belong in the finding evidence, not in its identity.
+	parts := []string{
+		ruleID,
+		strings.TrimSpace(dedupeGroup),
+		windowStart.UTC().Format(time.RFC3339),
 	}
 	return "web-admin-" + sha256Short(strings.Join(parts, "\n"))
 }

@@ -190,7 +190,7 @@ func TestAnalyzeBrowserScriptDriftSuppressesAllowedValues(t *testing.T) {
 	}
 }
 
-func TestAnalyzeBrowserScriptDriftSuppressesExpectedDeploymentFinding(t *testing.T) {
+func TestAnalyzeBrowserScriptDriftKeepsDeploymentFindingVisibleAndAnnotated(t *testing.T) {
 	inventory := newMemoryInventoryRepository()
 	ingest := &memoryIngestRepository{}
 	hub := New(Dependencies{Inventory: inventory, Ingest: ingest})
@@ -239,8 +239,18 @@ func TestAnalyzeBrowserScriptDriftSuppressesExpectedDeploymentFinding(t *testing
 	if len(result.Drifts) != 1 {
 		t.Fatalf("drifts = %#v, want raw drift still detected", result.Drifts)
 	}
-	if len(result.Findings) != 0 {
-		t.Fatalf("findings = %#v, want expected browser deployment drift suppressed", result.Findings)
+	if len(result.Findings) != 1 {
+		t.Fatalf("findings = %#v, want browser deployment drift to remain visible", result.Findings)
+	}
+	finding := result.Findings[0]
+	if finding.RuleID != "browser-script-domain-new" || finding.Severity != result.Drifts[0].Severity {
+		t.Fatalf("finding = %#v, want original browser drift rule and severity", finding)
+	}
+	deploymentContext, ok := finding.Metadata["deployment_context"].(map[string]any)
+	severity := string(finding.Severity)
+	if !ok || deploymentContext["active"] != true || deploymentContext["severity_adjusted"] != false ||
+		deploymentContext["original_severity"] != severity || deploymentContext["adjusted_severity"] != severity {
+		t.Fatalf("deployment context = %#v, want context-only annotation", finding.Metadata["deployment_context"])
 	}
 }
 

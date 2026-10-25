@@ -43,8 +43,8 @@ type DatabaseEntityState struct {
 	Key             string         `json:"key"`
 	Label           string         `json:"label,omitempty"`
 	Privileged      bool           `json:"privileged,omitempty"`
-	SourceCreatedAt time.Time      `json:"source_created_at,omitempty"`
-	SourceUpdatedAt time.Time      `json:"source_updated_at,omitempty"`
+	SourceCreatedAt time.Time      `json:"source_created_at"`
+	SourceUpdatedAt time.Time      `json:"source_updated_at"`
 	Attributes      map[string]any `json:"attributes,omitempty"`
 	Signature       string         `json:"signature"`
 }

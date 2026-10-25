@@ -11,6 +11,34 @@ export type RequestState<T> = {
   error?: string;
 };
 
+export type HubFindingSummary = {
+  openSeverityCounts?: Record<string, number>;
+  severityCounts?: Record<string, number>;
+  statusCounts?: Record<string, number>;
+};
+
+export type FindingsRequestState = RequestState<HubFinding[]> & {
+  complete: boolean;
+  nextCursor?: string;
+  summary?: HubFindingSummary;
+  total: number;
+  totalExact: boolean;
+};
+
+export type FindingsQuery = {
+  limit: number;
+  q: string;
+  severities: string[];
+  statuses: string[];
+};
+
+export type FilteredFindingsPage = RequestState<HubFinding[]> & {
+  complete: boolean;
+  matchedTotal?: number;
+  matchedTotalExact: boolean;
+  nextCursor?: string;
+};
+
 export type Severity = "critical" | "high" | "medium" | "low" | "info" | string;
 
 export type HubFinding = {
@@ -173,6 +201,157 @@ export type Deployment = {
   created_at: string;
 };
 
+export type TrafficStatusCount = {
+  status_code: number;
+  requests: number;
+};
+
+export type TrafficIPSummary = {
+  ip: string;
+  requests: number;
+  error_requests: number;
+  total_bytes: number;
+  first_seen: string;
+  last_seen: string;
+  manual_policy: "neutral" | "trusted" | "blocked" | string;
+  trusted: boolean;
+  blocked: boolean;
+  recognized_provider?: string;
+  provider_verified: boolean;
+};
+
+export type TrafficPathSummary = {
+  path: string;
+  requests: number;
+  error_requests: number;
+  total_bytes: number;
+  last_seen: string;
+};
+
+export type TrafficUserAgentSummary = {
+  hash: string;
+  user_agent: string;
+  family: string;
+  browser_family?: string;
+  browser_version?: string;
+  os_family?: string;
+  os_version?: string;
+  device_family?: string;
+  actor_type: string;
+  known_actor?: string;
+  is_bot: boolean;
+  is_tool: boolean;
+  risk_score: number;
+  requests: number;
+  verified_requests: number;
+  unique_ips: number;
+  error_requests: number;
+  first_seen: string;
+  last_seen: string;
+};
+
+export type TrafficTimelineBucket = {
+  start: string;
+  requests: number;
+  error_requests: number;
+  bot_requests: number;
+  total_bytes: number;
+};
+
+export type TrafficOverview = {
+  since: string;
+  until: string;
+  total_requests: number;
+  unique_ips: number;
+  total_bytes: number;
+  error_requests: number;
+  bot_requests: number;
+  status_codes: TrafficStatusCount[];
+  top_ips: TrafficIPSummary[];
+  top_paths: TrafficPathSummary[];
+  top_user_agents: TrafficUserAgentSummary[];
+  timeline: TrafficTimelineBucket[];
+  timeline_bucket: string;
+};
+
+export type TrafficRequestSample = {
+  event_id: string;
+  event_time: string;
+  ip?: string;
+  method: string;
+  path: string;
+  status_code?: number;
+  response_bytes?: number;
+  user_agent_hash?: string;
+  user_agent?: string;
+  user_agent_family?: string;
+};
+
+export type TrafficIPIntel = {
+  ip: string;
+  network_class: string;
+  reverse_dns: string[];
+  dns_verified: boolean;
+  provider_family?: string;
+  recognized_provider?: string;
+  provider_actor_type?: string;
+  provider_verified: boolean;
+  lookup_status: string;
+  last_lookup_at: string;
+  expires_at: string;
+  last_error?: string;
+};
+
+export type TrafficIPPolicy = {
+  ip: string;
+  policy: "neutral" | "trusted" | "blocked" | string;
+  reason?: string;
+  updated_by?: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type TrafficIPDetail = {
+  ip: string;
+  since: string;
+  until: string;
+  requests: number;
+  error_requests: number;
+  total_bytes: number;
+  first_seen: string;
+  last_seen: string;
+  status_codes: TrafficStatusCount[];
+  top_paths: TrafficPathSummary[];
+  user_agents: TrafficUserAgentSummary[];
+  recent_requests: TrafficRequestSample[];
+  intel: TrafficIPIntel;
+  policy: TrafficIPPolicy;
+  trusted: boolean;
+  blocked: boolean;
+};
+
+export type TrafficUserAgentDetail = TrafficUserAgentSummary & {
+  since: string;
+  until: string;
+  status_codes: TrafficStatusCount[];
+  top_ips: TrafficIPSummary[];
+  top_paths: TrafficPathSummary[];
+  recent_requests: TrafficRequestSample[];
+};
+
+export type TrafficBotsResponse = {
+  count?: number;
+  since: string;
+  until: string;
+  bots: TrafficUserAgentSummary[];
+  total_clients?: number;
+  total_requests?: number;
+  total_verified_requests?: number;
+  total_error_requests?: number;
+  returned?: number;
+  truncated?: boolean;
+};
+
 export type BrowserScript = {
   event_id: string;
   app?: string;
@@ -291,14 +470,12 @@ export type HubHealth = {
 
 export type DashboardData = {
   health: RequestState<HubHealth | null>;
-  findings: RequestState<HubFinding[]>;
+  findings: FindingsRequestState;
   timeline: RequestState<TimelineEvent[]>;
   coverage: RequestState<CoverageRecord[]>;
   scopes: RequestState<InventoryOrganization[]>;
   topology: RequestState<Topology>;
-  deployments: RequestState<Deployment[]>;
   browserScripts: RequestState<BrowserScript[]>;
   allowlist: RequestState<BrowserAllowlistEntry[]>;
-  reports: RequestState<ModelAnalysisReport[]>;
   rules: RequestState<RuleDefinition[]>;
 };

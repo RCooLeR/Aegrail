@@ -101,12 +101,12 @@ type webhookFindingRecord struct {
 	StatusReason    string         `json:"status_reason,omitempty"`
 	StatusNote      string         `json:"status_note,omitempty"`
 	StatusActor     string         `json:"status_actor,omitempty"`
-	StatusUpdatedAt time.Time      `json:"status_updated_at,omitempty"`
+	StatusUpdatedAt time.Time      `json:"status_updated_at"`
 	Metadata        map[string]any `json:"metadata,omitempty"`
 	FirstEventAt    time.Time      `json:"first_event_at"`
 	LastEventAt     time.Time      `json:"last_event_at"`
-	CreatedAt       time.Time      `json:"created_at,omitempty"`
-	UpdatedAt       time.Time      `json:"updated_at,omitempty"`
+	CreatedAt       time.Time      `json:"created_at"`
+	UpdatedAt       time.Time      `json:"updated_at"`
 }
 
 func webhookNotificationRecord(notification ports.HubFindingNotification) webhookNotificationPayload {

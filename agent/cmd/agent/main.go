@@ -2,8 +2,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/rcooler/aegrail/agent/internal/adapters/cli"
 	"github.com/rcooler/aegrail/agent/internal/domain"
@@ -24,7 +27,10 @@ func main() {
 		BuildDate: date,
 	}
 
-	if err := cli.New(meta).Run(os.Args); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if err := cli.New(meta).Run(ctx, os.Args); err != nil {
 		fmt.Fprintf(os.Stderr, "agent: %v\n", err)
 		os.Exit(1)
 	}

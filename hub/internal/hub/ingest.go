@@ -47,12 +47,15 @@ type IngestEventsResult struct {
 	Reused bool
 }
 
+type autoCorrelationRunState struct {
+	pending *CorrelateEventsInput
+}
+
 const (
-	autoCorrelationLookback           = 30 * time.Minute
-	autoCorrelationWindow             = 30 * time.Minute
-	autoCorrelationLimit              = 5000
-	autoCorrelationEnqueueMinInterval = 30 * time.Second
-	autoCorrelationInlineTimeout      = 45 * time.Second
+	autoCorrelationLookback      = 30 * time.Minute
+	autoCorrelationWindow        = 30 * time.Minute
+	autoCorrelationLimit         = 5000
+	autoCorrelationInlineTimeout = 45 * time.Second
 )
 
 func (h *Hub) IngestEvents(ctx context.Context, input IngestEventsInput) (IngestEventsResult, error) {
@@ -211,9 +214,6 @@ func (h *Hub) enqueueAutoCorrelation(ctx context.Context, organizationSlug strin
 		return false
 	}
 	queuedAt := time.Now().UTC()
-	if !h.reserveAutoCorrelationEnqueue(autoCorrelationScopeKey(organizationSlug, projectSlug, environmentSlug, appSlug), queuedAt) {
-		return true
-	}
 	since := earliestIngestEventTime(events)
 	if since.IsZero() {
 		since = queuedAt
@@ -228,12 +228,12 @@ func (h *Hub) enqueueAutoCorrelation(ctx context.Context, organizationSlug strin
 		Window:           autoCorrelationWindow,
 		Limit:            autoCorrelationLimit,
 		QueuedAt:         queuedAt,
+		TriggerEventIDs:  ingestEventIDs(events),
 	})
 	if err != nil {
 		return false
 	}
 	if err := h.jobs.Enqueue(ctx, ingestCorrelationQueueName, payload); err != nil {
-		h.releaseAutoCorrelationEnqueue(autoCorrelationScopeKey(organizationSlug, projectSlug, environmentSlug, appSlug), queuedAt)
 		if h.backgroundError != nil {
 			h.backgroundError(err)
 		}
@@ -246,22 +246,11 @@ func (h *Hub) autoCorrelateIngestEvents(ctx context.Context, organizationSlug st
 	if h.findings == nil || len(events) == 0 || !shouldAutoCorrelateIngestEvents(events) {
 		return nil
 	}
-	scopeKey := autoCorrelationScopeKey(organizationSlug, projectSlug, environmentSlug, appSlug)
-	reservedAt := time.Now().UTC()
-	if !h.reserveAutoCorrelationRun(scopeKey, reservedAt) {
-		return nil
-	}
 	since := earliestIngestEventTime(events)
 	if since.IsZero() {
 		since = time.Now().UTC()
 	}
-	runCtx := ctx
-	cancel := func() {}
-	if _, ok := runCtx.Deadline(); !ok {
-		runCtx, cancel = context.WithTimeout(runCtx, autoCorrelationInlineTimeout)
-	}
-	defer cancel()
-	if _, err := h.CorrelateEvents(runCtx, CorrelateEventsInput{
+	return h.runAutoCorrelationSingleFlight(ctx, CorrelateEventsInput{
 		OrganizationSlug: organizationSlug,
 		ProjectSlug:      projectSlug,
 		EnvironmentSlug:  environmentSlug,
@@ -270,11 +259,8 @@ func (h *Hub) autoCorrelateIngestEvents(ctx context.Context, organizationSlug st
 		Window:           autoCorrelationWindow,
 		Limit:            autoCorrelationLimit,
 		SaveFindings:     true,
-	}); err != nil {
-		h.releaseAutoCorrelationRun(scopeKey, reservedAt)
-		return err
-	}
-	return nil
+		TriggerEventIDs:  ingestEventIDs(events),
+	}, autoCorrelationInlineTimeout)
 }
 
 func shouldAutoCorrelateIngestEvents(events []domain.IngestEvent) bool {
@@ -290,78 +276,106 @@ func shouldAutoCorrelateIngestEvents(events []domain.IngestEvent) bool {
 	return false
 }
 
-func (h *Hub) reserveAutoCorrelationEnqueue(scopeKey string, now time.Time) bool {
-	if h == nil {
-		return false
+func (h *Hub) runAutoCorrelationSingleFlight(ctx context.Context, input CorrelateEventsInput, timeout time.Duration) error {
+	scopeKey := autoCorrelationScopeKey(input.OrganizationSlug, input.ProjectSlug, input.EnvironmentSlug, input.AppSlug)
+	if !h.beginAutoCorrelationRun(scopeKey, input) {
+		return nil
 	}
-	h.correlationEnqueueMu.Lock()
-	defer h.correlationEnqueueMu.Unlock()
-	if h.correlationEnqueueLast == nil {
-		h.correlationEnqueueLast = map[string]time.Time{}
-	}
-	if previous := h.correlationEnqueueLast[scopeKey]; !previous.IsZero() && now.Sub(previous) < autoCorrelationEnqueueMinInterval {
-		return false
-	}
-	h.correlationEnqueueLast[scopeKey] = now
-	if len(h.correlationEnqueueLast) > 1024 {
-		for key, value := range h.correlationEnqueueLast {
-			if now.Sub(value) > 10*autoCorrelationEnqueueMinInterval {
-				delete(h.correlationEnqueueLast, key)
+
+	current := input
+	for {
+		runCtx := ctx
+		cancel := func() {}
+		if timeout > 0 {
+			if _, hasDeadline := runCtx.Deadline(); !hasDeadline {
+				runCtx, cancel = context.WithTimeout(runCtx, timeout)
 			}
 		}
-	}
-	return true
-}
+		_, runErr := h.CorrelateEvents(runCtx, current)
+		cancel()
 
-func (h *Hub) releaseAutoCorrelationEnqueue(scopeKey string, reservedAt time.Time) {
-	if h == nil {
-		return
-	}
-	h.correlationEnqueueMu.Lock()
-	defer h.correlationEnqueueMu.Unlock()
-	if h.correlationEnqueueLast == nil {
-		return
-	}
-	if h.correlationEnqueueLast[scopeKey].Equal(reservedAt) {
-		delete(h.correlationEnqueueLast, scopeKey)
+		next, rerun := h.completeAutoCorrelationRun(scopeKey)
+		if !rerun {
+			return runErr
+		}
+		current = next
 	}
 }
 
-func (h *Hub) reserveAutoCorrelationRun(scopeKey string, now time.Time) bool {
+func (h *Hub) beginAutoCorrelationRun(scopeKey string, input CorrelateEventsInput) bool {
 	if h == nil {
 		return false
 	}
 	h.correlationRunMu.Lock()
 	defer h.correlationRunMu.Unlock()
-	if h.correlationRunLast == nil {
-		h.correlationRunLast = map[string]time.Time{}
+	if h.correlationRuns == nil {
+		h.correlationRuns = map[string]*autoCorrelationRunState{}
 	}
-	if previous := h.correlationRunLast[scopeKey]; !previous.IsZero() && now.Sub(previous) < autoCorrelationEnqueueMinInterval {
+	if state, running := h.correlationRuns[scopeKey]; running {
+		pending := input
+		if state.pending != nil {
+			pending = mergeAutoCorrelationInputs(*state.pending, input)
+		}
+		state.pending = &pending
 		return false
 	}
-	h.correlationRunLast[scopeKey] = now
-	if len(h.correlationRunLast) > 1024 {
-		for key, value := range h.correlationRunLast {
-			if now.Sub(value) > 10*autoCorrelationEnqueueMinInterval {
-				delete(h.correlationRunLast, key)
-			}
-		}
-	}
+	h.correlationRuns[scopeKey] = &autoCorrelationRunState{}
 	return true
 }
 
-func (h *Hub) releaseAutoCorrelationRun(scopeKey string, reservedAt time.Time) {
+func (h *Hub) completeAutoCorrelationRun(scopeKey string) (CorrelateEventsInput, bool) {
 	if h == nil {
-		return
+		return CorrelateEventsInput{}, false
 	}
 	h.correlationRunMu.Lock()
 	defer h.correlationRunMu.Unlock()
-	if h.correlationRunLast == nil {
-		return
+	state := h.correlationRuns[scopeKey]
+	if state == nil {
+		return CorrelateEventsInput{}, false
 	}
-	if h.correlationRunLast[scopeKey].Equal(reservedAt) {
-		delete(h.correlationRunLast, scopeKey)
+	if state.pending == nil {
+		delete(h.correlationRuns, scopeKey)
+		return CorrelateEventsInput{}, false
 	}
+	next := *state.pending
+	state.pending = nil
+	return next, true
+}
+
+func mergeAutoCorrelationInputs(current CorrelateEventsInput, incoming CorrelateEventsInput) CorrelateEventsInput {
+	if current.Since.IsZero() || (!incoming.Since.IsZero() && incoming.Since.Before(current.Since)) {
+		current.Since = incoming.Since
+	}
+	if incoming.Window > current.Window {
+		current.Window = incoming.Window
+	}
+	if incoming.Limit > current.Limit {
+		current.Limit = incoming.Limit
+	}
+	current.SaveFindings = current.SaveFindings || incoming.SaveFindings
+	current.TriggerEventIDs = mergeTriggerEventIDs(current.TriggerEventIDs, incoming.TriggerEventIDs)
+	return current
+}
+
+func mergeTriggerEventIDs(current []domain.ID, incoming []domain.ID) []domain.ID {
+	if current == nil || incoming == nil {
+		return nil
+	}
+	merged := make([]domain.ID, 0, len(current)+len(incoming))
+	seen := make(map[domain.ID]struct{}, len(current)+len(incoming))
+	for _, eventIDs := range [][]domain.ID{current, incoming} {
+		for _, eventID := range eventIDs {
+			if eventID == "" {
+				continue
+			}
+			if _, ok := seen[eventID]; ok {
+				continue
+			}
+			seen[eventID] = struct{}{}
+			merged = append(merged, eventID)
+		}
+	}
+	return merged
 }
 
 func autoCorrelationScopeKey(organizationSlug string, projectSlug string, environmentSlug string, appSlug string) string {
@@ -384,7 +398,7 @@ func isIngestLogAccessCorrelationCandidate(event domain.IngestEvent) bool {
 	if isRoutineLocalizedRestAPIAccess(path, method, status, event.Payload) {
 		return false
 	}
-	if status >= 500 || status == 401 || status == 403 {
+	if status >= 400 {
 		return true
 	}
 	if isAdminLikePath(path) {
@@ -429,6 +443,16 @@ func earliestIngestEventTime(events []domain.IngestEvent) time.Time {
 		}
 	}
 	return earliest
+}
+
+func ingestEventIDs(events []domain.IngestEvent) []domain.ID {
+	eventIDs := make([]domain.ID, 0, len(events))
+	for _, event := range events {
+		if event.ID != "" {
+			eventIDs = append(eventIDs, event.ID)
+		}
+	}
+	return eventIDs
 }
 
 func (h *Hub) ListIngestBatches(ctx context.Context, organizationSlug string, projectSlug string, environmentSlug string, limit int) ([]domain.IngestBatch, error) {

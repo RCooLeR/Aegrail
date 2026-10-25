@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -10,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 const ServerConfigSchema = "aegrail.agent.server_config.v1"
@@ -29,6 +30,7 @@ type ServerHubConfig struct {
 	HubPublicKey  string `yaml:"hub_public_key"`
 	NodeSecret    string `yaml:"node_secret"`
 	NodeSecretEnv string `yaml:"node_secret_env"`
+	Timeout       string `yaml:"timeout"`
 	SendLimit     int    `yaml:"send_limit"`
 }
 
@@ -156,7 +158,9 @@ func LoadServerConfig(path string) (ServerConfig, error) {
 		return ServerConfig{}, err
 	}
 	var config ServerConfig
-	if err := yaml.Unmarshal(content, &config); err != nil {
+	decoder := yaml.NewDecoder(bytes.NewReader(content))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&config); err != nil {
 		return ServerConfig{}, err
 	}
 	config = NormalizeServerConfig(config)
@@ -176,6 +180,7 @@ func NormalizeServerConfig(config ServerConfig) ServerConfig {
 	config.Hub.HubPublicKey = strings.TrimSpace(config.Hub.HubPublicKey)
 	config.Hub.NodeSecret = strings.TrimSpace(config.Hub.NodeSecret)
 	config.Hub.NodeSecretEnv = strings.TrimSpace(config.Hub.NodeSecretEnv)
+	config.Hub.Timeout = strings.TrimSpace(config.Hub.Timeout)
 	config.Identity.Org = strings.TrimSpace(config.Identity.Org)
 	config.Identity.Project = strings.TrimSpace(config.Identity.Project)
 	config.Identity.Environment = strings.TrimSpace(config.Identity.Environment)
@@ -282,6 +287,9 @@ func ValidateServerConfig(config ServerConfig) error {
 	}
 	if ResolveServerConfigNodeSecret(config) == "" {
 		issues = append(issues, "hub.node_secret or hub.node_secret_env is required")
+	}
+	if _, err := config.HubTimeout(); err != nil {
+		issues = append(issues, "hub.timeout must be a positive valid duration")
 	}
 	if config.Identity.Org == "" {
 		issues = append(issues, "identity.org is required")
@@ -435,6 +443,20 @@ func (config ServerConfig) RuntimeSentRetention() (time.Duration, error) {
 	return time.ParseDuration(config.Runtime.SentRetention)
 }
 
+func (config ServerConfig) HubTimeout() (time.Duration, error) {
+	if strings.TrimSpace(config.Hub.Timeout) == "" {
+		return 60 * time.Second, nil
+	}
+	timeout, err := time.ParseDuration(config.Hub.Timeout)
+	if err != nil {
+		return 0, err
+	}
+	if timeout <= 0 {
+		return 0, fmt.Errorf("timeout must be positive")
+	}
+	return timeout, nil
+}
+
 func (config ServerConfig) AgentIdentity() Identity {
 	return Identity{
 		Schema:       ConfigSchema,
@@ -475,8 +497,14 @@ func (r *Runtime) RunServerConfigOnce(ctx context.Context, config ServerConfig, 
 	if err != nil {
 		return ServerRunResult{}, err
 	}
+	hubTimeout, err := config.HubTimeout()
+	if err != nil {
+		return ServerRunResult{}, err
+	}
 	r.Config.SentRetention = sentRetention
 	r.Config.MaxPendingFiles = config.Runtime.MaxPendingFiles
+	r.Config.HubTimeout = hubTimeout
+	r.client.Timeout = hubTimeout
 	if err := ensureQueueDirs(identity.QueueDir); err != nil {
 		return ServerRunResult{}, err
 	}

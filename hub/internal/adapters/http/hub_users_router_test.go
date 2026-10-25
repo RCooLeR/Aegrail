@@ -371,7 +371,7 @@ func TestHubRouterManagesUsersAndTOTPEnrollment(t *testing.T) {
 
 func TestHubAuthRateLimiterIsScopedPerRouter(t *testing.T) {
 	routerOne := newRateLimitTestRouter(t)
-	for attempt := 0; attempt < defaultAuthRateLimit; attempt++ {
+	for attempt := range defaultAuthRateLimit {
 		response := performBadLogin(routerOne)
 		if response.Code != http.StatusUnauthorized {
 			t.Fatalf("router one attempt %d status = %d body = %s", attempt+1, response.Code, response.Body.String())
@@ -423,7 +423,7 @@ func TestHubLoginFailuresLockAccountTemporarily(t *testing.T) {
 		t.Fatalf("Decode create returned error: %v", err)
 	}
 
-	for attempt := 0; attempt < hubapp.HubLoginLockoutThreshold; attempt++ {
+	for attempt := range hubapp.HubLoginLockoutThreshold {
 		response := performLogin(router, "lockout@example.test", "wrong wrong wrong")
 		if response.Code != http.StatusUnauthorized {
 			t.Fatalf("bad login attempt %d status = %d body = %s", attempt+1, response.Code, response.Body.String())

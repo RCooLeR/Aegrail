@@ -1,6 +1,7 @@
 package httpadapter
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -294,15 +295,45 @@ func TestHubRouterListsDeployments(t *testing.T) {
 	}
 }
 
+func TestHubRouterCreatesDeploymentAsAuthenticatedActorWithoutTriageSideEffects(t *testing.T) {
+	repo := newHTTPTestInventoryRepository()
+	router := NewHubRouter(domain.AppMeta{Name: "Aegrail", Binary: "aegrail", Version: "test"}, hubapp.New(hubapp.Dependencies{Inventory: repo}), HubOptions{})
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/deployments?org=acme&project=customer-site&environment=production&app=main-web",
+		bytes.NewBufferString(`{"version":"v2.0.0","commit_sha":"abc123","actor":"spoofed-client"}`),
+	)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("status = %d body = %s", response.Code, response.Body.String())
+	}
+	if repo.savedDeployment.AppID != repo.apps[0].ID || repo.savedDeployment.Actor != "local-owner" {
+		t.Fatalf("saved deployment = %#v, want app-scoped authenticated context", repo.savedDeployment)
+	}
+	var body struct {
+		AcknowledgedFindings int `json:"acknowledged_findings"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("Decode returned error: %v", err)
+	}
+	if body.AcknowledgedFindings != 0 {
+		t.Fatalf("acknowledged_findings = %d, want context-only zero", body.AcknowledgedFindings)
+	}
+}
+
 type httpTestInventoryRepository struct {
-	org         domain.Organization
-	project     domain.Project
-	environment domain.Environment
-	apps        []domain.MonitoredApp
-	services    map[domain.ID][]domain.Service
-	hosts       []domain.Host
-	agents      map[domain.ID][]domain.Agent
-	deployments []domain.DeploymentMarker
+	org             domain.Organization
+	project         domain.Project
+	environment     domain.Environment
+	apps            []domain.MonitoredApp
+	services        map[domain.ID][]domain.Service
+	hosts           []domain.Host
+	agents          map[domain.ID][]domain.Agent
+	deployments     []domain.DeploymentMarker
+	savedDeployment domain.DeploymentMarker
 }
 
 func newHTTPTestInventoryRepository() *httpTestInventoryRepository {
@@ -570,6 +601,7 @@ func (r *httpTestInventoryRepository) FindAgentByAgentID(ctx context.Context, ag
 }
 
 func (r *httpTestInventoryRepository) SaveDeploymentMarker(ctx context.Context, marker domain.DeploymentMarker) (domain.DeploymentMarker, error) {
+	r.savedDeployment = marker
 	return marker, nil
 }
 

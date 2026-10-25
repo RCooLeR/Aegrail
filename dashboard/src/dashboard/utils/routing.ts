@@ -6,7 +6,12 @@ export function viewFromLocation(): ViewKey {
   const pathView = relativePath.split("/").filter(Boolean)[0];
   const hashView = window.location.hash.replace("#", "");
   const candidate = pathView || hashView || "overview";
-  return viewKeys.has(candidate as ViewKey) ? candidate as ViewKey : "overview";
+  if (viewKeys.has(candidate as ViewKey)) {
+    return candidate as ViewKey;
+  }
+  const fallbackPath = basePath === "/" ? "/" : `${basePath}/`;
+  window.history.replaceState({}, "", `${fallbackPath}${window.location.search}`);
+  return "overview";
 }
 
 export function issueIDFromLocation() {

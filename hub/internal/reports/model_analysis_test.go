@@ -187,6 +187,8 @@ func TestBuildModelAnalysisPromptAddsContext(t *testing.T) {
 	requireContains(t, prompt.User, "<<<ISSUE_CONTEXT_END>>>")
 	requireContains(t, prompt.User, "<<<EVIDENCE_BUNDLE_JSON_START>>>")
 	requireContains(t, prompt.User, "<<<EVIDENCE_BUNDLE_JSON_END>>>")
+	requireContains(t, prompt.User, "Treat deployment markers as context only")
+	requireContains(t, prompt.User, "must never lower recommended priority")
 	if !strings.Contains(prompt.User, "Identity/access perspective") {
 		t.Fatalf("issue profile was not included: %q", prompt.User)
 	}
@@ -283,7 +285,7 @@ func TestInferModelAnalysisIssueTypeCoversKnownFamilies(t *testing.T) {
 }
 
 func modelAnalysisPromptLineWithPrefix(prompt string, prefix string) string {
-	for _, line := range strings.Split(prompt, "\n") {
+	for line := range strings.SplitSeq(prompt, "\n") {
 		if strings.HasPrefix(line, prefix) {
 			return line
 		}

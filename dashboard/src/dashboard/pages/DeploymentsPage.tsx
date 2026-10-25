@@ -1,110 +1,60 @@
-import { AlertTriangle, GitBranch, Loader2, Rocket } from "lucide-react";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { GitBranch, Loader2, Rocket, ShieldCheck } from "lucide-react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import type { InstanceModel } from "../../estate";
-import type { DeploymentRow, IssueRow } from "../types";
+import type { DeploymentRow } from "../types";
+import { EmptyState, InlineAlert, Panel, ResponsiveTable, StatusPill, TextInput } from "../components/common";
 import { formatDate, formatRelative } from "../utils/time";
-import { EmptyState, InlineAlert, InlineSuccess, Panel, ResponsiveTable, SeverityPill, StatusPill, TextInput } from "../components/common";
 
 export function DeploymentsPage({
-  actor,
   deploymentRows,
-  issueRows,
+  error,
   loading,
   onCreate,
   visibleInstances
 }: {
-  actor: string;
   deploymentRows: DeploymentRow[];
-  issueRows: IssueRow[];
+  error: string;
   loading: boolean;
-  onCreate: (input: {
-    actor: string;
-    commitSha: string;
-    finishedAt?: string;
-    instance: InstanceModel;
-    startedAt?: string;
-    version: string;
-  }) => Promise<void>;
+  onCreate: (input: { commitSha: string; instance: InstanceModel; version: string }) => Promise<void>;
   visibleInstances: InstanceModel[];
 }) {
-  const [instanceKey, setInstanceKey] = useState(visibleInstances[0]?.key ?? "");
+  const targets = useMemo(() => deploymentTargets(visibleInstances), [visibleInstances]);
+  const [targetKey, setTargetKey] = useState(targets[0] ? scopeKey(targets[0]) : "");
   const [version, setVersion] = useState("");
   const [commitSha, setCommitSha] = useState("");
-  const [actorDraft, setActorDraft] = useState(actor);
-  const [startedAt, setStartedAt] = useState(() => localDateTimeInput(new Date(Date.now() - 30 * 60 * 1000)));
-  const [finishedAt, setFinishedAt] = useState(() => localDateTimeInput(new Date()));
-  const [reviewing, setReviewing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
+  const [formError, setFormError] = useState("");
 
   useEffect(() => {
-    if (!visibleInstances.some((instance) => instance.key === instanceKey)) {
-      setInstanceKey(visibleInstances[0]?.key ?? "");
+    if (!targets.some((instance) => scopeKey(instance) === targetKey)) {
+      setTargetKey(targets[0] ? scopeKey(targets[0]) : "");
     }
-  }, [instanceKey, visibleInstances]);
+  }, [targetKey, targets]);
 
-  useEffect(() => {
-    setActorDraft(actor);
-  }, [actor]);
-
-  const selectedInstance = useMemo(
-    () => visibleInstances.find((instance) => instance.key === instanceKey) ?? visibleInstances[0],
-    [instanceKey, visibleInstances]
-  );
-
-  const windowStart = parseLocalDateTime(startedAt);
-  const windowEnd = parseLocalDateTime(finishedAt);
-  const previewRows = useMemo(() => {
-    if (!selectedInstance || !windowStart || !windowEnd) {
-      return [];
-    }
-    const startMs = windowStart.getTime();
-    const endMs = windowEnd.getTime();
-    return issueRows
-      .filter((row) => row.instance.key === selectedInstance.key)
-      .filter((row) => row.finding.status === "open")
-      .filter((row) => issueOverlaps(row, startMs, endMs))
-      .slice(0, 80);
-  }, [issueRows, selectedInstance, windowEnd?.getTime(), windowStart?.getTime()]);
+  const selectedTarget = targets.find((instance) => scopeKey(instance) === targetKey) ?? targets[0];
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setError("");
-    setSuccess("");
-    if (!selectedInstance) {
-      setError("No node is available for deployment recording.");
+    setFormError("");
+    if (!selectedTarget) {
+      setFormError("No monitored application is available.");
       return;
     }
     if (!version.trim()) {
-      setError("Enter a version, release name, or short deployment note.");
+      setFormError("Enter a release label or version.");
       return;
     }
-    if (!windowStart || !windowEnd || windowEnd.getTime() < windowStart.getTime()) {
-      setError("Pick a valid deployment timeframe.");
-      return;
-    }
-    if (!reviewing) {
-      setReviewing(true);
-      return;
-    }
-
     setSubmitting(true);
     try {
       await onCreate({
-        actor: actorDraft.trim(),
         commitSha: commitSha.trim(),
-        finishedAt: windowEnd.toISOString(),
-        instance: selectedInstance,
-        startedAt: windowStart.toISOString(),
+        instance: selectedTarget,
         version: version.trim()
       });
-      setSuccess(`Deployment marker recorded for ${selectedInstance.projectName}.`);
       setVersion("");
       setCommitSha("");
-      setReviewing(false);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
+      setFormError(caught instanceof Error ? caught.message : String(caught));
     } finally {
       setSubmitting(false);
     }
@@ -113,52 +63,36 @@ export function DeploymentsPage({
   return (
     <div className="page-stack">
       {error && <InlineAlert message={error} />}
-      {success && <InlineSuccess message={success} />}
+      {formError && <InlineAlert message={formError} />}
 
-      <Panel title="Mark deployment timeframe" icon={Rocket}>
+      <Panel title="Record deployment" icon={Rocket}>
+        <div className="deployment-context-note">
+          <ShieldCheck size={18} />
+          <div>
+            <strong>Deployment markers add investigation context only.</strong>
+            <span>They do not hide, downgrade, or automatically acknowledge findings.</span>
+          </div>
+        </div>
         <form className="form-stack" onSubmit={submit}>
           <label>
-            Node
-            <select value={instanceKey} onChange={(event) => { setInstanceKey(event.target.value); setReviewing(false); }}>
-              {visibleInstances.map((instance) => (
-                <option key={instance.key} value={instance.key}>
+            Application
+            <select value={targetKey} onChange={(event) => setTargetKey(event.target.value)}>
+              {targets.map((instance) => (
+                <option key={scopeKey(instance)} value={scopeKey(instance)}>
                   {instance.companyName} / {instance.projectName} / {instance.environmentName} / {instance.appName}
                 </option>
               ))}
             </select>
           </label>
           <div className="deployment-form-grid">
-            <TextInput label="Version or note" value={version} onChange={(value) => { setVersion(value); setReviewing(false); }} placeholder="2026.05.16-1" />
-            <TextInput label="Commit SHA (optional)" value={commitSha} onChange={(value) => { setCommitSha(value); setReviewing(false); }} placeholder="abc1234" />
-            <TextInput label="Actor" value={actorDraft} onChange={setActorDraft} placeholder="dashboard" />
+            <TextInput label="Release label" value={version} onChange={setVersion} placeholder="2026.08.04-1" />
+            <TextInput label="Commit SHA (optional)" value={commitSha} onChange={setCommitSha} placeholder="abc1234" />
           </div>
-          <div className="deployment-form-grid">
-            <label>
-              Start
-              <input type="datetime-local" value={startedAt} onChange={(event) => { setStartedAt(event.target.value); setReviewing(false); }} />
-            </label>
-            <label>
-              Finish
-              <input type="datetime-local" value={finishedAt} onChange={(event) => { setFinishedAt(event.target.value); setReviewing(false); }} />
-            </label>
-          </div>
-          <div className="deployment-preview">
-            <span><AlertTriangle size={15} /> Open changes inside timeframe</span>
-            <strong>{previewRows.length}</strong>
-          </div>
-          {reviewing && (
-            <DeploymentPreview rows={previewRows} />
-          )}
           <div className="button-row">
-            <button className={reviewing ? "primary-button" : "ghost-button"} disabled={loading || submitting} type="submit">
+            <button className="primary-button" disabled={loading || submitting || !selectedTarget} type="submit">
               {submitting ? <Loader2 size={15} className="spin" /> : <Rocket size={15} />}
-              {reviewing ? "Confirm deployment marker" : "Review affected changes"}
+              Record deployment now
             </button>
-            {reviewing && (
-              <button className="ghost-button" type="button" onClick={() => setReviewing(false)}>
-                Edit timeframe
-              </button>
-            )}
           </div>
         </form>
       </Panel>
@@ -167,34 +101,37 @@ export function DeploymentsPage({
         <ResponsiveTable>
           <thead>
             <tr>
-              <th>Version</th>
-              <th>Node</th>
-              <th>Actor</th>
-              <th>Started</th>
-              <th>Finished</th>
+              <th>Release</th>
+              <th>Application</th>
+              <th>Recorded by</th>
+              <th>Recorded</th>
+              <th>Context</th>
             </tr>
           </thead>
           <tbody>
             {deploymentRows.map((row) => (
-              <tr key={`${row.instance.key}:${row.deployment.id}`}>
+              <tr key={row.deployment.id}>
                 <td>
                   <strong>{row.deployment.version}</strong>
-                  <small>{row.deployment.commit_sha ?? ""}</small>
+                  <small>{row.deployment.commit_sha || "No commit SHA"}</small>
                 </td>
-                <td>{row.instance.companyName} / {row.instance.projectName}<small>{row.instance.environmentName} / {row.instance.appName}</small></td>
-                <td>{row.deployment.actor || "-"}</td>
+                <td>
+                  {row.instance.companyName} / {row.instance.projectName}
+                  <small>{row.instance.environmentName} / {row.instance.appName}</small>
+                </td>
+                <td>{row.deployment.actor || "Hub"}</td>
                 <td>{formatDate(row.deployment.started_at)}<small>{formatRelative(row.deployment.started_at)}</small></td>
                 <td>
-                  {row.deployment.finished_at ? (
-                    <>{formatDate(row.deployment.finished_at)}<small>{formatRelative(row.deployment.finished_at)}</small></>
-                  ) : (
-                    <StatusPill value="open" />
-                  )}
+                  <StatusPill value={deploymentContextState(row)} />
+                  <small>{row.deployment.finished_at ? `Finished ${formatRelative(row.deployment.finished_at)}` : "Short release window"}</small>
                 </td>
               </tr>
             ))}
-            {deploymentRows.length === 0 && (
+            {!loading && deploymentRows.length === 0 && (
               <tr><td colSpan={5}><EmptyState title="No deployment markers yet" /></td></tr>
+            )}
+            {loading && deploymentRows.length === 0 && (
+              <tr><td colSpan={5}><EmptyState title="Loading deployment history" /></td></tr>
             )}
           </tbody>
         </ResponsiveTable>
@@ -203,45 +140,28 @@ export function DeploymentsPage({
   );
 }
 
-function DeploymentPreview({ rows }: { rows: IssueRow[] }) {
-  if (rows.length === 0) {
-    return <div className="deployment-empty">No open issues overlap this timeframe.</div>;
+function deploymentTargets(instances: InstanceModel[]) {
+  const byScope = new Map<string, InstanceModel>();
+  for (const instance of instances) {
+    if (!byScope.has(scopeKey(instance))) byScope.set(scopeKey(instance), instance);
   }
-  return (
-    <div className="deployment-issue-preview">
-      {rows.slice(0, 12).map((row) => (
-        <div className="deployment-issue-row" key={`${row.instance.key}:${row.finding.id}`}>
-          <SeverityPill value={row.finding.severity} />
-          <span>
-            <strong>{row.finding.title}</strong>
-            <small>{row.service} / first {formatRelative(row.finding.first_event_at)} / last {formatRelative(row.finding.last_event_at)}</small>
-          </span>
-          <StatusPill value={row.finding.status} />
-        </div>
-      ))}
-      {rows.length > 12 && <p className="muted-line">{rows.length - 12} more issue(s) omitted from preview.</p>}
-    </div>
+  return Array.from(byScope.values()).sort((left, right) =>
+    left.companyName.localeCompare(right.companyName) ||
+    left.projectName.localeCompare(right.projectName) ||
+    left.environmentName.localeCompare(right.environmentName) ||
+    left.appName.localeCompare(right.appName)
   );
 }
 
-function issueOverlaps(row: IssueRow, startMs: number, endMs: number) {
-  const first = new Date(row.finding.first_event_at).getTime();
-  const last = new Date(row.finding.last_event_at).getTime();
-  if (Number.isNaN(first) || Number.isNaN(last)) {
-    return false;
-  }
-  return first <= endMs && last >= startMs;
+function scopeKey(instance: InstanceModel) {
+  const scope = instance.scope;
+  return [scope.baseUrl, scope.org, scope.project, scope.environment, scope.app].join("\u0000");
 }
 
-function localDateTimeInput(date: Date) {
-  const offsetMs = date.getTimezoneOffset() * 60 * 1000;
-  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
-}
-
-function parseLocalDateTime(value: string) {
-  if (!value) {
-    return undefined;
-  }
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? undefined : date;
+function deploymentContextState(row: DeploymentRow) {
+  const started = new Date(row.deployment.started_at).getTime();
+  const finished = row.deployment.finished_at
+    ? new Date(row.deployment.finished_at).getTime()
+    : started + 30 * 60 * 1000;
+  return Date.now() <= finished + 5 * 60 * 1000 ? "current" : "recorded";
 }

@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"iter"
+	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -14,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
 	"github.com/rcooler/aegrail/agent/internal/redaction"
@@ -56,13 +59,14 @@ type renderedNetworkScript struct {
 }
 
 type renderedNetworkState struct {
-	mu       sync.Mutex
-	active   map[network.RequestID]struct{}
-	requests map[network.RequestID]renderedNetworkScript
-	scripts  map[string]renderedNetworkScript
-	status   int
-	finalURL string
-	lastSeen time.Time
+	mu        sync.Mutex
+	active    map[network.RequestID]struct{}
+	completed map[network.RequestID]struct{}
+	requests  map[network.RequestID]renderedNetworkScript
+	scripts   map[string]renderedNetworkScript
+	status    int
+	finalURL  string
+	lastSeen  time.Time
 }
 
 type renderedChromeRuntime struct {
@@ -79,10 +83,11 @@ const renderedChromeShutdownTimeout = 5 * time.Second
 
 func newRenderedNetworkState() *renderedNetworkState {
 	return &renderedNetworkState{
-		active:   map[network.RequestID]struct{}{},
-		requests: map[network.RequestID]renderedNetworkScript{},
-		scripts:  map[string]renderedNetworkScript{},
-		lastSeen: time.Now(),
+		active:    map[network.RequestID]struct{}{},
+		completed: map[network.RequestID]struct{}{},
+		requests:  map[network.RequestID]renderedNetworkScript{},
+		scripts:   map[string]renderedNetworkScript{},
+		lastSeen:  time.Now(),
 	}
 }
 
@@ -123,22 +128,28 @@ func crawlRenderedPage(ctx context.Context, pageURL *url.URL, input BrowserCrawl
 	browserCtx, cancelBrowser := chromedp.NewContext(allocatorCtx, chromedp.WithErrorf(func(string, ...any) {}))
 
 	pageCtx, cancelPage := context.WithTimeout(browserCtx, timeout)
+	networkState := newRenderedNetworkState()
+	waitForNetworkEvents := observeRenderedNetworkEvents(pageCtx, networkState)
 	defer func() {
 		cancelPage()
+		waitForNetworkEvents()
 		shutdownRenderedChrome(browserCtx, cancelBrowser, cancelAllocator)
 		chromeRuntime.Cleanup()
 	}()
 
-	networkState := newRenderedNetworkState()
-	chromedp.ListenTarget(pageCtx, networkState.handleEvent)
-
-	if err := chromedp.Run(pageCtx, network.Enable(), chromedp.Navigate(pageURL.String())); err != nil {
+	if err := chromedp.Do(
+		pageCtx,
+		chromedp.Func(func(ctx context.Context, target *chromedp.Target) error {
+			_, err := cdp.Call(ctx, target, network.Enable, network.EnableParams{})
+			return err
+		}),
+		chromedp.Navigate(pageURL.String()),
+	); err != nil {
 		return page, fmt.Errorf("rendered crawl failed: %w", err)
 	}
 
-	if err := chromedp.Run(pageCtx, chromedp.Poll(
+	if err := chromedp.Do(pageCtx, chromedp.Poll[chromedp.Void](
 		`document.readyState === "complete" || document.readyState === "interactive"`,
-		nil,
 		chromedp.WithPollingInterval(100*time.Millisecond),
 		chromedp.WithPollingTimeout(minDuration(5*time.Second, timeout/3)),
 	)); err != nil && !errors.Is(err, chromedp.ErrPollingTimeout) {
@@ -146,9 +157,8 @@ func crawlRenderedPage(ctx context.Context, pageURL *url.URL, input BrowserCrawl
 	}
 
 	if input.WaitTagManager {
-		if err := chromedp.Run(pageCtx, chromedp.Poll(
+		if err := chromedp.Do(pageCtx, chromedp.Poll[chromedp.Void](
 			renderedTagManagerReadyExpression,
-			nil,
 			chromedp.WithPollingInterval(250*time.Millisecond),
 			chromedp.WithPollingTimeout(minDuration(10*time.Second, timeout/2)),
 		)); err != nil {
@@ -161,13 +171,13 @@ func crawlRenderedPage(ctx context.Context, pageURL *url.URL, input BrowserCrawl
 		page.Warnings = append(page.Warnings, err.Error())
 	}
 	if settle > 0 {
-		if err := chromedp.Run(pageCtx, chromedp.Sleep(settle)); err != nil {
+		if err := chromedp.Do(pageCtx, chromedp.Sleep(settle)); err != nil {
 			page.Warnings = append(page.Warnings, fmt.Sprintf("settle wait failed: %v", err))
 		}
 	}
 
-	var snapshot renderedPageSnapshot
-	if err := chromedp.Run(pageCtx, chromedp.Evaluate(renderedPageSnapshotExpression, &snapshot)); err != nil {
+	snapshot, err := chromedp.Run(pageCtx, chromedp.Evaluate[renderedPageSnapshot](renderedPageSnapshotExpression))
+	if err != nil {
 		return page, fmt.Errorf("rendered page extraction failed: %w", err)
 	}
 
@@ -190,9 +200,40 @@ func crawlRenderedPage(ctx context.Context, pageURL *url.URL, input BrowserCrawl
 	return page, nil
 }
 
+func observeRenderedNetworkEvents(ctx context.Context, state *renderedNetworkState) func() {
+	requests := chromedp.Events(ctx, network.RequestWillBeSent)
+	responses := chromedp.Events(ctx, network.ResponseReceived)
+	finished := chromedp.Events(ctx, network.LoadingFinished)
+	failed := chromedp.Events(ctx, network.LoadingFailed)
+
+	var wait sync.WaitGroup
+	wait.Go(func() {
+		consumeRenderedNetworkEvents(requests, state)
+	})
+	wait.Go(func() {
+		consumeRenderedNetworkEvents(responses, state)
+	})
+	wait.Go(func() {
+		consumeRenderedNetworkEvents(finished, state)
+	})
+	wait.Go(func() {
+		consumeRenderedNetworkEvents(failed, state)
+	})
+	return wait.Wait
+}
+
+func consumeRenderedNetworkEvents[E any](events iter.Seq2[E, error], state *renderedNetworkState) {
+	for event, err := range events {
+		if err != nil {
+			return
+		}
+		state.handleEvent(&event)
+	}
+}
+
 func shutdownRenderedChrome(browserCtx context.Context, cancelBrowser context.CancelFunc, cancelAllocator context.CancelFunc) {
 	if browserCtx != nil {
-		shutdownCtx, cancelShutdown := context.WithTimeout(browserCtx, renderedChromeShutdownTimeout)
+		shutdownCtx, cancelShutdown := newRenderedChromeShutdownContext(browserCtx)
 		_ = chromedp.Cancel(shutdownCtx)
 		cancelShutdown()
 	}
@@ -202,6 +243,10 @@ func shutdownRenderedChrome(browserCtx context.Context, cancelBrowser context.Ca
 	if cancelAllocator != nil {
 		cancelAllocator()
 	}
+}
+
+func newRenderedChromeShutdownContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(parent), renderedChromeShutdownTimeout)
 }
 
 func newRenderedChromeRuntime() (renderedChromeRuntime, error) {
@@ -310,21 +355,52 @@ func (s *renderedNetworkState) handleEvent(event any) {
 	switch event := event.(type) {
 	case *network.EventRequestWillBeSent:
 		s.lastSeen = now
-		s.active[event.RequestID] = struct{}{}
+		if _, completed := s.completed[event.RequestID]; !completed {
+			s.active[event.RequestID] = struct{}{}
+		}
+
+		previous := s.requests[event.RequestID]
+		if event.RedirectResponse != nil {
+			redirected := previous
+			if event.RedirectResponse.URL != "" {
+				redirected.URL = event.RedirectResponse.URL
+			}
+			redirected.ResponseStatus = int(event.RedirectResponse.Status)
+			redirected.ContentType = event.RedirectResponse.MimeType
+			if event.Type == network.ResourceTypeScript || isScriptLikeURL(redirected.URL) {
+				s.recordScript(redirected)
+			}
+		}
+
 		request := renderedNetworkScript{}
 		if event.Request != nil {
 			request.URL = event.Request.URL
 		}
+		if request.URL == "" {
+			request.URL = previous.URL
+		}
+		if previous.URL == request.URL {
+			request = mergeRenderedNetworkScript(previous, request)
+		}
 		if event.Initiator != nil {
 			request.Initiator = event.Initiator.Type.String()
 		}
+		if observed, ok := s.scripts[request.URL]; ok {
+			request = mergeRenderedNetworkScript(observed, request)
+		}
 		s.requests[event.RequestID] = request
+		if event.Type == network.ResourceTypeScript || isScriptLikeURL(request.URL) {
+			s.recordScript(request)
+		}
 	case *network.EventResponseReceived:
 		s.lastSeen = now
 		request := s.requests[event.RequestID]
 		if event.Response != nil {
-			if request.URL == "" {
-				request.URL = event.Response.URL
+			if event.Response.URL != "" && request.URL != event.Response.URL {
+				request = mergeRenderedNetworkScript(s.scripts[event.Response.URL], renderedNetworkScript{
+					URL:       event.Response.URL,
+					Initiator: request.Initiator,
+				})
 			}
 			request.ResponseStatus = int(event.Response.Status)
 			request.ContentType = event.Response.MimeType
@@ -336,15 +412,40 @@ func (s *renderedNetworkState) handleEvent(event any) {
 			s.finalURL = event.Response.URL
 		}
 		if (event.Type == network.ResourceTypeScript || isScriptLikeURL(request.URL)) && request.URL != "" {
-			s.scripts[request.URL] = request
+			s.recordScript(request)
 		}
 	case *network.EventLoadingFinished:
 		s.lastSeen = now
+		s.completed[event.RequestID] = struct{}{}
 		delete(s.active, event.RequestID)
 	case *network.EventLoadingFailed:
 		s.lastSeen = now
+		s.completed[event.RequestID] = struct{}{}
 		delete(s.active, event.RequestID)
 	}
+}
+
+func (s *renderedNetworkState) recordScript(script renderedNetworkScript) {
+	if script.URL == "" {
+		return
+	}
+	s.scripts[script.URL] = mergeRenderedNetworkScript(s.scripts[script.URL], script)
+}
+
+func mergeRenderedNetworkScript(existing renderedNetworkScript, update renderedNetworkScript) renderedNetworkScript {
+	if update.URL != "" {
+		existing.URL = update.URL
+	}
+	if update.Initiator != "" {
+		existing.Initiator = update.Initiator
+	}
+	if update.ResponseStatus != 0 {
+		existing.ResponseStatus = update.ResponseStatus
+	}
+	if update.ContentType != "" {
+		existing.ContentType = update.ContentType
+	}
+	return existing
 }
 
 func (s *renderedNetworkState) idleFor(quietPeriod time.Duration) bool {
@@ -373,9 +474,7 @@ func (s *renderedNetworkState) scriptResponses() map[string]renderedNetworkScrip
 	defer s.mu.Unlock()
 
 	scripts := map[string]renderedNetworkScript{}
-	for key, value := range s.scripts {
-		scripts[key] = value
-	}
+	maps.Copy(scripts, s.scripts)
 	return scripts
 }
 

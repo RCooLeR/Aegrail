@@ -1,18 +1,18 @@
 package httpadapter
 
 import (
-	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -28,6 +28,7 @@ import (
 
 const (
 	dashboardProtocol     = "aegrail.dashboard.v1"
+	agentQueueSchema      = "aegrail.agent.queue.v1"
 	headerDashboardProto  = "X-Aegrail-Dashboard-Protocol"
 	headerDashboardCSRF   = "X-Aegrail-CSRF"
 	hubSessionCookieName  = "aegrail_session"
@@ -67,6 +68,7 @@ func NewHubRouter(meta domain.AppMeta, hub *hubapp.Hub, options HubOptions) http
 
 	router := chi.NewRouter()
 	router.Use(securityHeadersMiddleware(options))
+	router.Use(apiCompressionMiddleware)
 	router.Get("/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.TrimSpace(options.DashboardDir) != "" {
 			http.Redirect(w, r, "/dashboard/", http.StatusFound)
@@ -131,6 +133,11 @@ func NewHubRouter(meta domain.AppMeta, hub *hubapp.Hub, options HubOptions) http
 	router.Get("/api/v1/reports/model-analysis", withHubAuth(hub, options, "viewer", listModelAnalysisReportsHandler(hub)))
 	router.Get("/api/v1/reports/model-analysis/{id}", withHubAuth(hub, options, "viewer", getModelAnalysisReportHandler(hub)))
 	router.Get("/api/v1/timeline", withHubAuth(hub, options, "viewer", listTimelineHandler(hub)))
+	router.Get("/api/v1/traffic", withHubAuth(hub, options, "viewer", getTrafficHandler(hub)))
+	router.Get("/api/v1/traffic/ips/{ip}", withHubAuth(hub, options, "viewer", getTrafficIPHandler(hub)))
+	router.Patch("/api/v1/traffic/ips/{ip}/policy", withHubAuth(hub, options, "operator", updateTrafficIPPolicyHandler(hub)))
+	router.Get("/api/v1/traffic/user-agents/{hash}", withHubAuth(hub, options, "viewer", getTrafficUserAgentHandler(hub)))
+	router.Get("/api/v1/traffic/bots", withHubAuth(hub, options, "viewer", listTrafficBotsHandler(hub)))
 	router.Get("/api/v1/coverage", withHubAuth(hub, options, "viewer", listCoverageHandler(hub)))
 	router.Get("/api/v1/deployments", withHubAuth(hub, options, "viewer", listDeploymentsHandler(hub)))
 	router.Post("/api/v1/deployments", withHubAuth(hub, options, "operator", createDeploymentHandler(hub)))
@@ -455,6 +462,8 @@ type ruleDefinitionResponse struct {
 }
 
 type ingestEventsRequest struct {
+	Schema       string               `json:"schema"`
+	QueuedAt     time.Time            `json:"queued_at"`
 	Organization string               `json:"org"`
 	Project      string               `json:"project"`
 	Environment  string               `json:"environment"`
@@ -565,8 +574,9 @@ type verifyHubUserTOTPRequest struct {
 }
 
 type pushSubscriptionRequest struct {
-	Endpoint string `json:"endpoint"`
-	Keys     struct {
+	Endpoint       string   `json:"endpoint"`
+	ExpirationTime *float64 `json:"expirationTime,omitempty"`
+	Keys           struct {
 		P256DH string `json:"p256dh"`
 		Auth   string `json:"auth"`
 	} `json:"keys"`
@@ -575,9 +585,11 @@ type pushSubscriptionRequest struct {
 type createDeploymentMarkerRequest struct {
 	Version    string     `json:"version"`
 	CommitSHA  string     `json:"commit_sha"`
-	Actor      string     `json:"actor"`
 	StartedAt  *time.Time `json:"started_at,omitempty"`
 	FinishedAt *time.Time `json:"finished_at,omitempty"`
+	// Actor remains accepted for wire compatibility but is deliberately ignored;
+	// the authenticated user is the only authoritative deployment actor.
+	Actor string `json:"actor,omitempty"`
 }
 
 type createInventoryCompanyRequest struct {
@@ -700,10 +712,8 @@ func ingestEventsHandler(hub *hubapp.Hub, options HubOptions) http.HandlerFunc {
 			"decrypted_bytes": len(body),
 			"signature":       compactWireSignature(signature),
 		})
-		r.Body = io.NopCloser(bytes.NewReader(body))
-
 		var request ingestEventsRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		if err := json.Unmarshal(body, &request, json.RejectUnknownMembers(true)); err != nil {
 			logIngestDebug(options, "json_failed", map[string]any{
 				"remote":          requestRemoteAddr(r),
 				"decrypted_bytes": len(body),
@@ -898,25 +908,38 @@ func listFindingsHandler(hub *hubapp.Hub) http.HandlerFunc {
 			writeHubError(w, err)
 			return
 		}
-		findings, err := hub.ListHubFindings(r.Context(), hubapp.ListHubFindingsInput{
+		page, err := hub.ListHubFindingsPage(r.Context(), hubapp.ListHubFindingsPageInput{
 			OrganizationSlug: r.URL.Query().Get("org"),
 			ProjectSlug:      r.URL.Query().Get("project"),
 			EnvironmentSlug:  r.URL.Query().Get("environment"),
 			AppSlug:          r.URL.Query().Get("app"),
 			Limit:            limit,
+			Cursor:           r.URL.Query().Get("cursor"),
+			Statuses:         r.URL.Query()["status"],
+			Severities:       r.URL.Query()["severity"],
+			Query:            r.URL.Query().Get("q"),
 		})
 		if err != nil {
 			writeHubError(w, err)
 			return
 		}
-		records := make([]hubFindingResponse, 0, len(findings))
-		for _, finding := range findings {
+		records := make([]hubFindingResponse, 0, len(page.Findings))
+		for _, finding := range page.Findings {
 			records = append(records, hubFindingRecord(finding))
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"count":    len(records),
-			"findings": records,
-		})
+		response := map[string]any{
+			"count":       len(records),
+			"next_cursor": page.NextCursor,
+			"findings":    records,
+		}
+		if page.SummaryIncluded {
+			response["total"] = page.Total
+			response["summary"] = page.Summary
+		}
+		if page.MatchedTotalIncluded {
+			response["matched_total"] = page.MatchedTotal
+		}
+		writeJSON(w, http.StatusOK, response)
 	}
 }
 
@@ -1001,7 +1024,7 @@ func updateFindingStatusHandler(hub *hubapp.Hub) http.HandlerFunc {
 			return
 		}
 		var request updateFindingStatusRequest
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+		if err := decodeJSONBody(w, r, &request); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
@@ -1032,7 +1055,7 @@ func acceptFindingsBaselineHandler(hub *hubapp.Hub) http.HandlerFunc {
 			return
 		}
 		var request acceptFindingsBaselineRequest
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil && !errors.Is(err, io.EOF) {
+		if err := decodeJSONBody(w, r, &request); err != nil && !errors.Is(err, io.EOF) {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
@@ -1066,7 +1089,7 @@ func ignoreFilePathFromFindingHandler(hub *hubapp.Hub) http.HandlerFunc {
 			return
 		}
 		var request ignoreFilePathFromFindingRequest
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+		if err := decodeJSONBody(w, r, &request); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
@@ -1101,7 +1124,7 @@ func allowBrowserScriptFromFindingHandler(hub *hubapp.Hub) http.HandlerFunc {
 			return
 		}
 		var request allowBrowserScriptFromFindingRequest
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+		if err := decodeJSONBody(w, r, &request); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
@@ -1179,7 +1202,7 @@ func generateModelAnalysisFromFindingHandler(hub *hubapp.Hub) http.HandlerFunc {
 			return
 		}
 		var request generateModelAnalysisRequest
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil && !errors.Is(err, io.EOF) {
+		if err := decodeJSONBody(w, r, &request); err != nil && !errors.Is(err, io.EOF) {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
@@ -1332,7 +1355,7 @@ func timelineEventIDsFromQuery(r *http.Request, limit int) []string {
 	ids := make([]string, 0, len(values))
 	seen := map[string]struct{}{}
 	for _, value := range values {
-		for _, part := range strings.Split(value, ",") {
+		for part := range strings.SplitSeq(value, ",") {
 			id := strings.TrimSpace(part)
 			if id == "" {
 				continue
@@ -1418,7 +1441,7 @@ func createDeploymentHandler(hub *hubapp.Hub) http.HandlerFunc {
 			return
 		}
 		var request createDeploymentMarkerRequest
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+		if err := decodeJSONBody(w, r, &request); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
@@ -1431,14 +1454,24 @@ func createDeploymentHandler(hub *hubapp.Hub) http.HandlerFunc {
 			finished := request.FinishedAt.UTC()
 			finishedAt = &finished
 		}
-		result, err := hub.SaveDeploymentMarkerWithStatusUpdate(r.Context(), hubapp.SaveDeploymentMarkerInput{
+		actor := ""
+		if user, ok := currentHubUser(r); ok {
+			actor = strings.TrimSpace(user.Email)
+			if actor == "" {
+				actor = strings.TrimSpace(user.DisplayName)
+			}
+		}
+		if actor == "" {
+			actor = "local-owner"
+		}
+		deployment, err := hub.SaveDeploymentMarker(r.Context(), hubapp.SaveDeploymentMarkerInput{
 			OrganizationSlug: r.URL.Query().Get("org"),
 			ProjectSlug:      r.URL.Query().Get("project"),
 			EnvironmentSlug:  r.URL.Query().Get("environment"),
 			AppSlug:          r.URL.Query().Get("app"),
 			Version:          request.Version,
 			CommitSHA:        request.CommitSHA,
-			Actor:            request.Actor,
+			Actor:            actor,
 			StartedAt:        startedAt,
 			FinishedAt:       finishedAt,
 		})
@@ -1447,8 +1480,8 @@ func createDeploymentHandler(hub *hubapp.Hub) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, http.StatusCreated, map[string]any{
-			"acknowledged_findings": result.AcknowledgedFindings,
-			"deployment":            deploymentRecord(result.Deployment),
+			"acknowledged_findings": 0,
+			"deployment":            deploymentRecord(deployment),
 		})
 	}
 }
@@ -1531,7 +1564,7 @@ func allowBrowserScriptHandler(hub *hubapp.Hub) http.HandlerFunc {
 			return
 		}
 		var request allowBrowserScriptRequest
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+		if err := decodeJSONBody(w, r, &request); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
@@ -1563,7 +1596,7 @@ func updateBrowserScriptAllowlistStatusHandler(hub *hubapp.Hub) http.HandlerFunc
 			return
 		}
 		var request updateBrowserScriptAllowlistStatusRequest
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+		if err := decodeJSONBody(w, r, &request); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
@@ -1650,7 +1683,7 @@ func loginHubUserHandler(hub *hubapp.Hub, options HubOptions) http.HandlerFunc {
 			return
 		}
 		var request loginHubUserRequest
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+		if err := decodeJSONBody(w, r, &request); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
@@ -1732,7 +1765,7 @@ func startCurrentHubUserTOTPHandler(hub *hubapp.Hub, options HubOptions) http.Ha
 		}
 		var request generateHubUserTOTPRequest
 		if r.Body != nil && r.ContentLength != 0 {
-			if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+			if err := decodeJSONBody(w, r, &request); err != nil {
 				writeError(w, http.StatusBadRequest, "invalid JSON body")
 				return
 			}
@@ -1767,7 +1800,7 @@ func verifyCurrentHubUserTOTPHandler(hub *hubapp.Hub, options HubOptions) http.H
 			return
 		}
 		var request verifyHubUserTOTPRequest
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+		if err := decodeJSONBody(w, r, &request); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
@@ -1842,7 +1875,7 @@ func savePushSubscriptionHandler(hub *hubapp.Hub) http.HandlerFunc {
 			return
 		}
 		var request pushSubscriptionRequest
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+		if err := decodeJSONBody(w, r, &request); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
@@ -1875,7 +1908,7 @@ func deletePushSubscriptionHandler(hub *hubapp.Hub) http.HandlerFunc {
 			return
 		}
 		var request pushSubscriptionRequest
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+		if err := decodeJSONBody(w, r, &request); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
@@ -1938,7 +1971,7 @@ func createHubUserHandler(hub *hubapp.Hub, options HubOptions) http.HandlerFunc 
 			}
 		}
 		var request createHubUserRequest
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+		if err := decodeJSONBody(w, r, &request); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
@@ -1985,7 +2018,7 @@ func updateHubUserHandler(hub *hubapp.Hub) http.HandlerFunc {
 			return
 		}
 		var request updateHubUserRequest
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+		if err := decodeJSONBody(w, r, &request); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
@@ -2037,7 +2070,7 @@ func startHubUserTOTPHandler(hub *hubapp.Hub) http.HandlerFunc {
 		}
 		var request generateHubUserTOTPRequest
 		if r.Body != nil && r.ContentLength != 0 {
-			if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+			if err := decodeJSONBody(w, r, &request); err != nil {
 				writeError(w, http.StatusBadRequest, "invalid JSON body")
 				return
 			}
@@ -2068,7 +2101,7 @@ func verifyHubUserTOTPHandler(hub *hubapp.Hub, options HubOptions) http.HandlerF
 			return
 		}
 		var request verifyHubUserTOTPRequest
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+		if err := decodeJSONBody(w, r, &request); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
@@ -2128,7 +2161,7 @@ func createInventoryCompanyHandler(hub *hubapp.Hub) http.HandlerFunc {
 			return
 		}
 		var request createInventoryCompanyRequest
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+		if err := decodeJSONBody(w, r, &request); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
@@ -2151,7 +2184,7 @@ func updateInventoryCompanyHandler(hub *hubapp.Hub) http.HandlerFunc {
 			return
 		}
 		var request updateInventoryCompanyRequest
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+		if err := decodeJSONBody(w, r, &request); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
@@ -2175,7 +2208,7 @@ func createInventorySiteHandler(hub *hubapp.Hub) http.HandlerFunc {
 			return
 		}
 		var request createInventorySiteRequest
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+		if err := decodeJSONBody(w, r, &request); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
@@ -2242,7 +2275,7 @@ func updateInventoryProjectHandler(hub *hubapp.Hub) http.HandlerFunc {
 			return
 		}
 		var request updateInventoryProjectRequest
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+		if err := decodeJSONBody(w, r, &request); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
@@ -2266,7 +2299,7 @@ func updateInventoryEnvironmentHandler(hub *hubapp.Hub) http.HandlerFunc {
 			return
 		}
 		var request updateInventoryEnvironmentRequest
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+		if err := decodeJSONBody(w, r, &request); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
@@ -2290,7 +2323,7 @@ func updateInventoryAppHandler(hub *hubapp.Hub) http.HandlerFunc {
 			return
 		}
 		var request updateInventoryAppRequest
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+		if err := decodeJSONBody(w, r, &request); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
@@ -2315,7 +2348,7 @@ func updateInventoryServiceHandler(hub *hubapp.Hub) http.HandlerFunc {
 			return
 		}
 		var request updateInventoryServiceRequest
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+		if err := decodeJSONBody(w, r, &request); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
@@ -2353,7 +2386,7 @@ func createInventoryNodeHandler(hub *hubapp.Hub, options HubOptions) http.Handle
 			return
 		}
 		var request createInventoryNodeRequest
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+		if err := decodeJSONBody(w, r, &request); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
@@ -2442,7 +2475,7 @@ func updateInventoryHostHandler(hub *hubapp.Hub) http.HandlerFunc {
 			return
 		}
 		var request updateInventoryHostRequest
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+		if err := decodeJSONBody(w, r, &request); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
@@ -2468,7 +2501,7 @@ func updateInventoryAgentHandler(hub *hubapp.Hub) http.HandlerFunc {
 			return
 		}
 		var request updateInventoryAgentRequest
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+		if err := decodeJSONBody(w, r, &request); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
@@ -2688,6 +2721,9 @@ func listInventoryTopologyHandler(hub *hubapp.Hub) http.HandlerFunc {
 }
 
 func (r ingestEventsRequest) toInput(signature string) (hubapp.IngestEventsInput, error) {
+	if r.Schema != agentQueueSchema {
+		return hubapp.IngestEventsInput{}, fmt.Errorf("unsupported agent queue schema %q", r.Schema)
+	}
 	events := make([]hubapp.IngestEventInput, 0, len(r.Events))
 	for _, event := range r.Events {
 		eventTime, err := parseEventTime(event.Time)
@@ -3191,12 +3227,7 @@ func ruleActionHintStrings(actions []hubapp.RuleActionHint) []string {
 }
 
 func containsString(values []string, expected string) bool {
-	for _, value := range values {
-		if value == expected {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(values, expected)
 }
 
 func stringDomainIDs(ids []domain.ID) []string {
@@ -3427,7 +3458,7 @@ func securityHeadersMiddleware(options HubOptions) func(http.Handler) http.Handl
 
 func decodeIngestBody(r *http.Request, body []byte, hub *hubapp.Hub, options HubOptions) ([]byte, string, error) {
 	var envelope wire.Envelope
-	if err := json.Unmarshal(body, &envelope); err != nil || envelope.Schema != wire.EnvelopeSchema {
+	if err := json.Unmarshal(body, &envelope, json.RejectUnknownMembers(true)); err != nil || envelope.Schema != wire.EnvelopeSchema {
 		return nil, "", errors.New("encrypted wire envelope is required")
 	}
 	if strings.TrimSpace(options.WirePrivateKey) == "" {
@@ -3485,6 +3516,7 @@ hub:
   protocol: aegrail-wire-v1
   hub_public_key: %q
   node_secret: %q
+  timeout: "60s"
   send_limit: 100
 
 identity:

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"text/tabwriter"
@@ -8,19 +9,20 @@ import (
 
 	"github.com/rcooler/aegrail/agent/internal/domain"
 	"github.com/rcooler/aegrail/agent/internal/modules/catalog"
-	urfavecli "github.com/urfave/cli/v2"
+	urfavecli "github.com/urfave/cli/v3"
 )
 
-func New(meta domain.AppMeta) *urfavecli.App {
-	return &urfavecli.App{
-		Name:     meta.Binary,
-		Usage:    "Aegrail Agent: scan a site instance and forward encrypted evidence to the Hub",
-		Version:  meta.Version,
-		Commands: agentCommandSet(meta),
+func New(meta domain.AppMeta) *urfavecli.Command {
+	return &urfavecli.Command{
+		Name:                  meta.Binary,
+		Usage:                 "Aegrail Agent: scan a site instance and forward encrypted evidence to the Hub",
+		Version:               meta.Version,
+		EnableShellCompletion: true,
+		Commands:              agentCommandSet(meta),
 	}
 }
 
-func NewAgent(meta domain.AppMeta) *urfavecli.App {
+func NewAgent(meta domain.AppMeta) *urfavecli.Command {
 	return New(meta)
 }
 
@@ -42,17 +44,17 @@ func moduleCommand() *urfavecli.Command {
 	return &urfavecli.Command{
 		Name:  "module",
 		Usage: "inspect target modules",
-		Subcommands: []*urfavecli.Command{
+		Commands: []*urfavecli.Command{
 			{
 				Name:  "list",
 				Usage: "list registered target modules",
-				Action: func(c *urfavecli.Context) error {
+				Action: func(ctx context.Context, c *urfavecli.Command) error {
 					registry, err := catalog.DefaultRegistry()
 					if err != nil {
 						return err
 					}
 
-					writer := tabwriter.NewWriter(c.App.Writer, 0, 0, 2, ' ', 0)
+					writer := tabwriter.NewWriter(c.Root().Writer, 0, 0, 2, ' ', 0)
 					fmt.Fprintln(writer, "ID\tNAME\tPRIORITY\tCAPABILITIES")
 					for _, spec := range registry.All() {
 						fmt.Fprintf(writer, "%s\t%s\t%d\t%d\n", spec.ID, spec.Name, spec.Priority, len(spec.Capabilities))
@@ -68,10 +70,10 @@ func versionCommand(meta domain.AppMeta) *urfavecli.Command {
 	return &urfavecli.Command{
 		Name:  "version",
 		Usage: "print build information",
-		Action: func(c *urfavecli.Context) error {
-			fmt.Fprintf(c.App.Writer, "%s %s\n", meta.Binary, meta.Version)
-			fmt.Fprintf(c.App.Writer, "commit: %s\n", meta.Commit)
-			fmt.Fprintf(c.App.Writer, "built:  %s\n", meta.BuildDate)
+		Action: func(ctx context.Context, c *urfavecli.Command) error {
+			fmt.Fprintf(c.Root().Writer, "%s %s\n", meta.Binary, meta.Version)
+			fmt.Fprintf(c.Root().Writer, "commit: %s\n", meta.Commit)
+			fmt.Fprintf(c.Root().Writer, "built:  %s\n", meta.BuildDate)
 			return nil
 		},
 	}

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -43,6 +44,23 @@ func TestLoadServerConfigExample(t *testing.T) {
 	}
 	if config.Sites[8].Kind != "nodejs" || config.Sites[8].Files.Profiles[0] != "nodejs" {
 		t.Fatalf("node site = %+v, want nodejs profile", config.Sites[8])
+	}
+}
+
+func TestLoadServerConfigRejectsUnknownFields(t *testing.T) {
+	content, err := os.ReadFile(filepath.Join("..", "..", "configs", "agent.multi-site.example.yaml"))
+	if err != nil {
+		t.Fatalf("read example config: %v", err)
+	}
+	content = bytes.Replace(content, []byte("hub:\n"), []byte("hub:\n  adress: typo\n"), 1)
+	path := filepath.Join(t.TempDir(), "agent.yaml")
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	_, err = LoadServerConfig(path)
+	if err == nil || !strings.Contains(err.Error(), "field adress not found") {
+		t.Fatalf("LoadServerConfig error = %v, want unknown-field error", err)
 	}
 }
 
@@ -98,6 +116,65 @@ func TestValidateServerConfigRejectsLiteralDSN(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "dsn must not contain literal credentials") {
 		t.Fatalf("error = %v, want literal DSN issue", err)
+	}
+}
+
+func TestServerConfigHubTimeoutDefaultAndOverride(t *testing.T) {
+	defaultConfig := NormalizeServerConfig(ServerConfig{
+		Hub: testWireHubConfig(t, "http://127.0.0.1:8787"),
+	})
+	defaultTimeout, err := defaultConfig.HubTimeout()
+	if err != nil {
+		t.Fatalf("HubTimeout default returned error: %v", err)
+	}
+	if defaultTimeout != 60*time.Second {
+		t.Fatalf("default timeout = %s, want 60s", defaultTimeout)
+	}
+
+	overrideConfig := NormalizeServerConfig(ServerConfig{
+		Hub: ServerHubConfig{
+			URL:          "http://127.0.0.1:8787",
+			Protocol:     "aegrail-wire-v1",
+			HubPublicKey: defaultConfig.Hub.HubPublicKey,
+			NodeSecret:   defaultConfig.Hub.NodeSecret,
+			Timeout:      "90s",
+		},
+	})
+	overrideTimeout, err := overrideConfig.HubTimeout()
+	if err != nil {
+		t.Fatalf("HubTimeout override returned error: %v", err)
+	}
+	if overrideTimeout != 90*time.Second {
+		t.Fatalf("override timeout = %s, want 90s", overrideTimeout)
+	}
+}
+
+func TestValidateServerConfigRejectsNonPositiveHubTimeout(t *testing.T) {
+	root := t.TempDir()
+	config := NormalizeServerConfig(ServerConfig{
+		Schema: ServerConfigSchema,
+		Hub: func() ServerHubConfig {
+			hub := testWireHubConfig(t, "http://127.0.0.1:8787")
+			hub.Timeout = "0s"
+			return hub
+		}(),
+		Identity: ServerIdentityConfig{
+			Org:         "acme",
+			Project:     "customer-site",
+			Environment: "production",
+			Host:        "web-01",
+			AgentID:     "agt_web_01",
+		},
+		Runtime: ServerRuntimeConfig{
+			QueueDir: filepath.Join(root, "queue"),
+			StateDir: filepath.Join(root, "state"),
+			Interval: "30s",
+		},
+		Sites: []ServerSiteConfig{{Slug: "example-com", Kind: "wordpress", Root: filepath.Join(root, "site")}},
+	})
+	err := ValidateServerConfig(config)
+	if err == nil || !strings.Contains(err.Error(), "hub.timeout") {
+		t.Fatalf("ValidateServerConfig error = %v, want hub.timeout validation error", err)
 	}
 }
 

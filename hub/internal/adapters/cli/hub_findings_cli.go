@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"text/tabwriter"
@@ -8,14 +9,14 @@ import (
 
 	"github.com/rcooler/aegrail/hub/internal/domain"
 	hubapp "github.com/rcooler/aegrail/hub/internal/hub"
-	urfavecli "github.com/urfave/cli/v2"
+	urfavecli "github.com/urfave/cli/v3"
 )
 
 func hubFindingsCommand(meta domain.AppMeta) *urfavecli.Command {
 	return &urfavecli.Command{
 		Name:  "findings",
 		Usage: "inspect persisted Hub findings",
-		Subcommands: []*urfavecli.Command{
+		Commands: []*urfavecli.Command{
 			{
 				Name:  "list",
 				Usage: "list recent Hub findings for an environment",
@@ -23,14 +24,14 @@ func hubFindingsCommand(meta domain.AppMeta) *urfavecli.Command {
 					&urfavecli.StringFlag{Name: "app", Usage: "optional monitored app slug"},
 					&urfavecli.IntFlag{Name: "limit", Value: 20},
 				),
-				Action: func(c *urfavecli.Context) error {
-					container, cleanup, err := newDatabaseContainer(c.Context, meta)
+				Action: func(ctx context.Context, c *urfavecli.Command) error {
+					container, cleanup, err := newDatabaseContainer(ctx, meta)
 					if err != nil {
 						return err
 					}
 					defer cleanup()
 
-					findings, err := container.Hub.ListHubFindings(c.Context, hubapp.ListHubFindingsInput{
+					findings, err := container.Hub.ListHubFindings(ctx, hubapp.ListHubFindingsInput{
 						OrganizationSlug: c.String("org"),
 						ProjectSlug:      c.String("project"),
 						EnvironmentSlug:  c.String("env"),
@@ -41,11 +42,11 @@ func hubFindingsCommand(meta domain.AppMeta) *urfavecli.Command {
 						return err
 					}
 					if len(findings) == 0 {
-						fmt.Fprintln(c.App.Writer, "No Hub findings found.")
+						fmt.Fprintln(c.Root().Writer, "No Hub findings found.")
 						return nil
 					}
 
-					writer := tabwriter.NewWriter(c.App.Writer, 0, 0, 2, ' ', 0)
+					writer := tabwriter.NewWriter(c.Root().Writer, 0, 0, 2, ' ', 0)
 					fmt.Fprintln(writer, "TIME\tSEVERITY\tCONFIDENCE\tSTATUS\tRULE\tEVENTS\tTITLE\tSUMMARY\tID")
 					for _, finding := range findings {
 						fmt.Fprintf(
@@ -75,14 +76,14 @@ func hubFindingsCommand(meta domain.AppMeta) *urfavecli.Command {
 					&urfavecli.StringFlag{Name: "note", Usage: "operator note"},
 					&urfavecli.StringFlag{Name: "actor", Usage: "operator identity"},
 				),
-				Action: func(c *urfavecli.Context) error {
-					container, cleanup, err := newDatabaseContainer(c.Context, meta)
+				Action: func(ctx context.Context, c *urfavecli.Command) error {
+					container, cleanup, err := newDatabaseContainer(ctx, meta)
 					if err != nil {
 						return err
 					}
 					defer cleanup()
 
-					finding, err := container.Hub.UpdateHubFindingStatus(c.Context, hubapp.UpdateHubFindingStatusInput{
+					finding, err := container.Hub.UpdateHubFindingStatus(ctx, hubapp.UpdateHubFindingStatusInput{
 						OrganizationSlug: c.String("org"),
 						ProjectSlug:      c.String("project"),
 						EnvironmentSlug:  c.String("env"),
@@ -95,7 +96,7 @@ func hubFindingsCommand(meta domain.AppMeta) *urfavecli.Command {
 					if err != nil {
 						return err
 					}
-					fmt.Fprintf(c.App.Writer, "Finding %s status is now %s.\n", finding.ID, hubFindingStatusText(finding))
+					fmt.Fprintf(c.Root().Writer, "Finding %s status is now %s.\n", finding.ID, hubFindingStatusText(finding))
 					return nil
 				},
 			},
@@ -108,14 +109,14 @@ func hubFindingsCommand(meta domain.AppMeta) *urfavecli.Command {
 					&urfavecli.StringFlag{Name: "note", Usage: "operator note"},
 					&urfavecli.StringFlag{Name: "actor", Usage: "operator identity"},
 				),
-				Action: func(c *urfavecli.Context) error {
-					container, cleanup, err := newDatabaseContainer(c.Context, meta)
+				Action: func(ctx context.Context, c *urfavecli.Command) error {
+					container, cleanup, err := newDatabaseContainer(ctx, meta)
 					if err != nil {
 						return err
 					}
 					defer cleanup()
 
-					result, err := container.Hub.AcceptHubFindingsBaseline(c.Context, hubapp.AcceptHubFindingsBaselineInput{
+					result, err := container.Hub.AcceptHubFindingsBaseline(ctx, hubapp.AcceptHubFindingsBaselineInput{
 						OrganizationSlug: c.String("org"),
 						ProjectSlug:      c.String("project"),
 						EnvironmentSlug:  c.String("env"),
@@ -127,7 +128,7 @@ func hubFindingsCommand(meta domain.AppMeta) *urfavecli.Command {
 					if err != nil {
 						return err
 					}
-					fmt.Fprintf(c.App.Writer, "Accepted %d open finding(s) as baseline (%s).\n", result.Updated, result.Reason)
+					fmt.Fprintf(c.Root().Writer, "Accepted %d open finding(s) as baseline (%s).\n", result.Updated, result.Reason)
 					return nil
 				},
 			},

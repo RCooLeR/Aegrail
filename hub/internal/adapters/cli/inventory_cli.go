@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"text/tabwriter"
@@ -8,14 +9,14 @@ import (
 
 	"github.com/rcooler/aegrail/hub/internal/domain"
 	hubapp "github.com/rcooler/aegrail/hub/internal/hub"
-	urfavecli "github.com/urfave/cli/v2"
+	urfavecli "github.com/urfave/cli/v3"
 )
 
 func inventoryCommand(meta domain.AppMeta) *urfavecli.Command {
 	return &urfavecli.Command{
 		Name:  "inventory",
 		Usage: "manage distributed monitoring inventory",
-		Subcommands: []*urfavecli.Command{
+		Commands: []*urfavecli.Command{
 			inventoryBootstrapCommand(meta),
 			inventoryOrgCommand(meta),
 			inventoryProjectCommand(meta),
@@ -33,7 +34,7 @@ func inventoryBootstrapCommand(meta domain.AppMeta) *urfavecli.Command {
 	return &urfavecli.Command{
 		Name:  "bootstrap",
 		Usage: "create common inventory topologies",
-		Subcommands: []*urfavecli.Command{
+		Commands: []*urfavecli.Command{
 			{
 				Name:  "single-site",
 				Usage: "create a WordPress or PrestaShop single-site inventory path",
@@ -58,14 +59,14 @@ func inventoryBootstrapCommand(meta domain.AppMeta) *urfavecli.Command {
 					&urfavecli.StringFlag{Name: "fingerprint", Usage: "agent fingerprint", Required: true},
 					&urfavecli.StringFlag{Name: "agent-version", Usage: "agent version label"},
 				},
-				Action: func(c *urfavecli.Context) error {
-					container, cleanup, err := newDatabaseContainer(c.Context, meta)
+				Action: func(ctx context.Context, c *urfavecli.Command) error {
+					container, cleanup, err := newDatabaseContainer(ctx, meta)
 					if err != nil {
 						return err
 					}
 					defer cleanup()
 
-					result, err := container.Hub.BootstrapSingleSite(c.Context, hubapp.BootstrapSingleSiteInput{
+					result, err := container.Hub.BootstrapSingleSite(ctx, hubapp.BootstrapSingleSiteInput{
 						OrganizationSlug: c.String("org"),
 						OrganizationName: c.String("org-name"),
 						ProjectSlug:      c.String("project"),
@@ -90,8 +91,8 @@ func inventoryBootstrapCommand(meta domain.AppMeta) *urfavecli.Command {
 						return err
 					}
 
-					fmt.Fprintf(c.App.Writer, "Bootstrapped %s inventory path\n", result.App.Kind)
-					writer := tabwriter.NewWriter(c.App.Writer, 0, 0, 2, ' ', 0)
+					fmt.Fprintf(c.Root().Writer, "Bootstrapped %s inventory path\n", result.App.Kind)
+					writer := tabwriter.NewWriter(c.Root().Writer, 0, 0, 2, ' ', 0)
 					fmt.Fprintln(writer, "TYPE\tSLUG\tDETAIL\tID")
 					fmt.Fprintf(writer, "org\t%s\t%s\t%s\n", result.Organization.Slug, result.Organization.Name, result.Organization.ID)
 					fmt.Fprintf(writer, "project\t%s\t%s\t%s\n", result.Project.Slug, result.Project.Name, result.Project.ID)
@@ -111,7 +112,7 @@ func inventoryOrgCommand(meta domain.AppMeta) *urfavecli.Command {
 	return &urfavecli.Command{
 		Name:  "org",
 		Usage: "manage organizations",
-		Subcommands: []*urfavecli.Command{
+		Commands: []*urfavecli.Command{
 			{
 				Name:      "add",
 				Usage:     "create or update an organization",
@@ -120,37 +121,37 @@ func inventoryOrgCommand(meta domain.AppMeta) *urfavecli.Command {
 					&urfavecli.StringFlag{Name: "slug", Usage: "organization slug"},
 					&urfavecli.StringFlag{Name: "name", Usage: "display name"},
 				},
-				Action: func(c *urfavecli.Context) error {
-					container, cleanup, err := newDatabaseContainer(c.Context, meta)
+				Action: func(ctx context.Context, c *urfavecli.Command) error {
+					container, cleanup, err := newDatabaseContainer(ctx, meta)
 					if err != nil {
 						return err
 					}
 					defer cleanup()
-					item, err := container.Hub.SaveOrganization(c.Context, hubapp.SaveOrganizationInput{
+					item, err := container.Hub.SaveOrganization(ctx, hubapp.SaveOrganizationInput{
 						Slug: argOrFlag(c, "slug"),
 						Name: c.String("name"),
 					})
 					if err != nil {
 						return err
 					}
-					fmt.Fprintf(c.App.Writer, "Saved organization %s (%s)\n", item.Slug, item.ID)
+					fmt.Fprintf(c.Root().Writer, "Saved organization %s (%s)\n", item.Slug, item.ID)
 					return nil
 				},
 			},
 			{
 				Name:  "list",
 				Usage: "list organizations",
-				Action: func(c *urfavecli.Context) error {
-					container, cleanup, err := newDatabaseContainer(c.Context, meta)
+				Action: func(ctx context.Context, c *urfavecli.Command) error {
+					container, cleanup, err := newDatabaseContainer(ctx, meta)
 					if err != nil {
 						return err
 					}
 					defer cleanup()
-					items, err := container.Hub.ListOrganizations(c.Context)
+					items, err := container.Hub.ListOrganizations(ctx)
 					if err != nil {
 						return err
 					}
-					writer := tabwriter.NewWriter(c.App.Writer, 0, 0, 2, ' ', 0)
+					writer := tabwriter.NewWriter(c.Root().Writer, 0, 0, 2, ' ', 0)
 					fmt.Fprintln(writer, "SLUG\tNAME\tID")
 					for _, item := range items {
 						fmt.Fprintf(writer, "%s\t%s\t%s\n", item.Slug, item.Name, item.ID)
@@ -166,19 +167,19 @@ func inventoryProjectCommand(meta domain.AppMeta) *urfavecli.Command {
 	return &urfavecli.Command{
 		Name:  "project",
 		Usage: "manage projects",
-		Subcommands: []*urfavecli.Command{
+		Commands: []*urfavecli.Command{
 			{
 				Name:      "add",
 				Usage:     "create or update a project",
 				ArgsUsage: "[slug]",
 				Flags:     append(orgFlag(), &urfavecli.StringFlag{Name: "slug"}, &urfavecli.StringFlag{Name: "name"}),
-				Action: func(c *urfavecli.Context) error {
-					container, cleanup, err := newDatabaseContainer(c.Context, meta)
+				Action: func(ctx context.Context, c *urfavecli.Command) error {
+					container, cleanup, err := newDatabaseContainer(ctx, meta)
 					if err != nil {
 						return err
 					}
 					defer cleanup()
-					item, err := container.Hub.SaveProject(c.Context, hubapp.SaveProjectInput{
+					item, err := container.Hub.SaveProject(ctx, hubapp.SaveProjectInput{
 						OrganizationSlug: c.String("org"),
 						Slug:             argOrFlag(c, "slug"),
 						Name:             c.String("name"),
@@ -186,7 +187,7 @@ func inventoryProjectCommand(meta domain.AppMeta) *urfavecli.Command {
 					if err != nil {
 						return err
 					}
-					fmt.Fprintf(c.App.Writer, "Saved project %s (%s)\n", item.Slug, item.ID)
+					fmt.Fprintf(c.Root().Writer, "Saved project %s (%s)\n", item.Slug, item.ID)
 					return nil
 				},
 			},
@@ -194,17 +195,17 @@ func inventoryProjectCommand(meta domain.AppMeta) *urfavecli.Command {
 				Name:  "list",
 				Usage: "list projects",
 				Flags: orgFlag(),
-				Action: func(c *urfavecli.Context) error {
-					container, cleanup, err := newDatabaseContainer(c.Context, meta)
+				Action: func(ctx context.Context, c *urfavecli.Command) error {
+					container, cleanup, err := newDatabaseContainer(ctx, meta)
 					if err != nil {
 						return err
 					}
 					defer cleanup()
-					items, err := container.Hub.ListProjects(c.Context, c.String("org"))
+					items, err := container.Hub.ListProjects(ctx, c.String("org"))
 					if err != nil {
 						return err
 					}
-					writer := tabwriter.NewWriter(c.App.Writer, 0, 0, 2, ' ', 0)
+					writer := tabwriter.NewWriter(c.Root().Writer, 0, 0, 2, ' ', 0)
 					fmt.Fprintln(writer, "SLUG\tNAME\tID")
 					for _, item := range items {
 						fmt.Fprintf(writer, "%s\t%s\t%s\n", item.Slug, item.Name, item.ID)
@@ -221,19 +222,19 @@ func inventoryEnvironmentCommand(meta domain.AppMeta) *urfavecli.Command {
 		Name:    "environment",
 		Aliases: []string{"env"},
 		Usage:   "manage environments",
-		Subcommands: []*urfavecli.Command{
+		Commands: []*urfavecli.Command{
 			{
 				Name:      "add",
 				Usage:     "create or update an environment",
 				ArgsUsage: "[slug]",
 				Flags:     append(projectPathFlags(), &urfavecli.StringFlag{Name: "slug"}, &urfavecli.StringFlag{Name: "name"}),
-				Action: func(c *urfavecli.Context) error {
-					container, cleanup, err := newDatabaseContainer(c.Context, meta)
+				Action: func(ctx context.Context, c *urfavecli.Command) error {
+					container, cleanup, err := newDatabaseContainer(ctx, meta)
 					if err != nil {
 						return err
 					}
 					defer cleanup()
-					item, err := container.Hub.SaveEnvironment(c.Context, hubapp.SaveEnvironmentInput{
+					item, err := container.Hub.SaveEnvironment(ctx, hubapp.SaveEnvironmentInput{
 						OrganizationSlug: c.String("org"),
 						ProjectSlug:      c.String("project"),
 						Slug:             argOrFlag(c, "slug"),
@@ -242,7 +243,7 @@ func inventoryEnvironmentCommand(meta domain.AppMeta) *urfavecli.Command {
 					if err != nil {
 						return err
 					}
-					fmt.Fprintf(c.App.Writer, "Saved environment %s (%s)\n", item.Slug, item.ID)
+					fmt.Fprintf(c.Root().Writer, "Saved environment %s (%s)\n", item.Slug, item.ID)
 					return nil
 				},
 			},
@@ -250,17 +251,17 @@ func inventoryEnvironmentCommand(meta domain.AppMeta) *urfavecli.Command {
 				Name:  "list",
 				Usage: "list environments",
 				Flags: projectPathFlags(),
-				Action: func(c *urfavecli.Context) error {
-					container, cleanup, err := newDatabaseContainer(c.Context, meta)
+				Action: func(ctx context.Context, c *urfavecli.Command) error {
+					container, cleanup, err := newDatabaseContainer(ctx, meta)
 					if err != nil {
 						return err
 					}
 					defer cleanup()
-					items, err := container.Hub.ListEnvironments(c.Context, c.String("org"), c.String("project"))
+					items, err := container.Hub.ListEnvironments(ctx, c.String("org"), c.String("project"))
 					if err != nil {
 						return err
 					}
-					writer := tabwriter.NewWriter(c.App.Writer, 0, 0, 2, ' ', 0)
+					writer := tabwriter.NewWriter(c.Root().Writer, 0, 0, 2, ' ', 0)
 					fmt.Fprintln(writer, "SLUG\tNAME\tID")
 					for _, item := range items {
 						fmt.Fprintf(writer, "%s\t%s\t%s\n", item.Slug, item.Name, item.ID)
@@ -276,19 +277,19 @@ func inventoryAppCommand(meta domain.AppMeta) *urfavecli.Command {
 	return &urfavecli.Command{
 		Name:  "app",
 		Usage: "manage monitored apps",
-		Subcommands: []*urfavecli.Command{
+		Commands: []*urfavecli.Command{
 			{
 				Name:      "add",
 				Usage:     "create or update a monitored app",
 				ArgsUsage: "[slug]",
 				Flags:     append(environmentPathFlags(), &urfavecli.StringFlag{Name: "slug"}, &urfavecli.StringFlag{Name: "name"}, &urfavecli.StringFlag{Name: "kind"}),
-				Action: func(c *urfavecli.Context) error {
-					container, cleanup, err := newDatabaseContainer(c.Context, meta)
+				Action: func(ctx context.Context, c *urfavecli.Command) error {
+					container, cleanup, err := newDatabaseContainer(ctx, meta)
 					if err != nil {
 						return err
 					}
 					defer cleanup()
-					item, err := container.Hub.SaveMonitoredApp(c.Context, hubapp.SaveMonitoredAppInput{
+					item, err := container.Hub.SaveMonitoredApp(ctx, hubapp.SaveMonitoredAppInput{
 						OrganizationSlug: c.String("org"),
 						ProjectSlug:      c.String("project"),
 						EnvironmentSlug:  c.String("env"),
@@ -299,7 +300,7 @@ func inventoryAppCommand(meta domain.AppMeta) *urfavecli.Command {
 					if err != nil {
 						return err
 					}
-					fmt.Fprintf(c.App.Writer, "Saved app %s (%s)\n", item.Slug, item.ID)
+					fmt.Fprintf(c.Root().Writer, "Saved app %s (%s)\n", item.Slug, item.ID)
 					return nil
 				},
 			},
@@ -307,17 +308,17 @@ func inventoryAppCommand(meta domain.AppMeta) *urfavecli.Command {
 				Name:  "list",
 				Usage: "list monitored apps",
 				Flags: environmentPathFlags(),
-				Action: func(c *urfavecli.Context) error {
-					container, cleanup, err := newDatabaseContainer(c.Context, meta)
+				Action: func(ctx context.Context, c *urfavecli.Command) error {
+					container, cleanup, err := newDatabaseContainer(ctx, meta)
 					if err != nil {
 						return err
 					}
 					defer cleanup()
-					items, err := container.Hub.ListMonitoredApps(c.Context, c.String("org"), c.String("project"), c.String("env"))
+					items, err := container.Hub.ListMonitoredApps(ctx, c.String("org"), c.String("project"), c.String("env"))
 					if err != nil {
 						return err
 					}
-					writer := tabwriter.NewWriter(c.App.Writer, 0, 0, 2, ' ', 0)
+					writer := tabwriter.NewWriter(c.Root().Writer, 0, 0, 2, ' ', 0)
 					fmt.Fprintln(writer, "SLUG\tNAME\tKIND\tID")
 					for _, item := range items {
 						fmt.Fprintf(writer, "%s\t%s\t%s\t%s\n", item.Slug, item.Name, item.Kind, item.ID)
@@ -333,19 +334,19 @@ func inventoryServiceCommand(meta domain.AppMeta) *urfavecli.Command {
 	return &urfavecli.Command{
 		Name:  "service",
 		Usage: "manage app services",
-		Subcommands: []*urfavecli.Command{
+		Commands: []*urfavecli.Command{
 			{
 				Name:      "add",
 				Usage:     "create or update a service",
 				ArgsUsage: "[slug]",
 				Flags:     append(appPathFlags(), &urfavecli.StringFlag{Name: "slug"}, &urfavecli.StringFlag{Name: "name"}, &urfavecli.StringFlag{Name: "role"}),
-				Action: func(c *urfavecli.Context) error {
-					container, cleanup, err := newDatabaseContainer(c.Context, meta)
+				Action: func(ctx context.Context, c *urfavecli.Command) error {
+					container, cleanup, err := newDatabaseContainer(ctx, meta)
 					if err != nil {
 						return err
 					}
 					defer cleanup()
-					item, err := container.Hub.SaveService(c.Context, hubapp.SaveServiceInput{
+					item, err := container.Hub.SaveService(ctx, hubapp.SaveServiceInput{
 						OrganizationSlug: c.String("org"),
 						ProjectSlug:      c.String("project"),
 						EnvironmentSlug:  c.String("env"),
@@ -357,7 +358,7 @@ func inventoryServiceCommand(meta domain.AppMeta) *urfavecli.Command {
 					if err != nil {
 						return err
 					}
-					fmt.Fprintf(c.App.Writer, "Saved service %s (%s)\n", item.Slug, item.ID)
+					fmt.Fprintf(c.Root().Writer, "Saved service %s (%s)\n", item.Slug, item.ID)
 					return nil
 				},
 			},
@@ -365,17 +366,17 @@ func inventoryServiceCommand(meta domain.AppMeta) *urfavecli.Command {
 				Name:  "list",
 				Usage: "list services",
 				Flags: appPathFlags(),
-				Action: func(c *urfavecli.Context) error {
-					container, cleanup, err := newDatabaseContainer(c.Context, meta)
+				Action: func(ctx context.Context, c *urfavecli.Command) error {
+					container, cleanup, err := newDatabaseContainer(ctx, meta)
 					if err != nil {
 						return err
 					}
 					defer cleanup()
-					items, err := container.Hub.ListServices(c.Context, c.String("org"), c.String("project"), c.String("env"), c.String("app"))
+					items, err := container.Hub.ListServices(ctx, c.String("org"), c.String("project"), c.String("env"), c.String("app"))
 					if err != nil {
 						return err
 					}
-					writer := tabwriter.NewWriter(c.App.Writer, 0, 0, 2, ' ', 0)
+					writer := tabwriter.NewWriter(c.Root().Writer, 0, 0, 2, ' ', 0)
 					fmt.Fprintln(writer, "SLUG\tNAME\tROLE\tID")
 					for _, item := range items {
 						fmt.Fprintf(writer, "%s\t%s\t%s\t%s\n", item.Slug, item.Name, item.Role, item.ID)
@@ -391,19 +392,19 @@ func inventoryHostCommand(meta domain.AppMeta) *urfavecli.Command {
 	return &urfavecli.Command{
 		Name:  "host",
 		Usage: "manage hosts",
-		Subcommands: []*urfavecli.Command{
+		Commands: []*urfavecli.Command{
 			{
 				Name:      "add",
 				Usage:     "create or update a host",
 				ArgsUsage: "[slug]",
 				Flags:     append(environmentPathFlags(), &urfavecli.StringFlag{Name: "slug"}, &urfavecli.StringFlag{Name: "hostname"}, &urfavecli.StringFlag{Name: "region"}, &urfavecli.StringSliceFlag{Name: "label"}),
-				Action: func(c *urfavecli.Context) error {
-					container, cleanup, err := newDatabaseContainer(c.Context, meta)
+				Action: func(ctx context.Context, c *urfavecli.Command) error {
+					container, cleanup, err := newDatabaseContainer(ctx, meta)
 					if err != nil {
 						return err
 					}
 					defer cleanup()
-					item, err := container.Hub.SaveHost(c.Context, hubapp.SaveHostInput{
+					item, err := container.Hub.SaveHost(ctx, hubapp.SaveHostInput{
 						OrganizationSlug: c.String("org"),
 						ProjectSlug:      c.String("project"),
 						EnvironmentSlug:  c.String("env"),
@@ -415,7 +416,7 @@ func inventoryHostCommand(meta domain.AppMeta) *urfavecli.Command {
 					if err != nil {
 						return err
 					}
-					fmt.Fprintf(c.App.Writer, "Saved host %s (%s)\n", item.Slug, item.ID)
+					fmt.Fprintf(c.Root().Writer, "Saved host %s (%s)\n", item.Slug, item.ID)
 					return nil
 				},
 			},
@@ -423,17 +424,17 @@ func inventoryHostCommand(meta domain.AppMeta) *urfavecli.Command {
 				Name:  "list",
 				Usage: "list hosts",
 				Flags: environmentPathFlags(),
-				Action: func(c *urfavecli.Context) error {
-					container, cleanup, err := newDatabaseContainer(c.Context, meta)
+				Action: func(ctx context.Context, c *urfavecli.Command) error {
+					container, cleanup, err := newDatabaseContainer(ctx, meta)
 					if err != nil {
 						return err
 					}
 					defer cleanup()
-					items, err := container.Hub.ListHosts(c.Context, c.String("org"), c.String("project"), c.String("env"))
+					items, err := container.Hub.ListHosts(ctx, c.String("org"), c.String("project"), c.String("env"))
 					if err != nil {
 						return err
 					}
-					writer := tabwriter.NewWriter(c.App.Writer, 0, 0, 2, ' ', 0)
+					writer := tabwriter.NewWriter(c.Root().Writer, 0, 0, 2, ' ', 0)
 					fmt.Fprintln(writer, "SLUG\tHOSTNAME\tREGION\tID")
 					for _, item := range items {
 						fmt.Fprintf(writer, "%s\t%s\t%s\t%s\n", item.Slug, item.Hostname, item.Region, item.ID)
@@ -449,7 +450,7 @@ func inventoryAgentCommand(meta domain.AppMeta) *urfavecli.Command {
 	return &urfavecli.Command{
 		Name:  "agent",
 		Usage: "manage agent identities",
-		Subcommands: []*urfavecli.Command{
+		Commands: []*urfavecli.Command{
 			{
 				Name:  "register",
 				Usage: "register or update an agent identity",
@@ -459,13 +460,13 @@ func inventoryAgentCommand(meta domain.AppMeta) *urfavecli.Command {
 					&urfavecli.StringFlag{Name: "fingerprint", Required: true},
 					&urfavecli.StringFlag{Name: "version"},
 				),
-				Action: func(c *urfavecli.Context) error {
-					container, cleanup, err := newDatabaseContainer(c.Context, meta)
+				Action: func(ctx context.Context, c *urfavecli.Command) error {
+					container, cleanup, err := newDatabaseContainer(ctx, meta)
 					if err != nil {
 						return err
 					}
 					defer cleanup()
-					item, err := container.Hub.SaveAgent(c.Context, hubapp.SaveAgentInput{
+					item, err := container.Hub.SaveAgent(ctx, hubapp.SaveAgentInput{
 						OrganizationSlug: c.String("org"),
 						ProjectSlug:      c.String("project"),
 						EnvironmentSlug:  c.String("env"),
@@ -477,7 +478,7 @@ func inventoryAgentCommand(meta domain.AppMeta) *urfavecli.Command {
 					if err != nil {
 						return err
 					}
-					fmt.Fprintf(c.App.Writer, "Saved agent %s (%s)\n", item.AgentID, item.ID)
+					fmt.Fprintf(c.Root().Writer, "Saved agent %s (%s)\n", item.AgentID, item.ID)
 					return nil
 				},
 			},
@@ -485,17 +486,17 @@ func inventoryAgentCommand(meta domain.AppMeta) *urfavecli.Command {
 				Name:  "list",
 				Usage: "list agents for a host",
 				Flags: append(environmentPathFlags(), &urfavecli.StringFlag{Name: "host", Required: true}),
-				Action: func(c *urfavecli.Context) error {
-					container, cleanup, err := newDatabaseContainer(c.Context, meta)
+				Action: func(ctx context.Context, c *urfavecli.Command) error {
+					container, cleanup, err := newDatabaseContainer(ctx, meta)
 					if err != nil {
 						return err
 					}
 					defer cleanup()
-					items, err := container.Hub.ListAgents(c.Context, c.String("org"), c.String("project"), c.String("env"), c.String("host"))
+					items, err := container.Hub.ListAgents(ctx, c.String("org"), c.String("project"), c.String("env"), c.String("host"))
 					if err != nil {
 						return err
 					}
-					writer := tabwriter.NewWriter(c.App.Writer, 0, 0, 2, ' ', 0)
+					writer := tabwriter.NewWriter(c.Root().Writer, 0, 0, 2, ' ', 0)
 					fmt.Fprintln(writer, "AGENT_ID\tVERSION\tFINGERPRINT\tID")
 					for _, item := range items {
 						fmt.Fprintf(writer, "%s\t%s\t%s\t%s\n", item.AgentID, item.Version, item.Fingerprint, item.ID)
@@ -511,7 +512,7 @@ func inventoryDeployCommand(meta domain.AppMeta) *urfavecli.Command {
 	return &urfavecli.Command{
 		Name:  "deploy",
 		Usage: "manage deployment markers",
-		Subcommands: []*urfavecli.Command{
+		Commands: []*urfavecli.Command{
 			{
 				Name:  "add",
 				Usage: "record a deployment marker",
@@ -523,7 +524,7 @@ func inventoryDeployCommand(meta domain.AppMeta) *urfavecli.Command {
 					&urfavecli.StringFlag{Name: "started-at"},
 					&urfavecli.StringFlag{Name: "finished-at"},
 				),
-				Action: func(c *urfavecli.Context) error {
+				Action: func(ctx context.Context, c *urfavecli.Command) error {
 					startedAt, err := parseOptionalTime(c.String("started-at"))
 					if err != nil {
 						return err
@@ -532,12 +533,12 @@ func inventoryDeployCommand(meta domain.AppMeta) *urfavecli.Command {
 					if err != nil {
 						return err
 					}
-					container, cleanup, err := newDatabaseContainer(c.Context, meta)
+					container, cleanup, err := newDatabaseContainer(ctx, meta)
 					if err != nil {
 						return err
 					}
 					defer cleanup()
-					item, err := container.Hub.SaveDeploymentMarker(c.Context, hubapp.SaveDeploymentMarkerInput{
+					item, err := container.Hub.SaveDeploymentMarker(ctx, hubapp.SaveDeploymentMarkerInput{
 						OrganizationSlug: c.String("org"),
 						ProjectSlug:      c.String("project"),
 						EnvironmentSlug:  c.String("env"),
@@ -551,7 +552,7 @@ func inventoryDeployCommand(meta domain.AppMeta) *urfavecli.Command {
 					if err != nil {
 						return err
 					}
-					fmt.Fprintf(c.App.Writer, "Saved deployment %s (%s)\n", item.Version, item.ID)
+					fmt.Fprintf(c.Root().Writer, "Saved deployment %s (%s)\n", item.Version, item.ID)
 					return nil
 				},
 			},
@@ -559,17 +560,17 @@ func inventoryDeployCommand(meta domain.AppMeta) *urfavecli.Command {
 				Name:  "list",
 				Usage: "list deployment markers",
 				Flags: append(environmentPathFlags(), &urfavecli.StringFlag{Name: "app"}),
-				Action: func(c *urfavecli.Context) error {
-					container, cleanup, err := newDatabaseContainer(c.Context, meta)
+				Action: func(ctx context.Context, c *urfavecli.Command) error {
+					container, cleanup, err := newDatabaseContainer(ctx, meta)
 					if err != nil {
 						return err
 					}
 					defer cleanup()
-					items, err := container.Hub.ListDeploymentMarkers(c.Context, c.String("org"), c.String("project"), c.String("env"), c.String("app"))
+					items, err := container.Hub.ListDeploymentMarkers(ctx, c.String("org"), c.String("project"), c.String("env"), c.String("app"))
 					if err != nil {
 						return err
 					}
-					writer := tabwriter.NewWriter(c.App.Writer, 0, 0, 2, ' ', 0)
+					writer := tabwriter.NewWriter(c.Root().Writer, 0, 0, 2, ' ', 0)
 					fmt.Fprintln(writer, "VERSION\tCOMMIT\tACTOR\tSTARTED_AT\tID")
 					for _, item := range items {
 						fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\n", item.Version, item.CommitSHA, item.Actor, item.StartedAt.Format(time.RFC3339), item.ID)
@@ -609,7 +610,7 @@ func appPathFlags() []urfavecli.Flag {
 	}
 }
 
-func argOrFlag(c *urfavecli.Context, name string) string {
+func argOrFlag(c *urfavecli.Command, name string) string {
 	value := c.String(name)
 	if value == "" && c.NArg() > 0 {
 		return c.Args().First()

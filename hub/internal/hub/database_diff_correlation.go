@@ -1082,11 +1082,8 @@ func compareVersionLike(current string, previous string) int {
 	if len(currentParts) == 0 || len(previousParts) == 0 {
 		return 0
 	}
-	limit := len(currentParts)
-	if len(previousParts) > limit {
-		limit = len(previousParts)
-	}
-	for index := 0; index < limit; index++ {
+	limit := max(len(previousParts), len(currentParts))
+	for index := range limit {
 		var currentPart int
 		var previousPart int
 		if index < len(currentParts) {

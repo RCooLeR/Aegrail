@@ -7,13 +7,44 @@ on:
       - "feature/**"
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  NPM_VERSION: 12.2.1
 
 jobs:
   go:
     name: Go tests and vet
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.7-pg18-trixie@sha256:9d9c930220cb9bf2f956d10a8f909cf9973d9672ca0278aef2c1e6facccad2e0
+        env:
+          POSTGRES_DB: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:8.10.2-alpine3.23@sha256:0bf6577d7774e592b29d093e3ac9390eb91e13d72c21e506afce736de5e0eeb0
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     strategy:
       fail-fast: false
       matrix:
@@ -22,10 +53,10 @@ jobs:
           - hub
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: ${{ matrix.module }}/go.mod
           cache-dependency-path: ${{ matrix.module }}/go.sum
@@ -36,26 +67,143 @@ jobs:
 
       - name: Test
         working-directory: ${{ matrix.module }}
+        env:
+          AEGRAIL_TEST_POSTGRES_URL: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
+          AEGRAIL_TEST_REDIS_URL: redis://localhost:6379/0
         run: go test ./...
+
+      - name: Test pgvector 0.8.2 upgrade
+        if: matrix.module == 'hub'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          volume="aegrail-pgvector-upgrade-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          old_container="${volume}-old"
+          current_container="${volume}-current"
+          old_image="pgvector/pgvector:0.8.2-pg18-trixie@sha256:b7337db8fe39d12fe8ecb0003c72680f24479813a744b43154eee6f2eab5a5f3"
+          current_image="$(sed -nE 's/^[[:space:]]*image:[[:space:]]*(pgvector\/pgvector:[^[:space:]]+)$/\1/p' docker/services/compose.yaml)"
+
+          cleanup() {
+            docker rm --force "$old_container" "$current_container" >/dev/null 2>&1 || true
+            docker volume rm --force "$volume" >/dev/null 2>&1 || true
+          }
+          wait_for_postgres() {
+            for _ in {1..60}; do
+              if docker exec "$1" pg_isready -U postgres -d postgres >/dev/null 2>&1; then
+                return 0
+              fi
+              sleep 1
+            done
+            docker logs "$1"
+            return 1
+          }
+          trap cleanup EXIT
+
+          test -n "$current_image"
+          docker volume create "$volume" >/dev/null
+          docker run --detach --name "$old_container" \
+            --env POSTGRES_PASSWORD=postgres \
+            --mount "type=volume,source=${volume},target=/var/lib/postgresql" \
+            "$old_image" >/dev/null
+          wait_for_postgres "$old_container"
+          docker exec "$old_container" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c 'CREATE EXTENSION vector' >/dev/null
+          test "$(docker exec "$old_container" psql -U postgres -d postgres -Atc "SELECT extversion FROM pg_extension WHERE extname = 'vector'")" = "0.8.2"
+          docker stop "$old_container" >/dev/null
+          docker rm "$old_container" >/dev/null
+
+          docker run --detach --name "$current_container" \
+            --env POSTGRES_PASSWORD=postgres \
+            --publish 127.0.0.1::5432 \
+            --mount "type=volume,source=${volume},target=/var/lib/postgresql" \
+            "$current_image" >/dev/null
+          wait_for_postgres "$current_container"
+          upgrade_port="$(docker port "$current_container" 5432/tcp | head -n 1 | sed 's/.*://')"
+
+          cd hub
+          AEGRAIL_TEST_PGVECTOR_UPGRADE_URL="postgres://postgres:postgres@127.0.0.1:${upgrade_port}/postgres?sslmode=disable" \
+            go test ./internal/adapters/postgres \
+              -run '^TestProjectMigrationsUpgradePgvectorFromPreviouslySupportedVersion$' \
+              -count=1
+
+      - name: Race test
+        working-directory: ${{ matrix.module }}
+        env:
+          CGO_ENABLED: "1"
+        run: go test -race ./...
 
   dashboard:
     name: Dashboard build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
+          node-version: 26.12.1
           cache: npm
           cache-dependency-path: dashboard/package-lock.json
+
+      - name: Set up npm
+        run: npm install --global "npm@${NPM_VERSION}"
 
       - name: Install dependencies
         working-directory: dashboard
         run: npm ci
 
+      - name: Verify vendored marketing assets
+        working-directory: dashboard
+        run: npm run check:marketing-vendor
+
       - name: Build
         working-directory: dashboard
         run: npm run build
+
+  docker:
+    name: Docker examples
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Validate Compose configs
+        run: |
+          cp docker/examples/.env.hub.example docker/examples/.env.hub
+          cp docker/examples/.env.agent.example docker/examples/.env.agent
+          cp docker/examples/agent.yaml.example docker/examples/agent.yaml
+          docker compose --env-file docker/services/.env.example -f docker/services/compose.yaml config --quiet
+          docker compose --env-file docker/examples/.env.hub -f docker/examples/hub.compose.yaml config --quiet
+          docker compose --env-file docker/examples/.env.agent -f docker/examples/agent.compose.yaml config --quiet
+
+      - name: Verify synchronized dependency pins
+        run: bash scripts/check-version-sync.sh
+
+      - name: Build Hub images
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: docker/examples/hub.Dockerfile
+          platforms: linux/amd64,linux/arm64
+          pull: true
+          outputs: type=cacheonly
+          cache-from: type=gha,scope=aegrail-hub
+          cache-to: type=gha,mode=max,scope=aegrail-hub
+
+      - name: Build Agent images
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: docker/examples/agent.Dockerfile
+          platforms: linux/amd64,linux/arm64
+          pull: true
+          outputs: type=cacheonly
+          cache-from: type=gha,scope=aegrail-agent
+          cache-to: type=gha,mode=max,scope=aegrail-agent

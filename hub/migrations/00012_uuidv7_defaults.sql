@@ -1,0 +1,43 @@
+-- +goose Up
+ALTER TABLE organizations ALTER COLUMN id SET DEFAULT uuidv7();
+ALTER TABLE projects ALTER COLUMN id SET DEFAULT uuidv7();
+ALTER TABLE environments ALTER COLUMN id SET DEFAULT uuidv7();
+ALTER TABLE monitored_apps ALTER COLUMN id SET DEFAULT uuidv7();
+ALTER TABLE services ALTER COLUMN id SET DEFAULT uuidv7();
+ALTER TABLE hosts ALTER COLUMN id SET DEFAULT uuidv7();
+ALTER TABLE agents ALTER COLUMN id SET DEFAULT uuidv7();
+ALTER TABLE deployment_markers ALTER COLUMN id SET DEFAULT uuidv7();
+ALTER TABLE hub_ingest_batches ALTER COLUMN id SET DEFAULT uuidv7();
+ALTER TABLE hub_ingest_events ALTER COLUMN id SET DEFAULT uuidv7();
+ALTER TABLE hub_findings ALTER COLUMN id SET DEFAULT uuidv7();
+ALTER TABLE hub_browser_script_allowlist ALTER COLUMN id SET DEFAULT uuidv7();
+ALTER TABLE hub_model_analysis_reports ALTER COLUMN id SET DEFAULT uuidv7();
+ALTER TABLE hub_users ALTER COLUMN id SET DEFAULT uuidv7();
+ALTER TABLE hub_user_sessions ALTER COLUMN id SET DEFAULT uuidv7();
+ALTER TABLE hub_push_subscriptions ALTER COLUMN id SET DEFAULT uuidv7();
+ALTER TABLE hub_file_ignore_rules ALTER COLUMN id SET DEFAULT uuidv7();
+ALTER TABLE hub_auth_events ALTER COLUMN id SET DEFAULT uuidv7();
+ALTER TABLE hub_maintenance_runs ALTER COLUMN id SET DEFAULT uuidv7();
+ALTER TABLE hub_finding_notification_outbox ALTER COLUMN id SET DEFAULT uuidv7();
+
+-- +goose Down
+ALTER TABLE organizations ALTER COLUMN id SET DEFAULT gen_random_uuid();
+ALTER TABLE projects ALTER COLUMN id SET DEFAULT gen_random_uuid();
+ALTER TABLE environments ALTER COLUMN id SET DEFAULT gen_random_uuid();
+ALTER TABLE monitored_apps ALTER COLUMN id SET DEFAULT gen_random_uuid();
+ALTER TABLE services ALTER COLUMN id SET DEFAULT gen_random_uuid();
+ALTER TABLE hosts ALTER COLUMN id SET DEFAULT gen_random_uuid();
+ALTER TABLE agents ALTER COLUMN id SET DEFAULT gen_random_uuid();
+ALTER TABLE deployment_markers ALTER COLUMN id SET DEFAULT gen_random_uuid();
+ALTER TABLE hub_ingest_batches ALTER COLUMN id SET DEFAULT gen_random_uuid();
+ALTER TABLE hub_ingest_events ALTER COLUMN id SET DEFAULT gen_random_uuid();
+ALTER TABLE hub_findings ALTER COLUMN id SET DEFAULT gen_random_uuid();
+ALTER TABLE hub_browser_script_allowlist ALTER COLUMN id SET DEFAULT gen_random_uuid();
+ALTER TABLE hub_model_analysis_reports ALTER COLUMN id SET DEFAULT gen_random_uuid();
+ALTER TABLE hub_users ALTER COLUMN id SET DEFAULT gen_random_uuid();
+ALTER TABLE hub_user_sessions ALTER COLUMN id SET DEFAULT gen_random_uuid();
+ALTER TABLE hub_push_subscriptions ALTER COLUMN id SET DEFAULT gen_random_uuid();
+ALTER TABLE hub_file_ignore_rules ALTER COLUMN id SET DEFAULT gen_random_uuid();
+ALTER TABLE hub_auth_events ALTER COLUMN id SET DEFAULT gen_random_uuid();
+ALTER TABLE hub_maintenance_runs ALTER COLUMN id SET DEFAULT gen_random_uuid();
+ALTER TABLE hub_finding_notification_outbox ALTER COLUMN id SET DEFAULT gen_random_uuid();

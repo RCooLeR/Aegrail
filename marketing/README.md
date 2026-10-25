@@ -5,13 +5,17 @@ Static pages for `aegrail.com`. This folder is the public marketing and lightwei
 ## Stack
 
 - Static HTML
-- Bootstrap 5.3.6 bundled locally in `assets/vendor/bootstrap/`
+- Bootstrap 5.3.8 bundled locally in `assets/vendor/bootstrap/`
 - Custom Aegrail CSS in `assets/css/aegrail-docs.css`
 - Small vanilla JS search helper in `assets/js/aegrail-docs.js`
 - Aegrail PNG logo/icon/favicon assets from the dashboard brand set
 - No build step
 - No CDN dependency for Bootstrap
 - Google Fonts are referenced from the pages
+
+Bootstrap is sourced from the dashboard lockfile. After updating it, run
+`npm run sync:marketing-vendor` from `dashboard/`; CI verifies the vendored CSS
+and JavaScript remain byte-for-byte aligned with the installed package.
 
 ## Structure
 

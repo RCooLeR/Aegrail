@@ -16,7 +16,7 @@ import {
   UserPlus,
   Users
 } from "lucide-react";
-import { FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import {
   createInventoryCompany,
   createInventoryNode,

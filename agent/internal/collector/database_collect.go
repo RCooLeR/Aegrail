@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -2398,12 +2399,7 @@ func normalizeRoleList(values []string) []string {
 }
 
 func yii2RBACRolesPrivileged(roles []string) bool {
-	for _, role := range roles {
-		if yii2RBACRolePrivileged(role) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(roles, yii2RBACRolePrivileged)
 }
 
 func yii2RBACRolePrivileged(role string) bool {

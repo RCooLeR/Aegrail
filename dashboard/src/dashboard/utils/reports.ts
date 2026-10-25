@@ -1,4 +1,3 @@
-import type { InstanceModel } from "../../estate";
 import type { ModelAnalysisReport, RuleDefinition } from "../../types";
 import { issueStatusLabel, nodeLabel, recommendedAction } from "../model/viewModels";
 import type { IssueRow } from "../types";
@@ -58,23 +57,6 @@ export async function copyIssueBrief(row: IssueRow, rule?: RuleDefinition, repor
     throw new Error("Clipboard is unavailable in this browser context.");
   }
   await navigator.clipboard.writeText(buildIssueBrief(row, rule, report));
-}
-
-export function exportDashboardBrief(instances: InstanceModel[], issueRows: IssueRow[]) {
-  const openRows = issueRows.filter((row) => row.finding.status === "open");
-  const lines = [
-    "# Aegrail Dashboard Brief",
-    "",
-    `Generated: ${formatDate(new Date().toISOString())}`,
-    `Companies: ${new Set(instances.map((instance) => instance.companySlug)).size}`,
-    `Sites: ${new Set(instances.map((instance) => `${instance.companySlug}:${instance.projectSlug}`)).size}`,
-    `Nodes: ${instances.length}`,
-    `Open issues: ${openRows.length}`,
-    "",
-    "## Issues",
-    ...(openRows.length ? openRows.slice(0, 30).map((row) => `- ${row.finding.severity.toUpperCase()} / ${row.instance.companyName} / ${row.instance.projectName} / ${nodeLabel(row.instance)}: ${row.finding.title}`) : ["- No open issues."])
-  ];
-  downloadText("aegrail-dashboard-brief.md", lines.join("\n"));
 }
 
 function downloadText(filename: string, content: string) {

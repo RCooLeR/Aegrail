@@ -4,9 +4,13 @@ import type {
   BrowserScript,
   CoverageRecord,
   DashboardData,
+  FilteredFindingsPage,
+  FindingsQuery,
   HubAuthMe,
   Deployment,
+  FindingsRequestState,
   HubFinding,
+  HubFindingSummary,
   HubHealth,
   HubUser,
   HubUserTOTPEnrollment,
@@ -23,10 +27,18 @@ import type {
   Topology,
   Host,
   Agent,
-  Service
+  Service,
+  TrafficBotsResponse,
+  TrafficIPDetail,
+  TrafficIPPolicy,
+  TrafficOverview,
+  TrafficUserAgentDetail
 } from "./types";
+import type { TrafficTimeRange } from "./dashboard/types";
 
 type ApiEnvelope<T> = Record<string, unknown> & T;
+
+export const findingsPageSize = 250;
 
 const defaults = {
   health: null as HubHealth | null,
@@ -35,10 +47,8 @@ const defaults = {
   coverage: [] as CoverageRecord[],
   scopes: [] as InventoryOrganization[],
   topology: { counts: {}, apps: [], services: [], hosts: [], agents: [] } as Topology,
-  deployments: [] as Deployment[],
   browserScripts: [] as BrowserScript[],
   allowlist: [] as BrowserAllowlistEntry[],
-  reports: [] as ModelAnalysisReport[],
   rules: [] as RuleDefinition[]
 };
 
@@ -120,10 +130,11 @@ function rememberDashboardProtocol(body: { csrf_token?: string }) {
   }
 }
 
-async function apiGet<T>(scope: ApiScope, path: string): Promise<T> {
+async function apiGet<T>(scope: ApiScope, path: string, signal?: AbortSignal): Promise<T> {
   const response = await fetch(joinUrl(scope, path), {
     credentials: "include",
-    headers: dashboardHeaders()
+    headers: dashboardHeaders(),
+    signal
   });
   if (!response.ok) {
     const message = await response.text();
@@ -251,6 +262,120 @@ async function state<T>(request: Promise<T>, fallback: T): Promise<RequestState<
   }
 }
 
+async function initialFindingsState(scope: ApiScope): Promise<FindingsRequestState> {
+  try {
+    return await loadFindingsPage(scope);
+  } catch (error) {
+    return {
+      complete: false,
+      data: defaults.findings,
+      error: friendlyError(error),
+      total: 0,
+      totalExact: false
+    };
+  }
+}
+
+export async function loadFindingsPage(scope: ApiScope, cursor = ""): Promise<FindingsRequestState> {
+  const params = new URLSearchParams(query(scope));
+  params.set("limit", String(findingsPageSize));
+  if (cursor.trim()) {
+    params.set("cursor", cursor);
+  }
+  const body = await apiGet<ApiEnvelope<{
+    count?: number;
+    findings?: HubFinding[];
+    next_cursor?: string;
+    summary?: unknown;
+    total?: number;
+  }>>(scope, `/api/v1/findings?${params.toString()}`);
+  const findings = Array.isArray(body.findings) ? body.findings : [];
+  const explicitTotal = nonNegativeNumber(body.total);
+  const nextCursor = stringValue(body.next_cursor);
+  const total = explicitTotal ?? findings.length;
+  const totalExact = explicitTotal !== undefined;
+  const legacyPageMayBeTruncated = !totalExact && !nextCursor && findings.length >= findingsPageSize;
+  return {
+    complete: !nextCursor && (Boolean(cursor.trim()) || !legacyPageMayBeTruncated) && (!totalExact || findings.length >= total),
+    data: findings,
+    nextCursor,
+    summary: findingSummary(body.summary),
+    total,
+    totalExact
+  };
+}
+
+export async function loadFilteredFindingsPage(
+  scope: ApiScope,
+  filters: FindingsQuery,
+  cursor = '',
+  signal?: AbortSignal
+): Promise<FilteredFindingsPage> {
+  const params = new URLSearchParams(query(scope));
+  params.set('limit', String(filters.limit));
+  if (cursor.trim()) {
+    params.set('cursor', cursor);
+  }
+  if (filters.q.trim()) {
+    params.set('q', filters.q.trim());
+  }
+  for (const status of filters.statuses.map((value) => value.trim()).filter(Boolean)) {
+    params.append('status', status);
+  }
+  for (const severity of filters.severities.map((value) => value.trim()).filter(Boolean)) {
+    params.append('severity', severity);
+  }
+
+  const body = await apiGet<ApiEnvelope<{
+    count?: number;
+    findings?: HubFinding[];
+    matched_total?: number;
+    next_cursor?: string;
+  }>>(scope, `/api/v1/findings?${params.toString()}`, signal);
+  const findings = Array.isArray(body.findings) ? body.findings : [];
+  const matchedTotal = nonNegativeNumber(body.matched_total);
+  const nextCursor = stringValue(body.next_cursor);
+  return {
+    complete: !nextCursor,
+    data: findings,
+    matchedTotal,
+    matchedTotalExact: matchedTotal !== undefined,
+    nextCursor
+  };
+}
+
+export function appendFindingsPage(
+  current: FindingsRequestState,
+  page: FindingsRequestState
+): FindingsRequestState {
+  const seen = new Set<string>();
+  const data = [...current.data, ...page.data].filter((finding) => {
+    if (seen.has(finding.id)) {
+      return false;
+    }
+    seen.add(finding.id);
+    return true;
+  });
+  const totalExact = page.totalExact || current.totalExact;
+  const total = page.totalExact ? page.total : current.totalExact ? current.total : Math.max(current.total, data.length);
+  return {
+    complete: page.complete || (totalExact && data.length >= total),
+    data,
+    nextCursor: page.nextCursor,
+    summary: page.summary ?? current.summary,
+    total,
+    totalExact
+  };
+}
+
+export async function loadFinding(scope: ApiScope, findingID: string) {
+  const params = query(scope);
+  return apiGet<ApiEnvelope<{ finding: HubFinding }>>(
+    scope,
+    `/api/v1/findings/${encodeURIComponent(findingID)}?${params}`
+  ).then((body) => body.finding);
+}
+
 export async function loadDashboard(scope: ApiScope): Promise<DashboardData> {
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const scoped = query(scope);
@@ -263,19 +388,12 @@ export async function loadDashboard(scope: ApiScope): Promise<DashboardData> {
     coverage,
     scopes,
     topology,
-    deployments,
     browserScripts,
     allowlist,
-    reports,
     rules
   ] = await Promise.all([
     state(apiGet<HubHealth>(scope, "/healthz"), defaults.health),
-    state(
-      apiGet<ApiEnvelope<{ findings: HubFinding[] }>>(scope, `/api/v1/findings?${scoped}&limit=200`).then(
-        (body) => body.findings ?? []
-      ),
-      defaults.findings
-    ),
+    initialFindingsState(scope),
     state(
       apiGet<ApiEnvelope<{ events: TimelineEvent[] }>>(
         scope,
@@ -301,12 +419,6 @@ export async function loadDashboard(scope: ApiScope): Promise<DashboardData> {
       defaults.topology
     ),
     state(
-      apiGet<ApiEnvelope<{ deployments: Deployment[] }>>(scope, `/api/v1/deployments?${scoped}`).then(
-        (body) => body.deployments ?? []
-      ),
-      defaults.deployments
-    ),
-    state(
       apiGet<ApiEnvelope<{ scripts: BrowserScript[] }>>(
         scope,
         `/api/v1/browser/scripts?${scoped}&since=${encodeURIComponent(since)}&limit=500`
@@ -321,19 +433,12 @@ export async function loadDashboard(scope: ApiScope): Promise<DashboardData> {
       defaults.allowlist
     ),
     state(
-      apiGet<ApiEnvelope<{ reports: ModelAnalysisReport[] }>>(
-        scope,
-        `/api/v1/reports/model-analysis?${scoped}&limit=50`
-      ).then((body) => body.reports ?? []),
-      defaults.reports
-    ),
-    state(
       apiGet<ApiEnvelope<{ rules: RuleDefinition[] }>>(scope, "/api/v1/rules").then((body) => body.rules ?? []),
       defaults.rules
     )
   ]);
 
-  return { health, findings, timeline, coverage, scopes, topology, deployments, browserScripts, allowlist, reports, rules };
+  return { health, findings, timeline, coverage, scopes, topology, browserScripts, allowlist, rules };
 }
 
 export async function loadEstateDashboard(scope: ApiScope): Promise<EstateDashboardData> {
@@ -391,17 +496,10 @@ async function loadEstateInstanceDashboard(
     timeline,
     coverage,
     topology,
-    deployments,
     browserScripts,
-    allowlist,
-    reports
+    allowlist
   ] = await Promise.all([
-    state(
-      apiGet<ApiEnvelope<{ findings: HubFinding[] }>>(scope, `/api/v1/findings?${scoped}&limit=200`).then(
-        (body) => body.findings ?? []
-      ),
-      defaults.findings
-    ),
+    initialFindingsState(scope),
     state(
       apiGet<ApiEnvelope<{ events: TimelineEvent[] }>>(
         scope,
@@ -418,12 +516,6 @@ async function loadEstateInstanceDashboard(
     ),
     estateTopologyState(scope, topologyCache),
     state(
-      apiGet<ApiEnvelope<{ deployments: Deployment[] }>>(scope, `/api/v1/deployments?${scoped}`).then(
-        (body) => body.deployments ?? []
-      ),
-      defaults.deployments
-    ),
-    state(
       apiGet<ApiEnvelope<{ scripts: BrowserScript[] }>>(
         scope,
         `/api/v1/browser/scripts?${scoped}&since=${encodeURIComponent(since)}&limit=500`
@@ -437,16 +529,9 @@ async function loadEstateInstanceDashboard(
       ).then((body) => body.allowlist ?? []),
       defaults.allowlist
     ),
-    state(
-      apiGet<ApiEnvelope<{ reports: ModelAnalysisReport[] }>>(
-        scope,
-        `/api/v1/reports/model-analysis?${scoped}&limit=50`
-      ).then((body) => body.reports ?? []),
-      defaults.reports
-    )
   ]);
 
-  return { ...shared, findings, timeline, coverage, topology, deployments, browserScripts, allowlist, reports };
+  return { ...shared, findings, timeline, coverage, topology, browserScripts, allowlist };
 }
 
 function estateTopologyState(scope: ApiScope, cache: Map<string, Promise<RequestState<Topology>>>) {
@@ -469,12 +554,16 @@ export async function updateFindingStatus(
   note: string
 ) {
   const params = query(scope, false);
-  return apiPatch(scope, `/api/v1/findings/${encodeURIComponent(finding.id)}/status?${params}`, {
-    status,
-    actor,
-    reason,
-    note
-  });
+  return apiPatch<ApiEnvelope<{ finding: HubFinding }>>(
+    scope,
+    `/api/v1/findings/${encodeURIComponent(finding.id)}/status?${params}`,
+    {
+      status,
+      actor,
+      reason,
+      note
+    }
+  ).then((body) => body.finding);
 }
 
 export async function acceptFindingsBaseline(
@@ -829,9 +918,6 @@ export async function createDeployment(
   input: {
     version: string;
     commit_sha?: string;
-    actor?: string;
-    started_at?: string;
-    finished_at?: string;
   }
 ) {
   const params = query(scope);
@@ -840,6 +926,76 @@ export async function createDeployment(
     `/api/v1/deployments?${params}`,
     input
   );
+}
+
+export async function loadDeployments(scope: ApiScope) {
+  return apiGet<ApiEnvelope<{ deployments: Deployment[] }>>(
+    scope,
+    `/api/v1/deployments?${query(scope)}`
+  ).then((body) => body.deployments ?? []);
+}
+
+function trafficQuery(scope: ApiScope, range: TrafficTimeRange) {
+  const params = new URLSearchParams(query(scope));
+  params.set("since", range.since);
+  params.set("until", range.until);
+  return params;
+}
+
+export async function loadTraffic(scope: ApiScope, range: TrafficTimeRange, signal?: AbortSignal) {
+  return apiGet<ApiEnvelope<{ traffic: TrafficOverview }>>(
+    scope,
+    `/api/v1/traffic?${trafficQuery(scope, range).toString()}`,
+    signal
+  ).then((body) => body.traffic);
+}
+
+export async function loadTrafficIPDetail(scope: ApiScope, ip: string, range: TrafficTimeRange, signal?: AbortSignal) {
+  return apiGet<ApiEnvelope<{ ip: TrafficIPDetail }>>(
+    scope,
+    `/api/v1/traffic/ips/${encodeURIComponent(ip)}?${trafficQuery(scope, range).toString()}`,
+    signal
+  ).then((body) => body.ip);
+}
+
+export async function updateTrafficIPPolicy(
+  scope: ApiScope,
+  ip: string,
+  policy: "neutral" | "trusted" | "blocked",
+  reason: string
+) {
+  return apiPatch<ApiEnvelope<{ policy: TrafficIPPolicy }>>(
+    scope,
+    `/api/v1/traffic/ips/${encodeURIComponent(ip)}/policy?${query(scope)}`,
+    { policy, reason }
+  ).then((body) => body.policy);
+}
+
+export async function loadTrafficUserAgentDetail(scope: ApiScope, hash: string, range: TrafficTimeRange, signal?: AbortSignal) {
+  return apiGet<ApiEnvelope<{ user_agent: TrafficUserAgentDetail }>>(
+    scope,
+    `/api/v1/traffic/user-agents/${encodeURIComponent(hash)}?${trafficQuery(scope, range).toString()}`,
+    signal
+  ).then((body) => body.user_agent);
+}
+
+export async function loadTrafficBots(scope: ApiScope, range: TrafficTimeRange, signal?: AbortSignal) {
+  const params = trafficQuery(scope, range);
+  params.set("limit", "100");
+  return apiGet<TrafficBotsResponse>(
+    scope,
+    `/api/v1/traffic/bots?${params.toString()}`,
+    signal
+  );
+}
+
+export async function loadModelAnalysisReportsForFinding(scope: ApiScope, finding: HubFinding) {
+  const params = new URLSearchParams(query(scope));
+  params.set("limit", "50");
+  return apiGet<ApiEnvelope<{ reports: ModelAnalysisReport[] }>>(
+    scope,
+    `/api/v1/findings/${encodeURIComponent(finding.id)}/model-analysis?${params.toString()}`
+  ).then((body) => body.reports ?? []);
 }
 
 export async function updateBrowserAllowlistEntryStatus(
@@ -868,6 +1024,46 @@ function friendlyError(error: unknown) {
     return "Hub unavailable (503 Service Unavailable)";
   }
   return message;
+}
+
+function nonNegativeNumber(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function stringValue(value: unknown) {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function findingSummary(value: unknown): HubFindingSummary | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const statusCounts = numberMap(record.status_counts ?? record.statusCounts);
+  const severityCounts = numberMap(record.severity_counts ?? record.severityCounts);
+  const openSeverityCounts = numberMap(record.open_severity_counts ?? record.openSeverityCounts);
+  if (!statusCounts && !severityCounts && !openSeverityCounts) {
+    return undefined;
+  }
+  return {
+    openSeverityCounts,
+    severityCounts,
+    statusCounts
+  };
+}
+
+function numberMap(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const result: Record<string, number> = {};
+  for (const [key, item] of Object.entries(value)) {
+    const count = nonNegativeNumber(item);
+    if (count !== undefined) {
+      result[key] = count;
+    }
+  }
+  return result;
 }
 
 function estateScopeChoices(baseUrl: string, organizations: InventoryOrganization[]): Omit<DashboardInstanceSnapshot, "data">[] {

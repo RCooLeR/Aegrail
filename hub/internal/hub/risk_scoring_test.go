@@ -65,31 +65,45 @@ func TestApplyRiskScoringAddsOperatorActionMetadata(t *testing.T) {
 	}
 }
 
-func TestApplyRiskScoringReflectsDeploymentAdjustment(t *testing.T) {
-	finding := applyRiskScoring(domain.HubFinding{
+func TestApplyRiskScoringIgnoresLegacyDeploymentAdjustmentMetadata(t *testing.T) {
+	input := domain.HubFinding{
 		RuleID:     "browser-script-domain-new",
 		Severity:   domain.SeverityLow,
 		Confidence: domain.ConfidenceMedium,
 		EventIDs:   []domain.ID{"evt-browser"},
-		Metadata: map[string]any{
-			"deployment_context": map[string]any{
-				"active":            true,
-				"severity_adjusted": true,
-				"original_severity": "medium",
-				"adjusted_severity": "low",
-			},
+	}
+	baseline := applyRiskScoring(input)
+	input.Metadata = map[string]any{
+		"deployment_context": map[string]any{
+			"active":            true,
+			"severity_adjusted": true,
+			"original_severity": "medium",
+			"adjusted_severity": "low",
 		},
-	})
+	}
+	withDeployment := applyRiskScoring(input)
 
-	risk, ok := finding.Metadata["risk"].(map[string]any)
+	baselineRisk, ok := baseline.Metadata["risk"].(map[string]any)
 	if !ok {
-		t.Fatalf("risk metadata = %#v, want risk map", finding.Metadata["risk"])
+		t.Fatalf("baseline risk metadata = %#v, want risk map", baseline.Metadata["risk"])
 	}
-	if risk["band"] != "low" || risk["deployment_active"] != true {
-		t.Fatalf("risk = %#v, want low risk with active deployment context", risk)
+	risk, ok := withDeployment.Metadata["risk"].(map[string]any)
+	if !ok {
+		t.Fatalf("deployment risk metadata = %#v, want risk map", withDeployment.Metadata["risk"])
 	}
-	score, ok := risk["score"].(int)
-	if !ok || score >= 40 {
-		t.Fatalf("risk score = %#v, want deployment-adjusted score below medium", risk["score"])
+	if risk["deployment_active"] != true {
+		t.Fatalf("risk = %#v, want deployment context exposed", risk)
+	}
+	if risk["score"] != baselineRisk["score"] || risk["band"] != baselineRisk["band"] {
+		t.Fatalf("deployment risk = %#v, baseline risk = %#v; context must not change score or band", risk, baselineRisk)
+	}
+	factors, ok := risk["factors"].([]map[string]any)
+	if !ok {
+		t.Fatalf("risk factors = %#v, want factor records", risk["factors"])
+	}
+	for _, factor := range factors {
+		if factor["id"] == "context:deployment_adjusted" {
+			t.Fatalf("risk factors = %#v, deployment marker must not contribute a negative factor", factors)
+		}
 	}
 }

@@ -43,7 +43,7 @@ Built-in retention worker:
 ```text
 AEGRAIL_MAINTENANCE_INTERVAL=1h
 AEGRAIL_RETENTION_EVENTS=180d
-AEGRAIL_RETENTION_RESOLVED_FINDINGS=180d
+AEGRAIL_RETENTION_RESOLVED_FINDINGS=0
 AEGRAIL_RETENTION_MODEL_REPORTS=180d
 AEGRAIL_RETENTION_AUTH_EVENTS=180d
 AEGRAIL_RETENTION_BATCH_SIZE=5000
@@ -52,9 +52,14 @@ AEGRAIL_DB_SOFT_LIMIT_BYTES=0
 
 The worker runs inside `hub serve` on startup and then at the interval. It
 prunes old ingest events not linked to open/acknowledged findings, empty old
-ingest batches, old resolved/false-positive findings, old model-analysis
-reports not linked to active findings, and old authentication audit events.
-The default window is six months (`180d`) for every retained data class.
+ingest batches, old model-analysis reports not linked to active findings, and
+old authentication audit events. Resolved/false-positive findings are kept by
+default (`AEGRAIL_RETENTION_RESOLVED_FINDINGS=0`) so operator history remains
+available; if explicitly enabled, finding deletion has a 30-day minimum guard
+and only removes findings whose created, updated, and last-event timestamps are
+all older than the cutoff. High and Critical findings are never deleted by this
+automatic cleanup path. The default window is six months (`180d`) for events,
+model reports, and auth audit events.
 Durations support Go syntax such as `4320h` and day syntax such as `180d`.
 Set `AEGRAIL_MAINTENANCE_INTERVAL=0` to disable the worker temporarily.
 Owners can inspect database size and core table estimates through
@@ -114,13 +119,15 @@ AEGRAIL_NOTIFICATION_EMAIL_USERNAME=<smtp-username>
 AEGRAIL_NOTIFICATION_EMAIL_PASSWORD=<smtp-password>
 AEGRAIL_NOTIFICATION_EMAIL_FROM=Aegrail <alerts@example.test>
 AEGRAIL_NOTIFICATION_EMAIL_TO=ops@example.test,security@example.test
-AEGRAIL_NOTIFICATION_EMAIL_MIN_SEVERITY=medium
+AEGRAIL_NOTIFICATION_EMAIL_MIN_SEVERITY=high
 AEGRAIL_NOTIFICATION_EMAIL_EVENTS=finding.observed,finding.status_updated
 AEGRAIL_NOTIFICATION_EMAIL_TIMEOUT=10s
 ```
 
 Email sends HTML summaries over SMTP with STARTTLS when the server supports it.
-Credentials are read from environment only and are not stored in PostgreSQL.
+With the default `high` threshold, newly persisted High/Critical findings send
+mail immediately from the Hub save path. Credentials are read from environment
+only and are not stored in PostgreSQL.
 
 Optional browser push notifications:
 
@@ -146,9 +153,12 @@ localhost, an active Hub session, and the user's browser notification
 permission. The Hub stores push endpoint/key material in PostgreSQL and disables
 subscriptions that return `404` or `410`.
 
-Notification delivery is best-effort: a webhook, SMTP, or browser-push provider
-failure does not roll back saved findings or fail correlation workers. Browser
-push uses public push providers such as FCM over TLS, so Docker images must
+New-finding notification intent is durable: Hub commits one PostgreSQL outbox
+row per configured transport with the finding, attempts delivery immediately,
+and retries transport failures in the background without failing correlation
+workers. Apply the current Hub migrations before restarting so the notification
+outbox table exists. Browser push uses public push providers such as FCM over
+TLS, so Docker images must
 include a current CA bundle. The example Hub image copies Debian's
 `ca-certificates.crt` and sets `SSL_CERT_FILE`. If browser push TLS fails with
 `x509: certificate signed by unknown authority`, rebuild the Hub image from the
@@ -212,7 +222,32 @@ go run ./cmd/hub db status
 The project is still pre-production, so new installs use the initial schema plus
 small upgrade migrations for local development databases that already ran an
 older schema. For a clean production test, start with an empty database and run
-all migrations in order.
+all migrations in order. Migration runs serialize through a renewable
+PostgreSQL `goose_lock` lease, so concurrent deploy jobs cannot apply the same
+migration at once and another job can recover the lock after a crashed runner.
+
+`hub serve` checks the database migration version before accepting traffic. If
+the database is behind the binary, start fails with a clear error so Agents do
+not queue against a half-upgraded Hub. Run `hub db migrate`, then start Hub
+again. `AEGRAIL_ALLOW_PENDING_MIGRATIONS=true` exists only as an emergency
+troubleshooting escape hatch.
+
+For single-instance Docker/NAS installs where running a separate migration
+command is awkward, set:
+
+```text
+AEGRAIL_MIGRATE_ON_START=true
+```
+
+With that enabled, `hub serve` applies bundled migrations first, then performs
+the same schema currency check before accepting traffic. The renewable migration
+lease serializes replicas that start together; a dedicated migration job is
+still preferable for clustered rollouts so application startup does not wait on
+schema work.
+
+Hub also validates typed environment variables at startup. Invalid booleans,
+integers, and durations are reported by name instead of silently falling back to
+defaults.
 
 ## Run
 
@@ -228,10 +263,21 @@ Serve the API and built dashboard:
 go run ./cmd/hub serve --dashboard-dir ..\dashboard\dist
 ```
 
+Container health probe:
+
+```powershell
+go run ./cmd/hub healthcheck
+```
+
+The healthcheck command verifies required config, database connectivity,
+configured Redis connectivity, and migration currency. Ollama/model-analysis is
+optional health, so an Ollama outage reports degraded health but does not make
+the Hub container unhealthy for ingest/dashboard purposes.
+
 When Redis is configured, `serve` starts correlation workers automatically.
-Normal ingest still runs an immediate coalesced correlation pass; Redis is a
-fallback/catch-up queue and should not be the reason notifications wait for a
-daily batch. Agents still send HTTPS/HTTP requests to the Hub API or your
+Every security-relevant ingest batch still runs an immediate correlation pass;
+Redis is a fallback/catch-up queue and is not required for prompt
+notifications. Agents still send HTTPS/HTTP requests to the Hub API or your
 reverse proxy; they never connect to Redis.
 
 Default local API address is:

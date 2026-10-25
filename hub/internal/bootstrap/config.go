@@ -20,6 +20,7 @@ type Config struct {
 	HTTP          HTTPConfig
 	Hub           HubConfig
 	Logging       LoggingConfig
+	ParseErrors   []string
 }
 
 type PathsConfig struct {
@@ -91,6 +92,8 @@ type HubConfig struct {
 	ModelAnalysisLimit        int
 	CorrelationWorkers        int
 	IngestDebug               bool
+	AllowPendingMigrations    bool
+	MigrateOnStart            bool
 	MaintenanceEvery          time.Duration
 	RetentionEvents           time.Duration
 	RetentionResolvedFindings time.Duration
@@ -107,6 +110,7 @@ type LoggingConfig struct {
 
 func LoadConfig() Config {
 	trustedProxies := parseCIDRList(envString("AEGRAIL_TRUSTED_PROXY_CIDRS", ""))
+	parseErrors := collectConfigParseErrors()
 	return Config{
 		Environment: envString("AEGRAIL_ENV", "local"),
 		Paths: PathsConfig{
@@ -132,7 +136,7 @@ func LoadConfig() Config {
 				Password:    envString("AEGRAIL_NOTIFICATION_EMAIL_PASSWORD", ""),
 				From:        envString("AEGRAIL_NOTIFICATION_EMAIL_FROM", ""),
 				To:          envStringList("AEGRAIL_NOTIFICATION_EMAIL_TO", nil),
-				MinSeverity: envString("AEGRAIL_NOTIFICATION_EMAIL_MIN_SEVERITY", "medium"),
+				MinSeverity: envString("AEGRAIL_NOTIFICATION_EMAIL_MIN_SEVERITY", "high"),
 				Events:      envStringList("AEGRAIL_NOTIFICATION_EMAIL_EVENTS", []string{"finding.observed"}),
 				Timeout:     envDuration("AEGRAIL_NOTIFICATION_EMAIL_TIMEOUT", 10*time.Second),
 			},
@@ -168,9 +172,11 @@ func LoadConfig() Config {
 			ModelAnalysisLimit:        envInt("AEGRAIL_MODEL_ANALYSIS_LIMIT", 5),
 			CorrelationWorkers:        envInt("AEGRAIL_CORRELATION_WORKERS", 1),
 			IngestDebug:               envBool("AEGRAIL_INGEST_DEBUG", false),
+			AllowPendingMigrations:    envBool("AEGRAIL_ALLOW_PENDING_MIGRATIONS", false),
+			MigrateOnStart:            envBool("AEGRAIL_MIGRATE_ON_START", false),
 			MaintenanceEvery:          envDurationExtended("AEGRAIL_MAINTENANCE_INTERVAL", time.Hour),
 			RetentionEvents:           envDurationExtended("AEGRAIL_RETENTION_EVENTS", 180*24*time.Hour),
-			RetentionResolvedFindings: envDurationExtended("AEGRAIL_RETENTION_RESOLVED_FINDINGS", 180*24*time.Hour),
+			RetentionResolvedFindings: envDurationExtended("AEGRAIL_RETENTION_RESOLVED_FINDINGS", 0),
 			RetentionModelReports:     envDurationExtended("AEGRAIL_RETENTION_MODEL_REPORTS", 180*24*time.Hour),
 			RetentionAuthEvents:       envDurationExtended("AEGRAIL_RETENTION_AUTH_EVENTS", 180*24*time.Hour),
 			RetentionBatchSize:        envInt("AEGRAIL_RETENTION_BATCH_SIZE", 5000),
@@ -180,21 +186,27 @@ func LoadConfig() Config {
 			Level:  envString("AEGRAIL_LOG_LEVEL", "info"),
 			Format: envString("AEGRAIL_LOG_FORMAT", "console"),
 		},
+		ParseErrors: parseErrors,
 	}
 }
 
 func (c Config) ValidateServe() error {
+	var issues []string
+	issues = append(issues, c.ParseErrors...)
 	if strings.TrimSpace(c.Database.URL) == "" {
-		return errors.New("AEGRAIL_DATABASE_URL is required")
+		issues = append(issues, "AEGRAIL_DATABASE_URL is required")
 	}
 	if strings.TrimSpace(c.Hub.WirePrivateKey) == "" {
-		return errors.New("AEGRAIL_HUB_WIRE_PRIVATE_KEY is required")
+		issues = append(issues, "AEGRAIL_HUB_WIRE_PRIVATE_KEY is required")
 	}
 	if strings.TrimSpace(c.Hub.UserSecretKey) == "" {
-		return errors.New("AEGRAIL_HUB_USER_SECRET is required")
+		issues = append(issues, "AEGRAIL_HUB_USER_SECRET is required")
 	}
 	if len(c.Hub.TrustedProxyErrors) > 0 {
-		return fmt.Errorf("AEGRAIL_TRUSTED_PROXY_CIDRS contains invalid entries: %s", strings.Join(c.Hub.TrustedProxyErrors, "; "))
+		issues = append(issues, fmt.Sprintf("AEGRAIL_TRUSTED_PROXY_CIDRS contains invalid entries: %s", strings.Join(c.Hub.TrustedProxyErrors, "; ")))
+	}
+	if len(issues) > 0 {
+		return errors.New(strings.Join(issues, "; "))
 	}
 	return nil
 }
@@ -206,7 +218,7 @@ type parsedCIDRList struct {
 
 func parseCIDRList(value string) parsedCIDRList {
 	var parsed parsedCIDRList
-	for _, item := range strings.Split(value, ",") {
+	for item := range strings.SplitSeq(value, ",") {
 		item = strings.TrimSpace(item)
 		if item == "" {
 			continue
@@ -297,6 +309,9 @@ func envDuration(key string, fallback time.Duration) time.Duration {
 	if value == "" {
 		return fallback
 	}
+	if strings.TrimSpace(value) == "0" {
+		return 0
+	}
 	parsed, err := time.ParseDuration(value)
 	if err != nil {
 		return fallback
@@ -309,12 +324,108 @@ func envDurationExtended(key string, fallback time.Duration) time.Duration {
 	if value == "" {
 		return fallback
 	}
-	if strings.HasSuffix(value, "d") {
-		days, err := strconv.ParseFloat(strings.TrimSuffix(value, "d"), 64)
+	if before, ok := strings.CutSuffix(value, "d"); ok {
+		days, err := strconv.ParseFloat(before, 64)
 		if err != nil {
 			return fallback
 		}
 		return time.Duration(days * float64(24*time.Hour))
 	}
 	return envDuration(key, fallback)
+}
+
+func collectConfigParseErrors() []string {
+	var issues []string
+	for _, key := range []string{
+		"AEGRAIL_OLLAMA_OFFLINE",
+		"AEGRAIL_MODEL_ANALYSIS_AUTO",
+		"AEGRAIL_INGEST_DEBUG",
+		"AEGRAIL_ALLOW_PENDING_MIGRATIONS",
+		"AEGRAIL_MIGRATE_ON_START",
+	} {
+		validateEnvBool(&issues, key)
+	}
+	for _, key := range []string{
+		"AEGRAIL_NOTIFICATION_PUSH_TTL",
+		"AEGRAIL_MODEL_ANALYSIS_LIMIT",
+		"AEGRAIL_CORRELATION_WORKERS",
+		"AEGRAIL_RETENTION_BATCH_SIZE",
+	} {
+		validateEnvInt(&issues, key)
+	}
+	validateEnvInt64(&issues, "AEGRAIL_DB_SOFT_LIMIT_BYTES")
+	for _, key := range []string{
+		"AEGRAIL_NOTIFICATION_WEBHOOK_TIMEOUT",
+		"AEGRAIL_NOTIFICATION_EMAIL_TIMEOUT",
+		"AEGRAIL_NOTIFICATION_PUSH_TIMEOUT",
+		"AEGRAIL_OLLAMA_TIMEOUT",
+		"AEGRAIL_HUB_WIRE_TIMESTAMP_SKEW",
+		"AEGRAIL_MODEL_ANALYSIS_INTERVAL",
+	} {
+		validateEnvDuration(&issues, key)
+	}
+	for _, key := range []string{
+		"AEGRAIL_MAINTENANCE_INTERVAL",
+		"AEGRAIL_RETENTION_EVENTS",
+		"AEGRAIL_RETENTION_RESOLVED_FINDINGS",
+		"AEGRAIL_RETENTION_MODEL_REPORTS",
+		"AEGRAIL_RETENTION_AUTH_EVENTS",
+	} {
+		validateEnvDurationExtended(&issues, key)
+	}
+	return issues
+}
+
+func validateEnvBool(issues *[]string, key string) {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return
+	}
+	if _, err := strconv.ParseBool(value); err != nil {
+		*issues = append(*issues, fmt.Sprintf("%s has invalid boolean value %q", key, value))
+	}
+}
+
+func validateEnvInt(issues *[]string, key string) {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return
+	}
+	if _, err := strconv.Atoi(value); err != nil {
+		*issues = append(*issues, fmt.Sprintf("%s has invalid integer value %q", key, value))
+	}
+}
+
+func validateEnvInt64(issues *[]string, key string) {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return
+	}
+	if _, err := strconv.ParseInt(value, 10, 64); err != nil {
+		*issues = append(*issues, fmt.Sprintf("%s has invalid integer value %q", key, value))
+	}
+}
+
+func validateEnvDuration(issues *[]string, key string) {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" || value == "0" {
+		return
+	}
+	if _, err := time.ParseDuration(value); err != nil {
+		*issues = append(*issues, fmt.Sprintf("%s has invalid duration value %q", key, value))
+	}
+}
+
+func validateEnvDurationExtended(issues *[]string, key string) {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" || value == "0" {
+		return
+	}
+	if before, ok := strings.CutSuffix(value, "d"); ok {
+		if _, err := strconv.ParseFloat(before, 64); err != nil {
+			*issues = append(*issues, fmt.Sprintf("%s has invalid duration value %q", key, value))
+		}
+		return
+	}
+	validateEnvDuration(issues, key)
 }

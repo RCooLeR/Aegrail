@@ -1,5 +1,5 @@
 import { KeyRound, Loader2, QrCode, ShieldCheck } from "lucide-react";
-import { FormEvent, useState } from "react";
+import { type FormEvent, useState } from "react";
 import { createHubUser, loginHubUser, MFARequiredError, startCurrentHubUserTOTP, verifyCurrentHubUserTOTP } from "../../api";
 import type { ApiScope, HubAuthMe, HubUserTOTPEnrollment } from "../../types";
 import { InlineAlert, TextInput } from "./common";

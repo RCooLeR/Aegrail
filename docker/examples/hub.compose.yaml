@@ -5,6 +5,7 @@ x-hub-common: &hub-common
   build:
     context: ../..
     dockerfile: docker/examples/hub.Dockerfile
+    pull: true
   env_file:
     - ./.env.hub
   environment:
@@ -24,15 +25,16 @@ x-hub-common: &hub-common
 
 services:
   postgres18:
-    image: pgvector/pgvector:0.8.2-pg18-trixie
+    image: pgvector/pgvector:0.8.7-pg18-trixie@sha256:9d9c930220cb9bf2f956d10a8f909cf9973d9672ca0278aef2c1e6facccad2e0
     restart: unless-stopped
+    stop_grace_period: 1m
     environment:
       POSTGRES_DB: aegrail
       POSTGRES_USER: aegrail
       POSTGRES_PASSWORD: ${AEGRAIL_POSTGRES_PASSWORD:?set AEGRAIL_POSTGRES_PASSWORD}
     volumes:
-      - postgres18-data:/var/lib/postgresql/data
-      - ../../services/postgres18/initdb:/docker-entrypoint-initdb.d:ro
+      - postgres18-data:/var/lib/postgresql
+      - ../services/postgres18/initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
@@ -41,8 +43,9 @@ services:
       start_period: 10s
 
   redis:
-    image: redis:7.4-alpine
+    image: redis:8.10.2-alpine3.23@sha256:0bf6577d7774e592b29d093e3ac9390eb91e13d72c21e506afce736de5e0eeb0
     restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       AEGRAIL_REDIS_PASSWORD: ${AEGRAIL_REDIS_PASSWORD:?set AEGRAIL_REDIS_PASSWORD}
     command:
@@ -73,6 +76,12 @@ services:
     restart: unless-stopped
     ports:
       - "${AEGRAIL_HTTP_BIND:-127.0.0.1}:${AEGRAIL_HTTP_PORT:-8787}:8787"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/aegrail-hub", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
 volumes:
   hub-data:

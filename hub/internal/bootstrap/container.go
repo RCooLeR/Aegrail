@@ -88,23 +88,30 @@ func (c *Container) ConnectDatabase(ctx context.Context) error {
 		c.db = nil
 		return err
 	}
+	var notificationTransports []string
+	if transportSink, ok := notificationSink.(ports.NotificationTransportSink); ok {
+		notificationTransports = transportSink.NotificationTransports()
+	}
+	findingRepository := postgres.NewHubFindingRepositoryWithNotificationTransports(pool, notificationTransports)
 	c.Hub = hub.New(hub.Dependencies{
-		Meta:              c.meta,
-		Inventory:         postgres.NewInventoryRepository(pool),
-		Ingest:            postgres.NewIngestRepository(pool),
-		Findings:          postgres.NewHubFindingRepository(pool),
-		FileIgnoreRules:   postgres.NewHubFileIgnoreRuleRepository(pool),
-		BrowserAllowlist:  postgres.NewBrowserScriptAllowlistRepository(pool),
-		ModelReports:      postgres.NewModelAnalysisReportRepository(pool),
-		Maintenance:       postgres.NewHubMaintenanceRepository(pool),
-		Model:             c.Model,
-		Jobs:              c.redis,
-		Locks:             c.redis,
-		RateLimiter:       c.redis,
-		Users:             postgres.NewHubUserRepository(pool),
-		PushSubscriptions: pushSubscriptions,
-		Notifications:     notificationSink,
-		UserSecretKey:     c.Config.Hub.UserSecretKey,
+		Meta:               c.meta,
+		Inventory:          postgres.NewInventoryRepository(pool),
+		Ingest:             postgres.NewIngestRepository(pool),
+		Traffic:            postgres.NewTrafficRepository(pool),
+		Findings:           findingRepository,
+		FileIgnoreRules:    postgres.NewHubFileIgnoreRuleRepository(pool),
+		BrowserAllowlist:   postgres.NewBrowserScriptAllowlistRepository(pool),
+		ModelReports:       postgres.NewModelAnalysisReportRepository(pool),
+		Maintenance:        postgres.NewHubMaintenanceRepository(pool),
+		Model:              c.Model,
+		Jobs:               c.redis,
+		Locks:              c.redis,
+		RateLimiter:        c.redis,
+		Users:              postgres.NewHubUserRepository(pool),
+		PushSubscriptions:  pushSubscriptions,
+		Notifications:      notificationSink,
+		NotificationOutbox: findingRepository,
+		UserSecretKey:      c.Config.Hub.UserSecretKey,
 		BackgroundError: func(err error) {
 			c.Logger.Error().Err(err).Msg("hub background task failed")
 		},
@@ -149,7 +156,11 @@ func (c *Container) buildNotificationSink(pushSubscriptions ports.PushSubscripti
 	if err != nil {
 		return nil, err
 	}
-	return notificationfanout.NewFanoutSink(webhookSink, emailSink, pushSink), nil
+	return notificationfanout.NewNamedFanoutSink(
+		notificationfanout.NamedSink{Name: "webhook", Sink: webhookSink},
+		notificationfanout.NamedSink{Name: "email", Sink: emailSink},
+		notificationfanout.NamedSink{Name: "webpush", Sink: pushSink},
+	), nil
 }
 
 func (c *Container) HealthCheck(ctx context.Context) map[string]string {
@@ -200,6 +211,13 @@ func (c *Container) DatabaseStatus(ctx context.Context) error {
 		return errMigratorNotConfigured
 	}
 	return c.migrator.Status(ctx)
+}
+
+func (c *Container) EnsureDatabaseCurrent(ctx context.Context) error {
+	if c.migrator == nil {
+		return errMigratorNotConfigured
+	}
+	return c.migrator.EnsureCurrent(ctx)
 }
 
 func (c *Container) Close() {

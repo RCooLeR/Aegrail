@@ -6,17 +6,17 @@ import (
 	"errors"
 	"time"
 
+	"github.com/rcooler/aegrail/hub/internal/domain"
 	"github.com/rcooler/aegrail/hub/internal/ports"
 )
 
 const (
-	ingestCorrelationJobSchema = "aegrail.hub.job.ingest-correlation.v1"
+	ingestCorrelationJobSchema = "aegrail.hub.job.ingest-correlation.v2"
 	ingestCorrelationQueueName = "ingest-correlation"
 
 	defaultCorrelationWorkerCount   = 1
 	defaultCorrelationQueueTimeout  = 5 * time.Second
 	defaultCorrelationWorkerBackoff = 2 * time.Second
-	defaultCorrelationJobMaxAge     = 30 * time.Minute
 )
 
 type ingestCorrelationJob struct {
@@ -29,6 +29,7 @@ type ingestCorrelationJob struct {
 	Window           time.Duration `json:"window"`
 	Limit            int           `json:"limit"`
 	QueuedAt         time.Time     `json:"queued_at"`
+	TriggerEventIDs  []domain.ID   `json:"trigger_event_ids"`
 }
 
 type CorrelationWorkerOptions struct {
@@ -51,10 +52,10 @@ func (h *Hub) StartCorrelationWorker(ctx context.Context, options CorrelationWor
 	}
 	for range workers {
 		h.workersWG.Add(1)
-		go func() {
+		go runHubWorker(ctx, "correlation", func(ctx context.Context) {
 			defer h.workersWG.Done()
 			h.runCorrelationWorker(ctx, timeout, options.OnError)
-		}()
+		})
 	}
 	return true
 }
@@ -97,13 +98,7 @@ func (h *Hub) HandleCorrelationJob(ctx context.Context, payload []byte) error {
 	if err := json.Unmarshal(payload, &job); err != nil {
 		return err
 	}
-	if job.Schema != "" && job.Schema != ingestCorrelationJobSchema {
-		return nil
-	}
-	if !job.QueuedAt.IsZero() && time.Since(job.QueuedAt) > defaultCorrelationJobMaxAge {
-		return nil
-	}
-	if !h.reserveAutoCorrelationRun(autoCorrelationScopeKey(job.OrganizationSlug, job.ProjectSlug, job.EnvironmentSlug, job.AppSlug), time.Now().UTC()) {
+	if job.Schema != ingestCorrelationJobSchema {
 		return nil
 	}
 	window := job.Window
@@ -118,7 +113,7 @@ func (h *Hub) HandleCorrelationJob(ctx context.Context, payload []byte) error {
 	if since.IsZero() {
 		since = time.Now().UTC().Add(-autoCorrelationLookback)
 	}
-	_, err := h.CorrelateEvents(ctx, CorrelateEventsInput{
+	return h.runAutoCorrelationSingleFlight(ctx, CorrelateEventsInput{
 		OrganizationSlug: job.OrganizationSlug,
 		ProjectSlug:      job.ProjectSlug,
 		EnvironmentSlug:  job.EnvironmentSlug,
@@ -127,6 +122,6 @@ func (h *Hub) HandleCorrelationJob(ctx context.Context, payload []byte) error {
 		Window:           window,
 		Limit:            limit,
 		SaveFindings:     true,
-	})
-	return err
+		TriggerEventIDs:  append([]domain.ID{}, job.TriggerEventIDs...),
+	}, 0)
 }

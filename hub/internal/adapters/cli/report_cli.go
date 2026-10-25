@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,7 +14,7 @@ import (
 	"github.com/rcooler/aegrail/hub/internal/domain"
 	hubapp "github.com/rcooler/aegrail/hub/internal/hub"
 	"github.com/rcooler/aegrail/hub/internal/reports"
-	urfavecli "github.com/urfave/cli/v2"
+	urfavecli "github.com/urfave/cli/v3"
 )
 
 func hubFindingsReportCommand(meta domain.AppMeta) *urfavecli.Command {
@@ -27,14 +28,14 @@ func hubFindingsReportCommand(meta domain.AppMeta) *urfavecli.Command {
 			&urfavecli.IntFlag{Name: "limit", Value: 100, Usage: "maximum findings to export"},
 			&urfavecli.BoolFlag{Name: "compact", Usage: "write compact JSON without indentation"},
 		),
-		Action: func(c *urfavecli.Context) error {
-			container, cleanup, err := newDatabaseContainer(c.Context, meta)
+		Action: func(ctx context.Context, c *urfavecli.Command) error {
+			container, cleanup, err := newDatabaseContainer(ctx, meta)
 			if err != nil {
 				return err
 			}
 			defer cleanup()
 
-			findings, err := container.Hub.ListHubFindings(c.Context, hubapp.ListHubFindingsInput{
+			findings, err := container.Hub.ListHubFindings(ctx, hubapp.ListHubFindingsInput{
 				OrganizationSlug: c.String("org"),
 				ProjectSlug:      c.String("project"),
 				EnvironmentSlug:  c.String("env"),
@@ -74,18 +75,18 @@ func timelineReportCommand(meta domain.AppMeta) *urfavecli.Command {
 			&urfavecli.StringFlag{Name: "output", Aliases: []string{"o"}, Usage: "write report to a file instead of stdout"},
 			&urfavecli.IntFlag{Name: "limit", Value: 1000, Usage: "maximum timeline events to export"},
 		),
-		Action: func(c *urfavecli.Context) error {
+		Action: func(ctx context.Context, c *urfavecli.Command) error {
 			since, err := parseLookback(c.String("since"), time.Now)
 			if err != nil {
 				return err
 			}
-			container, cleanup, err := newDatabaseContainer(c.Context, meta)
+			container, cleanup, err := newDatabaseContainer(ctx, meta)
 			if err != nil {
 				return err
 			}
 			defer cleanup()
 
-			events, err := container.Hub.ListTimelineEvents(c.Context, hubapp.ListTimelineEventsInput{
+			events, err := container.Hub.ListTimelineEvents(ctx, hubapp.ListTimelineEventsInput{
 				OrganizationSlug: c.String("org"),
 				ProjectSlug:      c.String("project"),
 				EnvironmentSlug:  c.String("env"),
@@ -129,14 +130,14 @@ func evidenceBundleReportCommand(meta domain.AppMeta) *urfavecli.Command {
 			&urfavecli.IntFlag{Name: "max-string-length", Value: 500, Usage: "maximum string length in redacted metadata"},
 			&urfavecli.BoolFlag{Name: "compact", Usage: "write compact JSON without indentation"},
 		),
-		Action: func(c *urfavecli.Context) error {
-			container, cleanup, err := newDatabaseContainer(c.Context, meta)
+		Action: func(ctx context.Context, c *urfavecli.Command) error {
+			container, cleanup, err := newDatabaseContainer(ctx, meta)
 			if err != nil {
 				return err
 			}
 			defer cleanup()
 
-			findings, err := container.Hub.ListHubFindings(c.Context, hubapp.ListHubFindingsInput{
+			findings, err := container.Hub.ListHubFindings(ctx, hubapp.ListHubFindingsInput{
 				OrganizationSlug: c.String("org"),
 				ProjectSlug:      c.String("project"),
 				EnvironmentSlug:  c.String("env"),
@@ -185,14 +186,14 @@ func findingReviewReportCommand(meta domain.AppMeta) *urfavecli.Command {
 			&urfavecli.IntFlag{Name: "limit", Value: 100, Usage: "maximum findings and model reports to inspect"},
 			&urfavecli.BoolFlag{Name: "compact", Usage: "write compact JSON without indentation"},
 		),
-		Action: func(c *urfavecli.Context) error {
-			container, cleanup, err := newDatabaseContainer(c.Context, meta)
+		Action: func(ctx context.Context, c *urfavecli.Command) error {
+			container, cleanup, err := newDatabaseContainer(ctx, meta)
 			if err != nil {
 				return err
 			}
 			defer cleanup()
 
-			findings, err := container.Hub.ListHubFindings(c.Context, hubapp.ListHubFindingsInput{
+			findings, err := container.Hub.ListHubFindings(ctx, hubapp.ListHubFindingsInput{
 				OrganizationSlug: c.String("org"),
 				ProjectSlug:      c.String("project"),
 				EnvironmentSlug:  c.String("env"),
@@ -202,7 +203,7 @@ func findingReviewReportCommand(meta domain.AppMeta) *urfavecli.Command {
 			if err != nil {
 				return err
 			}
-			modelReports, err := container.Hub.ListModelAnalysisReports(c.Context, hubapp.ListModelAnalysisReportsInput{
+			modelReports, err := container.Hub.ListModelAnalysisReports(ctx, hubapp.ListModelAnalysisReportsInput{
 				OrganizationSlug: c.String("org"),
 				ProjectSlug:      c.String("project"),
 				EnvironmentSlug:  c.String("env"),
@@ -235,7 +236,7 @@ func modelAnalysisReportCommand(meta domain.AppMeta) *urfavecli.Command {
 	return &urfavecli.Command{
 		Name:  "model-analysis",
 		Usage: "inspect saved model analysis reports",
-		Subcommands: []*urfavecli.Command{
+		Commands: []*urfavecli.Command{
 			modelAnalysisReportListCommand(meta),
 			modelAnalysisReportShowCommand(meta),
 		},
@@ -251,14 +252,14 @@ func modelAnalysisReportListCommand(meta domain.AppMeta) *urfavecli.Command {
 			&urfavecli.IntFlag{Name: "limit", Value: 20, Usage: "maximum reports to list"},
 			&urfavecli.StringFlag{Name: "format", Value: "table", Usage: "table or json"},
 		),
-		Action: func(c *urfavecli.Context) error {
-			container, cleanup, err := newDatabaseContainer(c.Context, meta)
+		Action: func(ctx context.Context, c *urfavecli.Command) error {
+			container, cleanup, err := newDatabaseContainer(ctx, meta)
 			if err != nil {
 				return err
 			}
 			defer cleanup()
 
-			reports, err := container.Hub.ListModelAnalysisReports(c.Context, hubapp.ListModelAnalysisReportsInput{
+			reports, err := container.Hub.ListModelAnalysisReports(ctx, hubapp.ListModelAnalysisReportsInput{
 				OrganizationSlug: c.String("org"),
 				ProjectSlug:      c.String("project"),
 				EnvironmentSlug:  c.String("env"),
@@ -268,7 +269,7 @@ func modelAnalysisReportListCommand(meta domain.AppMeta) *urfavecli.Command {
 			if err != nil {
 				return err
 			}
-			return writeModelAnalysisReportList(c.App.Writer, c.String("format"), reports)
+			return writeModelAnalysisReportList(c.Root().Writer, c.String("format"), reports)
 		},
 	}
 }
@@ -282,14 +283,14 @@ func modelAnalysisReportShowCommand(meta domain.AppMeta) *urfavecli.Command {
 			&urfavecli.StringFlag{Name: "id", Required: true, Usage: "model analysis report id"},
 			&urfavecli.StringFlag{Name: "format", Value: "json", Usage: "json or summary"},
 		),
-		Action: func(c *urfavecli.Context) error {
-			container, cleanup, err := newDatabaseContainer(c.Context, meta)
+		Action: func(ctx context.Context, c *urfavecli.Command) error {
+			container, cleanup, err := newDatabaseContainer(ctx, meta)
 			if err != nil {
 				return err
 			}
 			defer cleanup()
 
-			report, err := container.Hub.GetModelAnalysisReport(c.Context, hubapp.GetModelAnalysisReportInput{
+			report, err := container.Hub.GetModelAnalysisReport(ctx, hubapp.GetModelAnalysisReportInput{
 				OrganizationSlug: c.String("org"),
 				ProjectSlug:      c.String("project"),
 				EnvironmentSlug:  c.String("env"),
@@ -299,7 +300,7 @@ func modelAnalysisReportShowCommand(meta domain.AppMeta) *urfavecli.Command {
 			if err != nil {
 				return err
 			}
-			return writeModelAnalysisReportDetail(c.App.Writer, c.String("format"), report)
+			return writeModelAnalysisReportDetail(c.Root().Writer, c.String("format"), report)
 		},
 	}
 }
@@ -477,9 +478,9 @@ func nonNilStoredReportMetadata(metadata map[string]any) map[string]any {
 	return metadata
 }
 
-func reportWriter(c *urfavecli.Context, outputPath string) (io.Writer, func(), error) {
+func reportWriter(c *urfavecli.Command, outputPath string) (io.Writer, func(), error) {
 	if outputPath == "" {
-		return c.App.Writer, func() {}, nil
+		return c.Root().Writer, func() {}, nil
 	}
 	if dir := filepath.Dir(outputPath); dir != "." && dir != "" {
 		if err := os.MkdirAll(dir, 0o700); err != nil {

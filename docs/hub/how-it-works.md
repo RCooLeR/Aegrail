@@ -27,6 +27,7 @@ PostgreSQL stores:
 - ingest batches and normalized events
 - findings, status history, file ignore rules, browser allowlists
 - deployment markers
+- typed request traffic, parsed User-Agent identity, IP intelligence, and manual IP policy
 - model analysis reports and provenance
 - dashboard users, sessions, and encrypted TOTP material
 - dashboard authentication audit events
@@ -41,15 +42,16 @@ changing the API.
 
 Redis is optional but recommended when monitoring many sites. Hub uses it for
 short-lived fallback/catch-up ingest-correlation jobs, distributed worker locks,
-and shared auth rate limiting. Normal ingest still kicks a coalesced immediate
-correlation pass so findings and notifications are not delayed until a queue
-backlog drains. Durable evidence, findings, users, sessions, and reports stay in
-PostgreSQL.
+and shared auth rate limiting. Every security-relevant ingest batch runs an
+immediate correlation pass, including a batch that crosses a rule threshold
+moments after the preceding batch. Findings and notifications therefore do not
+wait for another event or a queue backlog. Durable evidence, findings, users,
+sessions, and reports stay in PostgreSQL.
 
 Correlation workers use a purpose-built timeline query for candidate evidence:
 database diffs, file mutations, PHP errors, and security-relevant access logs.
-Normal browsing timeline rows remain available to dashboard APIs, but Hub does
-not reread them for every correlation pass.
+Routine requests are projected into typed traffic rows and intentionally excluded
+from the generic security timeline and correlation query.
 
 The Hub process validates required security secrets at startup in `serve` mode.
 `AEGRAIL_DATABASE_URL` is required so production does not silently fall back to
@@ -81,8 +83,18 @@ The Hub:
 7. resolves inventory scope from slugs
 8. stores the external batch ID idempotently
 9. stores normalized events
-10. runs one coalesced immediate correlation pass for security-relevant events
+10. runs an immediate correlation pass for every security-relevant batch
 11. queues Redis fallback correlation work only when the immediate pass fails
+
+Access-log requests also receive a typed relational projection for the Traffic
+and Bots/Crawlers views. Live ingest writes that projection in the same database
+transaction as the event. After an upgrade that introduces the projection,
+`hub serve` backfills unprojected `log.access` events from the preceding 24 hours
+in small, idempotent background batches using the same Go User-Agent classifier;
+API startup is not blocked by that work. Raw traffic queries are capped at a
+24-hour window. Bot list rows are bounded and explicitly report truncation,
+while their aggregate request, error, and cached-verification totals cover the
+full selected scope.
 
 Wire v1 encrypts the JSON payload and authenticates it through the node key. Raw JSON ingest is rejected. Use HTTPS or a trusted private network outside local development because HTTP metadata, cookies, and operator sessions still need transport protection.
 
@@ -115,6 +127,8 @@ Finding status is operator-controlled:
 - `false_positive`
 
 The Hub can also accept the current open findings as baseline. Baseline acceptance is a status action for first-scan noise; it does not delete evidence.
+High and Critical findings are excluded from automated baseline acceptance. All
+finding statuses remain operator-controlled; deployment markers do not change them.
 
 ## Noise Controls
 
@@ -123,7 +137,9 @@ The Hub can also accept the current open findings as baseline. Baseline acceptan
   `themes/<theme>/profiles/id_gencode_<hash>_<timestamp>.tpl` profile cache
   templates.
 - Browser script allowlists approve known domains, inline hashes, or tag-manager IDs.
-- Deployment markers acknowledge open expected file/browser findings inside the confirmed time window and prevent future expected file/browser drift findings for that window. High-risk findings still stay open.
+- Deployment markers add app-scoped release context to nearby evidence. They do not acknowledge, suppress, hide, or lower the severity/risk of findings.
+- Migration `00010_deployment_context_only.sql` reopens findings whose current status was written by the old deployment automation, restores severities still carrying the old automatic adjustment, and deterministically rebuilds their persisted risk factors, score, and band without the old deployment discount. Later operator status or severity decisions are left untouched.
+- IP intelligence uses cached network classification, reverse DNS with forward confirmation, and known provider fingerprints. Only explicit manual policy labels an IP trusted or blocked; provider verification is identity context, not trust. These labels do not suppress findings or configure network enforcement.
 - Config coverage records what the Agent says is enabled/disabled, including sanitized ignore paths.
 
 ## Model Analysis
@@ -148,12 +164,28 @@ load all model reports and then filter them in memory.
 
 ## Operations
 
+Before `hub serve` accepts traffic, it verifies that the PostgreSQL schema is
+at the latest migration bundled with the running binary. Pending migrations make
+startup fail with instructions to run `hub db migrate`; a newer database version
+also fails so an older binary does not run against a future schema.
+When `AEGRAIL_MIGRATE_ON_START=true`, Hub first applies bundled migrations and
+then runs the same schema check. This is intended for single-instance Docker/NAS
+deployments, not clustered Hub fleets.
+
+Hub validates typed environment values during serve startup. A typo such as an
+invalid boolean, integer, or duration fails startup with the variable name
+instead of falling back to a default that hides the mistake.
+
 `GET /healthz` checks the dependencies available to the running process. It
 reports PostgreSQL status, Redis status when Redis is configured, and Ollama
 status when a model gateway is available. It returns `503` when a required
 dependency such as PostgreSQL or configured Redis is missing or unhealthy.
 Ollama/model-analysis failures are reported as degraded optional health so they
 do not make evidence ingest or dashboard availability look fully down.
+
+The `hub healthcheck` CLI command uses the same required/optional health model
+for Docker and NAS probes. It exits non-zero for required dependency failures
+or pending migrations, and exits zero for optional Ollama degradation.
 
 The HTTP server sets read-header, read, write, and idle timeouts. Background
 correlation and model-analysis workers are attached to the process context and
@@ -162,9 +194,11 @@ the Hub waits briefly for them during graceful shutdown.
 Hub also runs an optional in-process maintenance worker. It starts immediately
 with `hub serve`, then repeats at `AEGRAIL_MAINTENANCE_INTERVAL`. The worker
 deletes old ingest events that are not linked to open/acknowledged findings,
-old empty ingest batches, old resolved/false-positive findings, old
-model-analysis reports not tied to active findings, and old authentication
-audit events. Batch size is capped so pruning does not monopolize PostgreSQL.
+old empty ingest batches, old model-analysis reports not tied to active
+findings, and old authentication audit events. Resolved/false-positive
+findings are retained by default for operator history; optional finding
+deletion is guarded by a 30-day minimum and by created/updated/last-event
+timestamps. Batch size is capped so pruning does not monopolize PostgreSQL.
 Owners can call `GET /api/v1/system/status` to inspect database size and core
 table row/byte estimates.
 
@@ -181,12 +215,21 @@ Findings publish internal notification events after deterministic correlation:
   closed/non-open statuses.
 - `finding.status_updated`: an operator changed a finding status.
 
-Hub fans those events out to every configured sink immediately after finding
-creation/status update. There is no notification cron or daily digest job in Hub.
-If operators see a batch at the same wall-clock time, inspect whether correlation
-was processing fallback backlog or whether the mail/browser provider delayed
-delivery. Notification delivery failures are reported to the worker/error log,
-while the finding remains stored in PostgreSQL as the source of truth.
+For `finding.observed`, Hub commits the new finding and one durable PostgreSQL
+outbox intent per configured transport in the same transaction. It attempts
+those intents immediately after commit. A failed email, webhook, or browser-push
+attempt is retried independently after a bounded exponential delay, starting at
+five seconds and capped at 15 minutes; a successful email is therefore not sent
+again merely because browser push failed. Lease-protected PostgreSQL claims let
+multiple Hub processes run the one-second retry worker without concurrently
+delivering the same intent. `finding.status_updated` remains an immediate
+best-effort event.
+
+There is no notification cron or daily digest job in Hub. If operators see a
+batch at the same wall-clock time, inspect whether correlation was processing
+fallback backlog or whether the mail/browser provider delayed delivery.
+Notification delivery failures are retained with the pending outbox intent and
+reported to the worker/error log.
 
 Webhook notifications are enabled with `AEGRAIL_NOTIFICATION_WEBHOOK_URL`.
 Hub posts JSON containing the event type, send time, finding, and metadata. If
@@ -203,7 +246,8 @@ Email notifications are enabled by setting SMTP credentials:
 event/severity filters, and sends escaped HTML summaries with dashboard links
 when `AEGRAIL_HUB_PUBLIC_URL` is set. Email includes Hub's notification
 `Sent` timestamp so provider/client delivery delays can be distinguished from
-Hub-side delays.
+Hub-side delays. With the default email threshold, newly persisted
+High/Critical findings send mail immediately from the Hub save path.
 
 Browser push notifications are enabled with a VAPID key pair generated by
 `hub notifications vapid-keys`. Dashboard users opt in from Settings. The

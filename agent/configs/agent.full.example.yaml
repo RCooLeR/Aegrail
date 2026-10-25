@@ -31,6 +31,11 @@ hub:
   node_secret: replace-with-node-secret
   node_secret_env: ""
 
+  # HTTP timeout for sending encrypted batches to Hub. Keep this long enough
+  # for slow NAS/VPS links, but short enough that one bad network call does not
+  # stall the agent loop forever.
+  timeout: 60s
+
   # Maximum pending queue batches to send to Hub after each agent loop.
   # CLI --send-limit overrides this. 0 means use CLI/runtime default.
   send_limit: 100

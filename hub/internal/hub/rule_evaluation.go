@@ -2,6 +2,7 @@ package hub
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -233,11 +234,11 @@ func builtInRuleEvaluationCases() []ruleEvaluationCase {
 			fixture: RuleEvaluationFixture{
 				ID:          "deploy-window-browser-drift",
 				Name:        "Deploy Window Browser Drift",
-				Kind:        "deployment_scoring",
-				Description: "A new browser script domain during a deployment should be lowered from medium to low.",
+				Kind:        "deployment_context",
+				Description: "A new browser script domain during a deployment should retain its severity with deployment context attached.",
 			},
 			expected: []RuleEvaluationExpectedSignal{
-				{ID: "browser-script-domain-new", Severity: domain.SeverityLow, Confidence: domain.ConfidenceMedium},
+				{ID: "browser-script-domain-new", Severity: domain.SeverityMedium, Confidence: domain.ConfidenceMedium},
 			},
 			evaluate: evaluateDeployWindowBrowserDriftFixture,
 		},
@@ -481,7 +482,7 @@ func evaluateDeployWindowBrowserDriftFixture(now time.Time) []RuleEvaluationSign
 	}
 	signals := make([]RuleEvaluationSignal, 0, len(findings))
 	for _, finding := range findings {
-		signals = append(signals, findingEvaluationSignal(applyDeploymentScoring(finding, []domain.DeploymentMarker{deployment}), "hub.deployment_scoring"))
+		signals = append(signals, findingEvaluationSignal(annotateFindingWithDeploymentContext(finding, []domain.DeploymentMarker{deployment}), "hub.deployment_context"))
 	}
 	return signals
 }
@@ -668,9 +669,7 @@ func evaluationAccessEvent(id string, eventTime time.Time, method string, path s
 		"status_code": status,
 		"remote_addr": remoteAddr,
 	}
-	for key, value := range extraPayload {
-		payload[key] = value
-	}
+	maps.Copy(payload, extraPayload)
 	return evaluationTimelineEvent(id, eventTime, "log.access", "access.log", domain.SeverityInfo, payload)
 }
 

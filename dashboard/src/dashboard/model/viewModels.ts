@@ -1,7 +1,7 @@
 import { buildEstateModel, collectorIsProblem, type CompanyModel, type EstateModel, type InstanceModel } from "../../estate";
 import type { HubFinding, RuleDefinition, TimelineEvent } from "../../types";
 import { severityRank } from "../config/navigation";
-import type { AllowlistRow, BrowserScriptRow, DashboardStats, DeploymentRow, FilterState, IssueRow, ReportRow, SignalRow, SiteRow, ViewKey } from "../types";
+import type { AllowlistRow, BrowserScriptRow, DashboardStats, FilterState, IssueRow, SignalRow, SiteRow, ViewKey } from "../types";
 import { operatorActionGuidance } from "../utils/metadata";
 import { newest, titleCase } from "../utils/time";
 
@@ -14,13 +14,13 @@ export function buildSiteRows(instances: InstanceModel[]): SiteRow[] {
   return Array.from(groups.entries()).map(([key, groupInstances]) => {
     const first = groupInstances[0];
     const status = worstStatus(groupInstances);
-    const worst = sortIssueRows(buildIssueRows(groupInstances, new Map())).find((row) => row.finding.status === "open");
     return {
       agentActive: groupInstances.reduce((sum, instance) => sum + instance.activeAgentCount, 0),
       agentCount: groupInstances.reduce((sum, instance) => sum + instance.agentCount, 0),
       companyName: first.companyName,
       companySlug: first.companySlug,
       criticalIssues: groupInstances.reduce((sum, instance) => sum + instance.criticalFindings, 0),
+      findingCountsExact: groupInstances.every((instance) => instance.findingCountsExact),
       instances: groupInstances,
       key,
       lastSignalAt: newest(groupInstances.map((instance) => instance.lastSignalAt)),
@@ -28,7 +28,7 @@ export function buildSiteRows(instances: InstanceModel[]): SiteRow[] {
       projectName: first.projectName,
       projectSlug: first.projectSlug,
       status,
-      statusReason: worst?.finding.title ?? groupInstances.find((instance) => instance.status !== "healthy")?.statusReason ?? "OK"
+      statusReason: groupInstances.find((instance) => instance.status === status)?.statusReason ?? "OK"
     };
   }).sort((left, right) => statusRank(right.status) - statusRank(left.status) || right.openIssues - left.openIssues || left.projectName.localeCompare(right.projectName));
 }
@@ -80,6 +80,10 @@ export function sortIssueRows(rows: IssueRow[]) {
   );
 }
 
+export function findingCountLabel(value: number, exact: boolean) {
+  return exact ? String(value) : `${value}+`;
+}
+
 export function buildSignalRows(instances: InstanceModel[], issueRows: IssueRow[]): SignalRow[] {
   const issueByEvent = new Map<string, HubFinding>();
   for (const row of issueRows) {
@@ -104,12 +108,6 @@ export function filterSignalRows(rows: SignalRow[], filters: FilterState) {
     if (!query) return true;
     return signalSearchValues(row).some((value) => value.toLowerCase().includes(query));
   });
-}
-
-export function buildReportRows(instances: InstanceModel[]): ReportRow[] {
-  return instances.flatMap((instance) =>
-    instance.data.reports.data.map((report) => ({ instance, report }))
-  ).sort((left, right) => new Date(right.report.generated_at).getTime() - new Date(left.report.generated_at).getTime());
 }
 
 export function buildBrowserScriptRows(instances: InstanceModel[]): BrowserScriptRow[] {
@@ -144,12 +142,6 @@ export function buildAllowlistRows(instances: InstanceModel[]): AllowlistRow[] {
   ).sort((left, right) => new Date(right.entry.updated_at).getTime() - new Date(left.entry.updated_at).getTime());
 }
 
-export function buildDeploymentRows(instances: InstanceModel[]): DeploymentRow[] {
-  return instances.flatMap((instance) =>
-    instance.data.deployments.data.map((deployment) => ({ instance, deployment }))
-  ).sort((left, right) => new Date(right.deployment.started_at).getTime() - new Date(left.deployment.started_at).getTime());
-}
-
 export function browserScriptLabel(script: BrowserScriptRow["script"]) {
   if (script.tag_manager && script.tag_manager_ids?.length) {
     return `Tag manager: ${script.tag_manager_ids.join(", ")}`;
@@ -172,16 +164,41 @@ export function compactInlineScriptPreview(value: string, limit = 160) {
   return `${compact.slice(0, Math.max(0, limit - 3)).trim()}...`;
 }
 
-export function summarizeEstate(instances: InstanceModel[], issueRows: IssueRow[], signalRows: SignalRow[]): DashboardStats {
+export function summarizeEstate(
+  instances: InstanceModel[],
+  issueRows: IssueRow[],
+  signalRows: SignalRow[],
+  filters: FilterState
+): DashboardStats {
   const openRows = issueRows.filter((row) => row.finding.status === "open");
+  const canUseSummary = !filters.query.trim() && ["all", "critical", "high", "medium"].includes(filters.severity);
+  const criticalIssues = canUseSummary && ["all", "critical"].includes(filters.severity)
+    ? instances.reduce((total, instance) => total + instance.criticalFindings, 0)
+    : openRows.filter((row) => row.finding.severity === "critical").length;
+  const highIssues = canUseSummary && ["all", "high"].includes(filters.severity)
+    ? instances.reduce((total, instance) => total + instance.highFindings, 0)
+    : openRows.filter((row) => row.finding.severity === "high").length;
+  const affectedCompanies = canUseSummary
+    ? new Set(instances.filter((instance) => openFindingCountForFilter(instance, filters.severity) > 0).map((instance) => instance.companySlug)).size
+    : new Set(openRows.map((row) => row.instance.companySlug)).size;
   return {
-    affectedCompanies: new Set(openRows.map((row) => row.instance.companySlug)).size,
+    affectedCompanies,
     coverageProblems: instances.filter((instance) => instance.coverageWarnings > 0 || instance.collectors.some(collectorIsProblem)).length,
-    criticalIssues: openRows.filter((row) => row.finding.severity === "critical").length,
-    highIssues: openRows.filter((row) => row.finding.severity === "high").length,
+    criticalIssues,
+    findingCountsExact: canUseSummary && instances.every((instance) => instance.findingCountsExact),
+    highIssues,
     offlineNodes: instances.filter((instance) => instance.activeAgentCount === 0 || instance.staleAgents > 0).length,
     signals: signalRows.length
   };
+}
+
+function openFindingCountForFilter(instance: InstanceModel, severity: string) {
+  switch (severity) {
+    case "critical": return instance.criticalFindings;
+    case "high": return instance.highFindings;
+    case "medium": return instance.mediumFindings;
+    default: return instance.openFindings;
+  }
 }
 
 export function serviceFromCollector(key: string) {
@@ -292,15 +309,14 @@ export function viewSubtitle(view: ViewKey, filters: FilterState, estate: Estate
   const company = filters.company === "all" ? "all companies" : estate.companies.find((item) => item.companySlug === filters.company)?.companyName ?? filters.company;
   switch (view) {
     case "overview": return `What needs attention right now / ${company}`;
-    case "companies": return "Customers and business groups";
-    case "sites": return "Websites and projects";
     case "nodes": return "Monitored runtime targets";
     case "issues": return "Working queue";
     case "issue": return "Issue investigation";
+    case "traffic": return "Requests, clients, paths, and network context";
+    case "bots": return "Bots, crawlers, and automated clients";
     case "signals": return "Raw events for investigation";
     case "browser": return "Browser-rendered scripts and allowlist";
-    case "deployments": return "Deployment windows and rollout context";
-    case "reports": return "Human-readable summaries";
+    case "deployments": return "Release markers and rollout context";
     case "settings": return "Access, scope, defaults, and inventory";
   }
 }
@@ -320,7 +336,7 @@ function statusRank(status: string) {
   }
 }
 
-function serviceForFinding(finding: HubFinding, rule?: RuleDefinition) {
+export function serviceForFinding(finding: HubFinding, rule?: RuleDefinition) {
   const text = [finding.rule_id, finding.title, finding.summary, finding.description, rule?.category].filter(Boolean).join(" ").toLowerCase();
   if (text.includes("browser") || text.includes("script") || text.includes("tag-manager")) return "Browser";
   if (text.includes("database") || text.includes("db.") || text.includes("wordpress user") || text.includes("employee")) return "Database";

@@ -520,7 +520,7 @@ func isHTTPURL(parsed *url.URL) bool {
 }
 
 func sanitizeBrowserIconURL(parsed *url.URL) string {
-	clean := *parsed
+	clean := parsed.Clone()
 	clean.User = nil
 	clean.RawQuery = ""
 	clean.Fragment = ""
@@ -528,8 +528,8 @@ func sanitizeBrowserIconURL(parsed *url.URL) string {
 }
 
 func isIconRel(value string) bool {
-	parts := strings.Fields(strings.ToLower(value))
-	for _, part := range parts {
+	parts := strings.FieldsSeq(strings.ToLower(value))
+	for part := range parts {
 		switch part {
 		case "icon", "shortcut", "apple-touch-icon", "apple-touch-icon-precomposed", "mask-icon":
 			return true

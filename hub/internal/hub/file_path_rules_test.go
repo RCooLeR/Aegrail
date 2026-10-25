@@ -47,6 +47,32 @@ func TestSuspiciousFilePathRuleSkipsGeneratedPrestaShopThemeProfiles(t *testing.
 	}
 }
 
+func TestSuspiciousFilePathRuleFlagsAgentDetectedPHPWebshellContent(t *testing.T) {
+	event := testFilePathEvent("file.created", "modules/gridhtml/x.php", map[string]any{
+		"file_role":             "suspicious_php",
+		"security_context":      "webshell_like_php",
+		"suspicious_php_reason": "post_base64_eval_webshell",
+	})
+	rule, ok := suspiciousFilePathRuleForEvent(event)
+	if !ok {
+		t.Fatalf("expected suspicious PHP content to be flagged")
+	}
+	if rule.RuleID != "file-suspicious-php-content" || rule.Severity != domain.SeverityHigh || rule.Confidence != domain.ConfidenceHigh {
+		t.Fatalf("rule = %#v, want high-confidence suspicious PHP content rule", rule)
+	}
+}
+
+func TestSuspiciousFilePathRuleFlagsPrestaShopFacetedSearchExploitArtifact(t *testing.T) {
+	event := testFilePathEvent("file.created", "modules/ps_facetedsearch/ps_facetedsearch-3d2c8f50.php", nil)
+	rule, ok := suspiciousFilePathRuleForEvent(event)
+	if !ok {
+		t.Fatalf("expected ps_facetedsearch exploit artifact to be flagged")
+	}
+	if rule.RuleID != "prestashop-facetedsearch-exploit-artifact" || rule.Severity != domain.SeverityHigh {
+		t.Fatalf("rule = %#v, want PrestaShop faceted search exploit artifact rule", rule)
+	}
+}
+
 func TestSuspiciousFilePathRuleKeepsNormalThemeProfileTemplates(t *testing.T) {
 	event := testFilePathEvent("file.modified", "themes/at_petstore/profiles/layout.tpl", nil)
 	rule, ok := suspiciousFilePathRuleForEvent(event)

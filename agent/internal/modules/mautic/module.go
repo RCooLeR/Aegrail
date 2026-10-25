@@ -23,7 +23,7 @@ func Spec() modules.Spec {
 		},
 		Notes: []string{
 			"Tracks user and role drift, plugin and integration changes, OAuth clients, webhooks, and high-signal file changes.",
-			"Access logs are filtered to avoid routine email redirect and tracking noise while keeping admin, API, auth, and error traffic.",
+			"Routine email redirect and tracking requests feed traffic telemetry while admin, API, auth, and error requests remain high-signal security evidence.",
 		},
 	}
 }

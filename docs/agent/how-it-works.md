@@ -200,14 +200,14 @@ Admin/login and account-recovery paths are intentionally retained because they e
 
 The access log can prove that a login or reset request was made. It cannot always prove the application accepted the credentials, because some frameworks return `200` for both success and failure. Hub reports redirect-style login POSTs as likely success; repeated non-redirect login attempts are handled by the existing burst rules.
 
-Global access-log filtering:
+Global access-log classification:
 
-- Routine successful public `GET`, `HEAD`, and `OPTIONS` requests below `400` are dropped for every platform. Routine successful public API `POST`, `PUT`, and `PATCH` requests below `400` for `/api`, `/rest`, and `/graphql` paths are also dropped. Aegrail is not a web analytics pipeline; paths like category pages, home pages, locale roots, public API polling, and ordinary public browsing should not become Hub timeline rows.
-- Localized application REST endpoints below `500`, such as `/<country>/api/restapi/*`, are dropped even when the path contains words like `login`; those are treated as customer/API traffic, not admin login evidence.
-- Routine static asset requests below `500` are dropped for every platform. This includes common CSS/JS/map/image/font/media suffixes, so PrestaShop `/modules/.../*.js` and `/modules/.../*.css` cache hits do not become log events or volume findings.
-- Static asset server errors are kept because they can explain broken deployments or infrastructure problems.
-- Non-API public `POST` requests, such as checkout or form flows, are kept unless a platform-specific filter identifies them as routine tracking noise.
-- Direct PHP probes, admin/login/account-recovery paths, Tor-marked requests, client errors, and application/server errors remain high-signal evidence.
+- Routine successful public `GET`, `HEAD`, and `OPTIONS` requests below `400`, plus routine public API `POST`, `PUT`, and `PATCH` requests below `400` for `/api`, `/rest`, and `/graphql`, are emitted as `traffic.request`. They feed the typed Traffic and Bots/Crawlers views without entering the generic security timeline or correlation rules.
+- Localized application REST endpoints below `500`, such as `/<country>/api/restapi/*`, are classified as routine traffic even when the path contains words like `login`; they are customer/API traffic, not admin-login evidence.
+- Routine static asset requests below `500` are also traffic telemetry. This includes common CSS/JS/map/image/font/media suffixes and PrestaShop `/modules/.../*.js` and `/modules/.../*.css` cache hits.
+- Static asset server errors remain high-signal `log.access` evidence because they can explain broken deployments or infrastructure problems.
+- Non-API public `POST` requests, such as checkout or form flows, remain high signal unless a platform-specific classifier identifies them as routine tracking traffic.
+- Direct PHP probes, admin/login/account-recovery paths, Tor-marked requests, client errors, and application/server errors remain high-signal `log.access` evidence.
 
 WordPress access-log filtering:
 
@@ -218,21 +218,21 @@ WordPress access-log filtering:
 
 Mautic access-log filtering:
 
-- Routine email/campaign tracking traffic below `500` is dropped for paths such as `/r/...`, `/email/...`, `/mtracking.gif`, `/mtc/event`, `/mtc.js`, `/asset/...`, `/download/...`, `/page/...`, and `/form/submit...`.
-- Static assets are dropped for status codes below `500`, including noisy `404` CSS/image/font requests.
+- Routine email/campaign tracking traffic below `500` is classified as `traffic.request` for paths such as `/r/...`, `/email/...`, `/mtracking.gif`, `/mtc/event`, `/mtc.js`, `/asset/...`, `/download/...`, `/page/...`, and `/form/submit...`.
+- Static assets become traffic telemetry for status codes below `500`, including noisy `404` CSS/image/font requests.
 - Admin, API, OAuth, installer, upgrade, login/logout, password-reset, direct PHP probes, and server errors are kept.
 - The goal is to avoid turning email redirect volume into dashboard noise while still preserving request evidence that can validate compromise or operational errors.
 
 Yii2 RBAC access-log filtering:
 
-- Static assets under `/assets/`, `/app-assets/`, `/css/`, `/js/`, `/favicon/`, and common image/font/map suffixes are dropped below `500`.
-- `GET /`, `GET /robots.txt`, and `GET /favicon.ico` below `400` are dropped.
+- Static assets under `/assets/`, `/app-assets/`, `/css/`, `/js/`, `/favicon/`, and common image/font/map suffixes become traffic telemetry below `500`.
+- `GET /`, `GET /robots.txt`, and `GET /favicon.ico` below `400` become traffic telemetry.
 - Login/logout, admin, user/profile, RBAC, password-reset, Yii debug/Gii, direct PHP probes, and server errors are kept.
 
 Laravel access-log filtering:
 
-- Static assets, Vite/build assets, public vendor assets, favicons, and common image/font/map suffixes are dropped below `500`.
-- `GET /`, `GET /robots.txt`, and favicon requests below `400` are dropped.
+- Static assets, Vite/build assets, public vendor assets, favicons, and common image/font/map suffixes become traffic telemetry below `500`.
+- `GET /`, `GET /robots.txt`, and favicon requests below `400` become traffic telemetry.
 - Login/logout, admin/dashboard/API/profile/users/roles/permissions/reports/import/shortener/Horizon/Telescope paths, password-reset paths, direct PHP probes, and server errors are kept.
 
 PHP error events are queued as `log.php_error` and contain:
@@ -738,6 +738,10 @@ When sending with `hub.protocol: aegrail-wire-v1`, the Agent encrypts the queued
 POST <hub.url>/api/v1/ingest/events
 ```
 
+`hub.timeout` controls the HTTP timeout for those sends. It defaults to `60s`;
+increase it for slow private links, and avoid very large values that let one
+stalled Hub connection delay the whole agent loop.
+
 Envelope:
 
 ```json
@@ -821,7 +825,7 @@ Finding metadata should be operator-friendly:
 - Database user issues should show the full account identifier when available, plus masked/HMAC hints for matching and display.
 - File issues should group related files and show a capped changed-file list.
 - Risk metadata records severity, confidence, rule category, event count, host count, deployment context, score, and band.
-- Deployment windows can lower expected low/medium drift but must not hide high-risk administrator, payment, persistence, or incident-chain findings.
+- Deployment markers add release context but cannot change finding status, visibility, severity, score, or risk band.
 
 Rule evaluation:
 

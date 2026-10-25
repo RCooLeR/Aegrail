@@ -5,8 +5,10 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rcooler/aegrail/hub/internal/domain"
+	"github.com/rcooler/aegrail/hub/internal/ports"
 )
 
 func TestReportNotificationErrorThrottlesRepeatedPushTLSFailures(t *testing.T) {
@@ -82,6 +84,88 @@ func TestNotifyHubFindingsStripsSaveCreatedMetadata(t *testing.T) {
 	}
 	if _, ok := findings[0].Metadata[domain.HubFindingMetadataSaveCreated]; ok {
 		t.Fatalf("returned finding metadata leaked internal save marker: %#v", findings[0].Metadata)
+	}
+}
+
+func TestSaveHubFindingsObservedNotifiesCreatedHighFinding(t *testing.T) {
+	notifications := &memoryNotificationSink{}
+	findings := newMemoryHubFindingRepository()
+	hub := New(Dependencies{Findings: findings, Notifications: notifications})
+	input := []domain.HubFinding{{
+		EnvironmentID: "environment-1",
+		RuleID:        "wordpress-admin-user-added",
+		RuleVersion:   "2026-07-07.1",
+		DedupeKey:     "admin-user",
+		Severity:      domain.SeverityHigh,
+		Confidence:    domain.ConfidenceHigh,
+		Title:         "WordPress administrator added",
+	}}
+
+	saved, err := hub.saveHubFindingsObserved(context.Background(), input, "test")
+	if err != nil {
+		t.Fatalf("saveHubFindingsObserved returned error: %v", err)
+	}
+	if len(notifications.items) != 1 {
+		t.Fatalf("notifications = %#v, want one observed notification", notifications.items)
+	}
+	if notifications.items[0].Type != "finding.observed" || notifications.items[0].Finding.Severity != domain.SeverityHigh {
+		t.Fatalf("notification = %#v, want observed high finding", notifications.items[0])
+	}
+	if _, ok := saved[0].Metadata[domain.HubFindingMetadataSaveCreated]; ok {
+		t.Fatalf("saved finding leaked internal save marker: %#v", saved[0].Metadata)
+	}
+
+	if _, err := hub.saveHubFindingsObserved(context.Background(), input, "test"); err != nil {
+		t.Fatalf("second saveHubFindingsObserved returned error: %v", err)
+	}
+	if len(notifications.items) != 1 {
+		t.Fatalf("notifications = %#v, want duplicate save not to resend observed notification", notifications.items)
+	}
+}
+
+type blockingHubNotificationSink struct {
+	started chan<- struct{}
+	release <-chan struct{}
+}
+
+func (s blockingHubNotificationSink) NotifyHubFinding(context.Context, ports.HubFindingNotification) error {
+	s.started <- struct{}{}
+	<-s.release
+	return nil
+}
+
+func TestNotifyHubFindingsStartsIndependentFindingEmailsConcurrently(t *testing.T) {
+	started := make(chan struct{}, 2)
+	release := make(chan struct{})
+	hub := New(Dependencies{
+		Notifications: blockingHubNotificationSink{started: started, release: release},
+	})
+	findings := []domain.HubFinding{
+		notificationTestFinding("open", true),
+		notificationTestFinding("open", true),
+	}
+	findings[0].ID = "finding-1"
+	findings[1].ID = "finding-2"
+	done := make(chan error, 1)
+	go func() {
+		done <- hub.notifyHubFindings(context.Background(), "finding.observed", findings, nil)
+	}()
+
+	for index := range findings {
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			t.Fatalf("finding notification %d did not start promptly", index+1)
+		}
+	}
+	close(release)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("notifyHubFindings returned error: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("notifyHubFindings did not finish after deliveries completed")
 	}
 }
 

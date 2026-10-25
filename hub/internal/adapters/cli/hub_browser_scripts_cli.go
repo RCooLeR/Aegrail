@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"text/tabwriter"
@@ -8,14 +9,14 @@ import (
 
 	"github.com/rcooler/aegrail/hub/internal/domain"
 	hubapp "github.com/rcooler/aegrail/hub/internal/hub"
-	urfavecli "github.com/urfave/cli/v2"
+	urfavecli "github.com/urfave/cli/v3"
 )
 
 func hubBrowserScriptsCommand(meta domain.AppMeta) *urfavecli.Command {
 	return &urfavecli.Command{
 		Name:  "browser-scripts",
 		Usage: "review browser script drift allowlists",
-		Subcommands: []*urfavecli.Command{
+		Commands: []*urfavecli.Command{
 			{
 				Name:  "allow",
 				Usage: "approve a browser script drift value",
@@ -27,14 +28,14 @@ func hubBrowserScriptsCommand(meta domain.AppMeta) *urfavecli.Command {
 					&urfavecli.StringFlag{Name: "reason", Usage: "review note explaining why this value is accepted"},
 					&urfavecli.StringFlag{Name: "approved-by", Usage: "reviewer identity"},
 				),
-				Action: func(c *urfavecli.Context) error {
-					container, cleanup, err := newDatabaseContainer(c.Context, meta)
+				Action: func(ctx context.Context, c *urfavecli.Command) error {
+					container, cleanup, err := newDatabaseContainer(ctx, meta)
 					if err != nil {
 						return err
 					}
 					defer cleanup()
 
-					entry, err := container.Hub.AllowBrowserScript(c.Context, hubapp.AllowBrowserScriptInput{
+					entry, err := container.Hub.AllowBrowserScript(ctx, hubapp.AllowBrowserScriptInput{
 						OrganizationSlug: c.String("org"),
 						ProjectSlug:      c.String("project"),
 						EnvironmentSlug:  c.String("env"),
@@ -48,7 +49,7 @@ func hubBrowserScriptsCommand(meta domain.AppMeta) *urfavecli.Command {
 					if err != nil {
 						return err
 					}
-					fmt.Fprintf(c.App.Writer, "Allowed browser script %s %q for %s\n", entry.Kind, entry.Value, browserAllowlistPageLabel(entry.PageURL))
+					fmt.Fprintf(c.Root().Writer, "Allowed browser script %s %q for %s\n", entry.Kind, entry.Value, browserAllowlistPageLabel(entry.PageURL))
 					return nil
 				},
 			},
@@ -63,14 +64,14 @@ func hubBrowserScriptsCommand(meta domain.AppMeta) *urfavecli.Command {
 					&urfavecli.StringFlag{Name: "reason", Usage: "review note explaining why this value is accepted"},
 					&urfavecli.StringFlag{Name: "approved-by", Usage: "reviewer identity"},
 				),
-				Action: func(c *urfavecli.Context) error {
-					container, cleanup, err := newDatabaseContainer(c.Context, meta)
+				Action: func(ctx context.Context, c *urfavecli.Command) error {
+					container, cleanup, err := newDatabaseContainer(ctx, meta)
 					if err != nil {
 						return err
 					}
 					defer cleanup()
 
-					result, err := container.Hub.AllowBrowserScriptFromFinding(c.Context, hubapp.AllowBrowserScriptFromFindingInput{
+					result, err := container.Hub.AllowBrowserScriptFromFinding(ctx, hubapp.AllowBrowserScriptFromFindingInput{
 						OrganizationSlug: c.String("org"),
 						ProjectSlug:      c.String("project"),
 						EnvironmentSlug:  c.String("env"),
@@ -85,7 +86,7 @@ func hubBrowserScriptsCommand(meta domain.AppMeta) *urfavecli.Command {
 						return err
 					}
 					fmt.Fprintf(
-						c.App.Writer,
+						c.Root().Writer,
 						"Allowed browser script %s %q for %s from finding %s\n",
 						result.Entry.Kind,
 						result.Entry.Value,
@@ -104,14 +105,14 @@ func hubBrowserScriptsCommand(meta domain.AppMeta) *urfavecli.Command {
 					&urfavecli.StringFlag{Name: "page", Usage: "optional page URL filter"},
 					&urfavecli.StringFlag{Name: "status", Usage: "optional status filter: active or disabled"},
 				),
-				Action: func(c *urfavecli.Context) error {
-					container, cleanup, err := newDatabaseContainer(c.Context, meta)
+				Action: func(ctx context.Context, c *urfavecli.Command) error {
+					container, cleanup, err := newDatabaseContainer(ctx, meta)
 					if err != nil {
 						return err
 					}
 					defer cleanup()
 
-					entries, err := container.Hub.ListBrowserScriptAllowlist(c.Context, hubapp.ListBrowserScriptAllowlistInput{
+					entries, err := container.Hub.ListBrowserScriptAllowlist(ctx, hubapp.ListBrowserScriptAllowlistInput{
 						OrganizationSlug: c.String("org"),
 						ProjectSlug:      c.String("project"),
 						EnvironmentSlug:  c.String("env"),
@@ -124,10 +125,10 @@ func hubBrowserScriptsCommand(meta domain.AppMeta) *urfavecli.Command {
 						return err
 					}
 					if len(entries) == 0 {
-						fmt.Fprintln(c.App.Writer, "No browser script allowlist entries found.")
+						fmt.Fprintln(c.Root().Writer, "No browser script allowlist entries found.")
 						return nil
 					}
-					writer := tabwriter.NewWriter(c.App.Writer, 0, 0, 2, ' ', 0)
+					writer := tabwriter.NewWriter(c.Root().Writer, 0, 0, 2, ' ', 0)
 					fmt.Fprintln(writer, "PAGE\tKIND\tVALUE\tSTATUS\tAPPROVED_BY\tUPDATED_AT\tREASON\tID")
 					for _, entry := range entries {
 						fmt.Fprintf(
@@ -156,14 +157,14 @@ func hubBrowserScriptsCommand(meta domain.AppMeta) *urfavecli.Command {
 					&urfavecli.StringFlag{Name: "reason", Usage: "review note explaining the status change"},
 					&urfavecli.StringFlag{Name: "approved-by", Usage: "reviewer identity"},
 				),
-				Action: func(c *urfavecli.Context) error {
-					container, cleanup, err := newDatabaseContainer(c.Context, meta)
+				Action: func(ctx context.Context, c *urfavecli.Command) error {
+					container, cleanup, err := newDatabaseContainer(ctx, meta)
 					if err != nil {
 						return err
 					}
 					defer cleanup()
 
-					entry, err := container.Hub.UpdateBrowserScriptAllowlistStatus(c.Context, hubapp.UpdateBrowserScriptAllowlistStatusInput{
+					entry, err := container.Hub.UpdateBrowserScriptAllowlistStatus(ctx, hubapp.UpdateBrowserScriptAllowlistStatusInput{
 						OrganizationSlug: c.String("org"),
 						ProjectSlug:      c.String("project"),
 						EnvironmentSlug:  c.String("env"),
@@ -176,7 +177,7 @@ func hubBrowserScriptsCommand(meta domain.AppMeta) *urfavecli.Command {
 					if err != nil {
 						return err
 					}
-					fmt.Fprintf(c.App.Writer, "Browser script allowlist entry %s is now %s.\n", entry.ID, entry.Status)
+					fmt.Fprintf(c.Root().Writer, "Browser script allowlist entry %s is now %s.\n", entry.ID, entry.Status)
 					return nil
 				},
 			},

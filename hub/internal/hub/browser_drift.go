@@ -104,17 +104,10 @@ func (h *Hub) AnalyzeBrowserScriptDrift(ctx context.Context, input AnalyzeBrowse
 	if err != nil {
 		return BrowserScriptDriftResult{}, err
 	}
-	findings = filterDeploymentExpectedFindings(findings)
 	findings = applyRiskScoringToFindings(findings)
 	if input.SaveFindings && len(findings) > 0 {
-		if h.findings == nil {
-			return BrowserScriptDriftResult{}, errors.New("finding repository is not configured")
-		}
-		findings, err = h.findings.SaveHubFindings(ctx, findings)
+		findings, err = h.saveHubFindingsObserved(ctx, findings, "browser_script_drift")
 		if err != nil {
-			return BrowserScriptDriftResult{}, err
-		}
-		if err := h.notifyHubFindings(ctx, "finding.observed", findings, map[string]any{"source": "browser_script_drift"}); err != nil {
 			return BrowserScriptDriftResult{}, err
 		}
 	}

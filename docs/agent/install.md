@@ -24,6 +24,8 @@ Required config areas:
 - `hub.protocol`: use `aegrail-wire-v1` for new nodes.
 - `hub.hub_public_key`: Hub public key shown when the Hub creates the node.
 - `hub.node_secret` or `hub.node_secret_env`: node private key shown once when the Hub creates the node.
+- `hub.timeout`: optional HTTP timeout for encrypted Agent-to-Hub batch sends.
+  Default is `60s`.
 - `identity`: organization, project, environment, host, agent ID, labels.
 - `runtime.queue_dir` and `runtime.state_dir`: local sensitive runtime directories.
 - `runtime.max_pending_files`: optional pending queue cap. When set, the Agent

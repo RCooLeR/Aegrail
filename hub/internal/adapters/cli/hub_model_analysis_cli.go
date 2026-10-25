@@ -1,18 +1,19 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/rcooler/aegrail/hub/internal/domain"
 	hubapp "github.com/rcooler/aegrail/hub/internal/hub"
-	urfavecli "github.com/urfave/cli/v2"
+	urfavecli "github.com/urfave/cli/v3"
 )
 
 func hubModelAnalysisCommand(meta domain.AppMeta) *urfavecli.Command {
 	return &urfavecli.Command{
 		Name:  "model-analysis",
 		Usage: "run Hub model-analysis workflows",
-		Subcommands: []*urfavecli.Command{
+		Commands: []*urfavecli.Command{
 			{
 				Name:  "queue",
 				Usage: "generate missing model analysis reports for open findings",
@@ -23,14 +24,14 @@ func hubModelAnalysisCommand(meta domain.AppMeta) *urfavecli.Command {
 					&urfavecli.IntFlag{Name: "max-metadata-depth", Value: 4, Usage: "maximum nested metadata depth"},
 					&urfavecli.IntFlag{Name: "max-string-length", Value: 500, Usage: "maximum string length in redacted metadata"},
 				},
-				Action: func(c *urfavecli.Context) error {
-					container, cleanup, err := newDatabaseContainer(c.Context, meta)
+				Action: func(ctx context.Context, c *urfavecli.Command) error {
+					container, cleanup, err := newDatabaseContainer(ctx, meta)
 					if err != nil {
 						return err
 					}
 					defer cleanup()
 
-					result, err := container.Hub.AnalyzeModelAnalysisQueue(c.Context, hubapp.AnalyzeModelAnalysisQueueInput{
+					result, err := container.Hub.AnalyzeModelAnalysisQueue(ctx, hubapp.AnalyzeModelAnalysisQueueInput{
 						Limit:               c.Int("limit"),
 						Model:               c.String("model"),
 						MaxEventsPerFinding: c.Int("max-events"),
@@ -41,7 +42,7 @@ func hubModelAnalysisCommand(meta domain.AppMeta) *urfavecli.Command {
 						return err
 					}
 					fmt.Fprintf(
-						c.App.Writer,
+						c.Root().Writer,
 						"Model analysis queue checked %d finding(s) across %d scope(s); generated %d, skipped %d, failed %d.\n",
 						result.Findings,
 						result.Scopes,
@@ -50,7 +51,7 @@ func hubModelAnalysisCommand(meta domain.AppMeta) *urfavecli.Command {
 						result.Failed,
 					)
 					for _, message := range result.Errors {
-						fmt.Fprintf(c.App.Writer, "  warning: %s\n", message)
+						fmt.Fprintf(c.Root().Writer, "  warning: %s\n", message)
 					}
 					return nil
 				},

@@ -35,8 +35,8 @@ func TestEvaluateBuiltInRuleFixturesPass(t *testing.T) {
 	}
 
 	deploy := byID["deploy-window-browser-drift"]
-	if len(deploy.Actual) != 1 || deploy.Actual[0].ID != "browser-script-domain-new" || deploy.Actual[0].Severity != domain.SeverityLow {
-		t.Fatalf("deploy fixture = %#v, want lowered browser drift", deploy)
+	if len(deploy.Actual) != 1 || deploy.Actual[0].ID != "browser-script-domain-new" || deploy.Actual[0].Severity != domain.SeverityMedium {
+		t.Fatalf("deploy fixture = %#v, want browser drift severity preserved", deploy)
 	}
 
 	filePaths := byID["generic-suspicious-file-paths"]

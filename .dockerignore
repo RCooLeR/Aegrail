@@ -5,6 +5,9 @@
 data
 tmp
 .tmp-go
+**/.tmp-go
+.pnpm-store
+**/.pnpm-store
 
 # Local env/secrets. Example files are intentionally tracked.
 .env
@@ -18,6 +21,10 @@ tmp
 **/*.exe
 **/*.test
 coverage.out
+live hub db.txt
+*.dump
+*.dump.zst
+NUL
 
 # Frontend dependencies/build output are rebuilt in Docker.
 dashboard/node_modules

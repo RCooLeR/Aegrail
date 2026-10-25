@@ -93,16 +93,32 @@ When IDs are supplied, Hub ignores the `since` window and returns matching
 events inside the requested org/project/environment/app scope. The dashboard
 uses this for issue detail timelines so old linked evidence still opens.
 
-## Browser Scripts And Deployments
+## Traffic, Browser Scripts, And Deployments
 
 | Method | Route | Access | Purpose |
 | --- | --- | --- | --- |
+| `GET` | `/api/v1/traffic` | viewer | Return scoped request totals, status counts, adaptive timeline buckets, top IPs, paths, and parsed User-Agents. Defaults to the last 24 hours. |
+| `GET` | `/api/v1/traffic/ips/{ip}` | viewer | Return scoped IP activity, cached network/DNS/provider intelligence, and manual policy. |
+| `PATCH` | `/api/v1/traffic/ips/{ip}/policy` | operator | Set the `neutral`, `trusted`, or `blocked` review label using the authenticated operator identity. `blocked` is context for operators; Aegrail does not configure a proxy or firewall. |
+| `GET` | `/api/v1/traffic/user-agents/{hash}` | viewer | Return parsed User-Agent identity, activity, paths, IPs, and recent request samples. |
+| `GET` | `/api/v1/traffic/bots` | viewer | List the highest-volume scoped bot, crawler, and automation User-Agents, plus complete aggregate request/error/verification totals and explicit truncation metadata. |
 | `GET` | `/api/v1/browser/scripts` | viewer | List observed browser scripts. |
 | `GET` | `/api/v1/browser/script-allowlist` | viewer | List script allowlist entries. |
 | `POST` | `/api/v1/browser/script-allowlist` | operator | Add a domain, inline hash, or tag-manager ID allowlist entry. |
 | `PATCH` | `/api/v1/browser/script-allowlist/{id}/status` | operator | Enable/disable an allowlist entry. |
 | `GET` | `/api/v1/deployments` | viewer | List deployment markers. |
-| `POST` | `/api/v1/deployments` | operator | Create a deployment marker and acknowledge expected file/browser findings inside the marker window. Response includes `acknowledged_findings`. |
+| `POST` | `/api/v1/deployments` | operator | Create an app-scoped, context-only deployment marker. It never changes finding status, visibility, severity, or risk. The compatibility `acknowledged_findings` response value is always zero. |
+
+Traffic GET routes accept `org`, `project`, `environment`, optional `app`,
+`since`, `until`, and `limit`. The default window is 24 hours and the maximum
+raw request window is 30 days. The dashboard offers rolling presets for 15 and
+30 minutes; 1, 3, 6, 12, and 24 hours; and 3, 7, 10, 14, and 30 days. Timeline
+buckets adapt to the requested window. Top-list responses are bounded; their row-level
+counts describe the represented rows rather than an unbounded estate-wide
+ranking. IP trust is never inferred from reverse DNS or a
+recognized provider: only the manual `trusted` policy sets `trusted: true`.
+Thirty-day traffic availability requires `AEGRAIL_RETENTION_EVENTS` to remain at
+least `30d`; the default is `180d`.
 
 ## Model Analysis And Reports
 

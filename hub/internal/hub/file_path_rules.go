@@ -172,6 +172,22 @@ func suspiciousFilePathRuleForEvent(event domain.TimelineEvent) (filePathRule, b
 			Confidence: domain.ConfidenceHigh,
 			Reason:     "sensitive configuration path",
 		}, true
+	case fileEventIsSuspiciousPHPContent(event):
+		return filePathRule{
+			RuleID:     "file-suspicious-php-content",
+			Title:      "Suspicious PHP content detected",
+			Severity:   domain.SeverityHigh,
+			Confidence: domain.ConfidenceHigh,
+			Reason:     payloadStringAny(event.Payload, "suspicious_php_reason", "webshell-like PHP content"),
+		}, true
+	case filePathIsPrestaShopFacetedSearchExploitArtifact(path):
+		return filePathRule{
+			RuleID:     "prestashop-facetedsearch-exploit-artifact",
+			Title:      "PrestaShop faceted search exploit artifact",
+			Severity:   domain.SeverityHigh,
+			Confidence: domain.ConfidenceHigh,
+			Reason:     "unexpected executable matching ps_facetedsearch exploit artifact pattern",
+		}, true
 	case fileEventIsKnownBenignPHPGuard(event, path):
 		return filePathRule{}, false
 	case filePathIsWritableExecutable(path) && !filePathIsPotentialPrestaShopAssetGuard(path):
@@ -318,12 +334,35 @@ func fileEventIsKnownBenignPHPGuard(event domain.TimelineEvent, path string) boo
 		payloadStringAny(event.Payload, "file_role_confidence", "") == "high"
 }
 
+func fileEventIsSuspiciousPHPContent(event domain.TimelineEvent) bool {
+	return payloadStringAny(event.Payload, "file_role", "") == "suspicious_php" ||
+		payloadStringAny(event.Payload, "security_context", "") == "webshell_like_php" ||
+		payloadStringAny(event.Payload, "suspicious_php_reason", "") != ""
+}
+
+func filePathIsPrestaShopFacetedSearchExploitArtifact(path string) bool {
+	path = strings.Trim(strings.ToLower(strings.ReplaceAll(path, "\\", "/")), "/")
+	parts := strings.Split(path, "/")
+	for index := 0; index+1 < len(parts); index++ {
+		if parts[index] != "modules" || parts[index+1] != "ps_facetedsearch" {
+			continue
+		}
+		filename := parts[len(parts)-1]
+		if !strings.HasPrefix(filename, "ps_facetedsearch-") || !strings.HasSuffix(filename, ".php") {
+			return false
+		}
+		stem := strings.TrimSuffix(strings.TrimPrefix(filename, "ps_facetedsearch-"), ".php")
+		return len(stem) >= 6 && len(stem) <= 16 && filePathIsLowerHexString(stem)
+	}
+	return false
+}
+
 func filePathIsPotentialPrestaShopAssetGuard(path string) bool {
 	if !strings.HasSuffix(path, "/index.php") && path != "index.php" {
 		return false
 	}
 	parts := strings.Split(strings.Trim(path, "/"), "/")
-	for index := 0; index < len(parts); index++ {
+	for index := range parts {
 		if parts[index] == "modules" && index+3 < len(parts) &&
 			parts[index+2] == "views" && filePathIsPrestaShopAssetViewDir(parts[index+3]) {
 			return true
@@ -385,7 +424,7 @@ func filePathGroupForEvent(rule filePathRule, event domain.TimelineEvent) (fileP
 		return filePathGroupInfo{}, false
 	}
 	parts := strings.Split(normalizedFileEventPath(event), "/")
-	for index := 0; index < len(parts); index++ {
+	for index := range parts {
 		if parts[index] == "" {
 			continue
 		}
@@ -579,10 +618,8 @@ func appendUniqueString(values []string, value string) []string {
 	if value == "" {
 		return values
 	}
-	for _, existing := range values {
-		if existing == value {
-			return values
-		}
+	if slices.Contains(values, value) {
+		return values
 	}
 	return append(values, value)
 }

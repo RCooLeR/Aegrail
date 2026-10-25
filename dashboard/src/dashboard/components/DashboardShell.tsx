@@ -30,6 +30,7 @@ export function DashboardShell({
   onView,
   user,
   visibleOpenIssueCount,
+  visibleOpenIssueCountExact,
   view
 }: {
   actionError: string;
@@ -49,6 +50,7 @@ export function DashboardShell({
   onView: (view: ViewKey) => void;
   user?: HubUser;
   visibleOpenIssueCount: number;
+  visibleOpenIssueCountExact: boolean;
   view: ViewKey;
 }) {
   const [isSidebarCollapsed, setSidebarCollapsed] = useState(() => {
@@ -122,7 +124,7 @@ export function DashboardShell({
             {view !== "settings" && (
               <button className="primary-button baseline-button" type="button" disabled={loading || actionLoading || visibleOpenIssueCount === 0} onClick={onAcceptBaseline}>
                 {actionLoading ? <Loader2 size={17} className="spin" /> : <ShieldCheck size={17} />}
-                <span>Accept baseline{visibleOpenIssueCount > 0 ? ` (${visibleOpenIssueCount})` : ""}</span>
+                <span>Accept baseline{visibleOpenIssueCount > 0 ? ` (${visibleOpenIssueCount}${visibleOpenIssueCountExact ? "" : "+"})` : ""}</span>
               </button>
             )}
             <button className="icon-button" type="button" disabled={loading} onClick={onRefresh}>

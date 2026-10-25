@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,14 +15,14 @@ import (
 	hubapp "github.com/rcooler/aegrail/hub/internal/hub"
 	"github.com/rcooler/aegrail/hub/internal/ports"
 	"github.com/rcooler/aegrail/hub/internal/reports"
-	urfavecli "github.com/urfave/cli/v2"
+	urfavecli "github.com/urfave/cli/v3"
 )
 
 func analyzeModelInspectSubcommand(meta domain.AppMeta) *urfavecli.Command {
 	return &urfavecli.Command{
 		Name:  "model",
 		Usage: "inspect and smoke-test the configured model gateway",
-		Subcommands: []*urfavecli.Command{
+		Commands: []*urfavecli.Command{
 			modelStatusCommand(meta),
 			modelPromptCommand(meta),
 			modelEmbedCommand(meta),
@@ -33,7 +34,7 @@ func analyzeModelReportSubcommand(meta domain.AppMeta) *urfavecli.Command {
 	return &urfavecli.Command{
 		Name:  "model",
 		Usage: "generate model-assisted reports from persisted Hub findings",
-		Subcommands: []*urfavecli.Command{
+		Commands: []*urfavecli.Command{
 			modelReportCommand(meta),
 		},
 	}
@@ -43,28 +44,28 @@ func modelStatusCommand(meta domain.AppMeta) *urfavecli.Command {
 	return &urfavecli.Command{
 		Name:  "status",
 		Usage: "show configured model gateway status",
-		Action: func(c *urfavecli.Context) error {
+		Action: func(ctx context.Context, c *urfavecli.Command) error {
 			container, err := newModelContainer(meta)
 			if err != nil {
 				return err
 			}
 			defer container.Close()
 
-			health, err := container.Model.Health(c.Context)
+			health, err := container.Model.Health(ctx)
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(c.App.Writer, "Provider: %s\n", health.Provider)
-			fmt.Fprintf(c.App.Writer, "Base URL: %s\n", health.BaseURL)
-			fmt.Fprintf(c.App.Writer, "Offline: %t\n", health.Offline)
-			fmt.Fprintf(c.App.Writer, "Available: %t\n", health.Available)
-			fmt.Fprintf(c.App.Writer, "Investigation model: %s\n", emptyDash(health.InvestigationModel))
-			fmt.Fprintf(c.App.Writer, "Embedding model: %s\n", emptyDash(health.EmbeddingModel))
+			fmt.Fprintf(c.Root().Writer, "Provider: %s\n", health.Provider)
+			fmt.Fprintf(c.Root().Writer, "Base URL: %s\n", health.BaseURL)
+			fmt.Fprintf(c.Root().Writer, "Offline: %t\n", health.Offline)
+			fmt.Fprintf(c.Root().Writer, "Available: %t\n", health.Available)
+			fmt.Fprintf(c.Root().Writer, "Investigation model: %s\n", emptyDash(health.InvestigationModel))
+			fmt.Fprintf(c.Root().Writer, "Embedding model: %s\n", emptyDash(health.EmbeddingModel))
 			if len(health.Models) == 0 {
-				fmt.Fprintln(c.App.Writer, "Models: none reported")
+				fmt.Fprintln(c.Root().Writer, "Models: none reported")
 				return nil
 			}
-			writer := tabwriter.NewWriter(c.App.Writer, 0, 0, 2, ' ', 0)
+			writer := tabwriter.NewWriter(c.Root().Writer, 0, 0, 2, ' ', 0)
 			fmt.Fprintln(writer, "MODEL\tSIZE\tDIGEST\tMODIFIED")
 			for _, model := range health.Models {
 				fmt.Fprintf(writer, "%s\t%d\t%s\t%s\n", model.Name, model.SizeBytes, shortDigest(model.Digest), modelTime(model.ModifiedAt))
@@ -85,7 +86,7 @@ func modelPromptCommand(meta domain.AppMeta) *urfavecli.Command {
 			&urfavecli.StringFlag{Name: "prompt", Usage: "prompt text; positional args are used when omitted"},
 			&urfavecli.StringFlag{Name: "format", Value: "text", Usage: "text or json"},
 		},
-		Action: func(c *urfavecli.Context) error {
+		Action: func(ctx context.Context, c *urfavecli.Command) error {
 			prompt := strings.TrimSpace(c.String("prompt"))
 			if prompt == "" && c.NArg() > 0 {
 				prompt = strings.Join(c.Args().Slice(), " ")
@@ -100,7 +101,7 @@ func modelPromptCommand(meta domain.AppMeta) *urfavecli.Command {
 			}
 			defer container.Close()
 
-			response, err := container.Model.Generate(c.Context, ports.ModelGenerateRequest{
+			response, err := container.Model.Generate(ctx, ports.ModelGenerateRequest{
 				Model:  c.String("model"),
 				System: c.String("system"),
 				Prompt: prompt,
@@ -112,9 +113,9 @@ func modelPromptCommand(meta domain.AppMeta) *urfavecli.Command {
 				return err
 			}
 			if strings.EqualFold(c.String("format"), "json") {
-				return json.NewEncoder(c.App.Writer).Encode(response)
+				return json.NewEncoder(c.Root().Writer).Encode(response)
 			}
-			fmt.Fprintln(c.App.Writer, response.Text)
+			fmt.Fprintln(c.Root().Writer, response.Text)
 			return nil
 		},
 	}
@@ -130,7 +131,7 @@ func modelEmbedCommand(meta domain.AppMeta) *urfavecli.Command {
 			&urfavecli.StringFlag{Name: "text", Usage: "text to embed; positional args are used when omitted"},
 			&urfavecli.StringFlag{Name: "format", Value: "summary", Usage: "summary or json"},
 		},
-		Action: func(c *urfavecli.Context) error {
+		Action: func(ctx context.Context, c *urfavecli.Command) error {
 			text := strings.TrimSpace(c.String("text"))
 			if text == "" && c.NArg() > 0 {
 				text = strings.Join(c.Args().Slice(), " ")
@@ -145,7 +146,7 @@ func modelEmbedCommand(meta domain.AppMeta) *urfavecli.Command {
 			}
 			defer container.Close()
 
-			response, err := container.Model.Embed(c.Context, ports.ModelEmbedRequest{
+			response, err := container.Model.Embed(ctx, ports.ModelEmbedRequest{
 				Model: c.String("model"),
 				Texts: []string{
 					text,
@@ -158,13 +159,13 @@ func modelEmbedCommand(meta domain.AppMeta) *urfavecli.Command {
 				return err
 			}
 			if strings.EqualFold(c.String("format"), "json") {
-				return json.NewEncoder(c.App.Writer).Encode(response)
+				return json.NewEncoder(c.Root().Writer).Encode(response)
 			}
 			dimension := 0
 			if len(response.Embeddings) > 0 {
 				dimension = len(response.Embeddings[0])
 			}
-			fmt.Fprintf(c.App.Writer, "Model %s produced %d embedding vector(s), dimension %d.\n", response.Model, len(response.Embeddings), dimension)
+			fmt.Fprintf(c.Root().Writer, "Model %s produced %d embedding vector(s), dimension %d.\n", response.Model, len(response.Embeddings), dimension)
 			return nil
 		},
 	}
@@ -186,15 +187,15 @@ func modelReportCommand(meta domain.AppMeta) *urfavecli.Command {
 			&urfavecli.BoolFlag{Name: "save", Usage: "persist the generated report in the Hub"},
 			&urfavecli.BoolFlag{Name: "compact", Usage: "write compact JSON without indentation"},
 		),
-		Action: func(c *urfavecli.Context) error {
-			container, cleanup, err := newDatabaseContainer(c.Context, meta)
+		Action: func(ctx context.Context, c *urfavecli.Command) error {
+			container, cleanup, err := newDatabaseContainer(ctx, meta)
 			if err != nil {
 				return err
 			}
 			defer cleanup()
 
 			now := time.Now().UTC()
-			findings, err := container.Hub.ListHubFindings(c.Context, hubapp.ListHubFindingsInput{
+			findings, err := container.Hub.ListHubFindings(ctx, hubapp.ListHubFindingsInput{
 				OrganizationSlug: c.String("org"),
 				ProjectSlug:      c.String("project"),
 				EnvironmentSlug:  c.String("env"),
@@ -221,14 +222,14 @@ func modelReportCommand(meta domain.AppMeta) *urfavecli.Command {
 				return err
 			}
 
-			report, err := reports.GenerateModelAnalysisReport(c.Context, container.Model, bundle, reports.ModelAnalysisOptions{
+			report, err := reports.GenerateModelAnalysisReport(ctx, container.Model, bundle, reports.ModelAnalysisOptions{
 				Model: c.String("model"),
 			}, now)
 			if err != nil {
 				return err
 			}
 			if c.Bool("save") {
-				saved, err := container.Hub.SaveModelAnalysisReport(c.Context, hubapp.SaveModelAnalysisReportInput{
+				saved, err := container.Hub.SaveModelAnalysisReport(ctx, hubapp.SaveModelAnalysisReportInput{
 					OrganizationSlug: c.String("org"),
 					ProjectSlug:      c.String("project"),
 					EnvironmentSlug:  c.String("env"),

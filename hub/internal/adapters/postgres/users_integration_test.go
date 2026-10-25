@@ -114,10 +114,8 @@ func TestHubUserRepositoryBootstrapLockIntegration(t *testing.T) {
 	var created atomic.Int32
 	var wg sync.WaitGroup
 	start := make(chan struct{})
-	for i := 0; i < 8; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 8 {
+		wg.Go(func() {
 			<-start
 			_, didCreate, err := repo.CreateBootstrapHubUser(ctx, domain.HubUser{
 				Email:             "owner@example.test",
@@ -133,7 +131,7 @@ func TestHubUserRepositoryBootstrapLockIntegration(t *testing.T) {
 			if didCreate {
 				created.Add(1)
 			}
-		}()
+		})
 	}
 	close(start)
 	wg.Wait()
@@ -281,6 +279,8 @@ CREATE TABLE hub_users (
 	pending_totp_secret_ciphertext text NOT NULL DEFAULT '',
 	pending_totp_started_at timestamptz,
 	last_login_at timestamptz,
+	failed_login_attempts integer NOT NULL DEFAULT 0,
+	locked_until timestamptz,
 	created_at timestamptz NOT NULL DEFAULT now(),
 	updated_at timestamptz NOT NULL DEFAULT now()
 );

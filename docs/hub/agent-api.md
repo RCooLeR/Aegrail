@@ -51,6 +51,8 @@ Request body:
 
 ```json
 {
+  "schema": "aegrail.agent.queue.v1",
+  "queued_at": "2026-05-17T00:00:01Z",
   "org": "acme",
   "project": "customer-site",
   "environment": "production",

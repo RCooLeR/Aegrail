@@ -29,13 +29,14 @@ Aegrail keeps Hub data for six months by default:
 
 ```text
 AEGRAIL_RETENTION_EVENTS=180d
-AEGRAIL_RETENTION_RESOLVED_FINDINGS=180d
+AEGRAIL_RETENTION_RESOLVED_FINDINGS=0
 AEGRAIL_RETENTION_MODEL_REPORTS=180d
 AEGRAIL_RETENTION_AUTH_EVENTS=180d
 ```
 
-That pairs well with daily, weekly, and monthly database backups. Keep backup
-retention longer than Hub data retention when you need older forensic history.
+That keeps triaged finding history in PostgreSQL while pruning older raw events,
+model reports, and auth audit events after six months. Keep backup retention
+longer than Hub data retention when you need older forensic history.
 
 ## Manual Backup
 
@@ -113,7 +114,7 @@ hub db status
 
 - `/healthz` reports PostgreSQL healthy.
 - Dashboard login works.
-- Companies/sites/nodes load.
+- Overview and Settings load the expected company/site/node inventory.
 - Recent findings and timeline rows are visible.
 - One Agent sends a new batch successfully.
 - Notification settings still point to the expected provider.

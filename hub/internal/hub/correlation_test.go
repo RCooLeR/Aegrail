@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -121,6 +123,114 @@ func TestCorrelateEventsBuildsProbableIncidentChain(t *testing.T) {
 	}
 	if len(chain.Events) != 3 {
 		t.Fatalf("chain events = %#v, want 3", chain.Events)
+	}
+}
+
+func TestProbableIncidentIdentityIsAnchoredToDurableEvidence(t *testing.T) {
+	start := time.Date(2026, 7, 29, 0, 0, 0, 0, time.UTC)
+	fileEvent := domain.TimelineEvent{
+		ID:        "event-file-change",
+		EventTime: start.Add(time.Minute),
+		EventType: "file.created",
+		Target:    "uploads/shell.php",
+		Severity:  domain.SeverityHigh,
+	}
+	tailEvent := domain.TimelineEvent{
+		ID:        "event-persistence",
+		EventTime: start.Add(2 * time.Minute),
+		EventType: "cron.created",
+		Target:    "suspicious-job",
+		Severity:  domain.SeverityHigh,
+	}
+	webEvent := func(id domain.ID, at time.Time) domain.TimelineEvent {
+		return domain.TimelineEvent{
+			ID:        id,
+			EventTime: at,
+			EventType: "log.access",
+			Target:    "/wp-admin",
+			Severity:  domain.SeverityMedium,
+			Payload: map[string]any{
+				"method":      "POST",
+				"path":        "/wp-admin",
+				"status_code": 200,
+			},
+		}
+	}
+
+	first := buildCorrelationChain(
+		"probable-incident-chain",
+		"Probable incident chain",
+		[]domain.TimelineEvent{webEvent("event-web-1", start), fileEvent, tailEvent},
+	)
+	second := buildCorrelationChain(
+		"probable-incident-chain",
+		"Probable incident chain",
+		[]domain.TimelineEvent{webEvent("event-web-2", start.Add(30*time.Second)), fileEvent, tailEvent},
+	)
+	if first.ID != second.ID {
+		t.Fatalf("same durable incident IDs differ: %q != %q", first.ID, second.ID)
+	}
+
+	changedFile := fileEvent
+	changedFile.ID = "event-file-change-2"
+	third := buildCorrelationChain(
+		"probable-incident-chain",
+		"Probable incident chain",
+		[]domain.TimelineEvent{webEvent("event-web-3", start.Add(time.Minute)), changedFile, tailEvent},
+	)
+	if first.ID == third.ID {
+		t.Fatalf("different durable evidence reused incident ID %q", first.ID)
+	}
+}
+
+func TestRequestFindingIdentityIsStableWhileWindowEvidenceGrows(t *testing.T) {
+	windowStart := time.Date(2026, 7, 29, 12, 10, 0, 0, time.UTC)
+	webRule := webRequestRule{
+		RuleID:      "web-error-rate-spike",
+		Title:       "Web error rate spike",
+		Severity:    domain.SeverityMedium,
+		Confidence:  domain.ConfidenceHigh,
+		DedupeGroup: "/checkout",
+		WindowStart: windowStart,
+		Events: []webRequestObservation{{
+			Event:  domain.TimelineEvent{ID: "web-1", EventTime: windowStart.Add(time.Second)},
+			Path:   "/checkout",
+			Status: 500,
+		}},
+	}
+	firstWeb := buildWebRequestChain(webRule)
+	webRule.Events = append(webRule.Events, webRequestObservation{
+		Event:  domain.TimelineEvent{ID: "web-2", EventTime: windowStart.Add(2 * time.Second)},
+		Path:   "/checkout",
+		Status: 500,
+	})
+	secondWeb := buildWebRequestChain(webRule)
+	if firstWeb.ID != secondWeb.ID {
+		t.Fatalf("web finding ID changed as evidence grew: %q != %q", firstWeb.ID, secondWeb.ID)
+	}
+
+	adminRule := adminRequestRule{
+		RuleID:      "web-admin-failed-request-burst",
+		Title:       "Admin failed request burst",
+		Severity:    domain.SeverityMedium,
+		Confidence:  domain.ConfidenceHigh,
+		DedupeGroup: "remote-fingerprint",
+		WindowStart: windowStart,
+		Events: []adminRequestObservation{{
+			Event:  domain.TimelineEvent{ID: "admin-1", EventTime: windowStart.Add(time.Second)},
+			Path:   "/wp-admin",
+			Status: 403,
+		}},
+	}
+	firstAdmin := buildAdminRequestChain(adminRule)
+	adminRule.Events = append(adminRule.Events, adminRequestObservation{
+		Event:  domain.TimelineEvent{ID: "admin-2", EventTime: windowStart.Add(2 * time.Second)},
+		Path:   "/wp-login.php",
+		Status: 403,
+	})
+	secondAdmin := buildAdminRequestChain(adminRule)
+	if firstAdmin.ID != secondAdmin.ID {
+		t.Fatalf("admin finding ID changed as evidence grew: %q != %q", firstAdmin.ID, secondAdmin.ID)
 	}
 }
 
@@ -297,6 +407,115 @@ func TestCorrelateEventsSavesAndDeduplicatesFindings(t *testing.T) {
 	}
 }
 
+func TestAutomaticCorrelationSavesOnlyFindingsIntersectingTriggerEvents(t *testing.T) {
+	setup := func(t *testing.T) (*Hub, *memoryHubFindingRepository, *memoryNotificationSink, time.Time) {
+		t.Helper()
+		inventory := newMemoryInventoryRepository()
+		ingest := &memoryIngestRepository{}
+		findings := newMemoryHubFindingRepository()
+		notifications := &memoryNotificationSink{}
+		hub := New(Dependencies{Inventory: inventory, Ingest: ingest, Findings: findings, Notifications: notifications})
+		ctx := context.Background()
+		environment, app, host, agent := bootstrapDatabaseDiffInventory(t, ctx, hub, "wordpress")
+		now := time.Date(2026, 7, 29, 13, 0, 0, 0, time.UTC)
+		historical := accessEvent(
+			"event-historical",
+			now.Add(-10*time.Minute),
+			"GET",
+			"/historical-probe",
+			200,
+			"198.51.100.10",
+			map[string]any{"remote_network": "tor_exit"},
+		)
+		fresh := accessEvent(
+			"event-fresh",
+			now,
+			"GET",
+			"/fresh-probe",
+			200,
+			"198.51.100.20",
+			map[string]any{"remote_network": "tor_exit"},
+		)
+		for _, event := range []*domain.TimelineEvent{&historical, &fresh} {
+			event.EnvironmentID = environment.ID
+			event.AppID = app.ID
+			event.HostID = host.ID
+			event.AgentID = agent.ID
+			event.AgentExternalID = agent.AgentID
+		}
+		ingest.timelineEvents = []domain.TimelineEvent{historical, fresh}
+		return hub, findings, notifications, now
+	}
+
+	t.Run("automatic", func(t *testing.T) {
+		hub, findings, notifications, now := setup(t)
+		result, err := hub.CorrelateEvents(context.Background(), CorrelateEventsInput{
+			OrganizationSlug: "acme",
+			ProjectSlug:      "customer-site",
+			EnvironmentSlug:  "production",
+			AppSlug:          "main-web",
+			Since:            now.Add(-30 * time.Minute),
+			Window:           30 * time.Minute,
+			SaveFindings:     true,
+			TriggerEventIDs:  []domain.ID{"event-fresh"},
+		})
+		if err != nil {
+			t.Fatalf("CorrelateEvents returned error: %v", err)
+		}
+		if len(result.Chains) != 2 {
+			t.Fatalf("chains = %#v, want historical and fresh candidate chains", result.Chains)
+		}
+		if len(result.Findings) != 1 || !slices.Contains(result.Findings[0].EventIDs, domain.ID("event-fresh")) {
+			t.Fatalf("findings = %#v, want only the trigger-intersecting finding", result.Findings)
+		}
+		if len(findings.byKey) != 1 {
+			t.Fatalf("stored findings = %#v, want no automatic historical replacement row", findings.byKey)
+		}
+		if len(notifications.items) != 1 || !slices.Contains(notifications.items[0].Finding.EventIDs, domain.ID("event-fresh")) {
+			t.Fatalf("notifications = %#v, want only the fresh observed finding", notifications.items)
+		}
+	})
+
+	t.Run("manual", func(t *testing.T) {
+		hub, findings, notifications, now := setup(t)
+		result, err := hub.CorrelateEvents(context.Background(), CorrelateEventsInput{
+			OrganizationSlug: "acme",
+			ProjectSlug:      "customer-site",
+			EnvironmentSlug:  "production",
+			AppSlug:          "main-web",
+			Since:            now.Add(-30 * time.Minute),
+			Window:           30 * time.Minute,
+			SaveFindings:     true,
+		})
+		if err != nil {
+			t.Fatalf("CorrelateEvents returned error: %v", err)
+		}
+		if len(result.Findings) != 2 || len(findings.byKey) != 2 || len(notifications.items) != 2 {
+			t.Fatalf(
+				"manual result/stored/notifications = %d/%d/%d, want unrestricted 2/2/2",
+				len(result.Findings),
+				len(findings.byKey),
+				len(notifications.items),
+			)
+		}
+	})
+}
+
+func TestFindingsIntersectingEventIDsHonorsAutomaticEmptySet(t *testing.T) {
+	findings := []domain.HubFinding{
+		{ID: "finding-old", EventIDs: []domain.ID{"event-old"}},
+		{ID: "finding-new", EventIDs: []domain.ID{"event-new", "event-shared"}},
+		{ID: "finding-shared", EventIDs: []domain.ID{"event-shared"}},
+	}
+	if got := findingsIntersectingEventIDs(findings, []domain.ID{}); len(got) != 0 {
+		t.Fatalf("empty automatic trigger set returned %#v, want none", got)
+	}
+	got := findingsIntersectingEventIDs(findings, []domain.ID{"event-shared", "event-shared"})
+	if len(got) != 2 || got[0].ID != "finding-new" || got[1].ID != "finding-shared" {
+		t.Fatalf("intersecting findings = %#v, want new and shared in input order", got)
+	}
+}
+
 func TestCorrelateEventsBuildsSuspiciousFilePathChains(t *testing.T) {
 	now := time.Date(2026, 5, 12, 13, 0, 0, 0, time.UTC)
 	chains := correlateTimelineEvents([]domain.TimelineEvent{
@@ -428,7 +647,7 @@ func TestCorrelateEventsGroupsPluginFileChanges(t *testing.T) {
 	}
 }
 
-func TestCorrelateEventsSuppressesExpectedDeploymentFileFindings(t *testing.T) {
+func TestCorrelateEventsKeepsHighSeverityDeploymentFileFindingVisible(t *testing.T) {
 	inventory := newMemoryInventoryRepository()
 	ingest := &memoryIngestRepository{}
 	findings := newMemoryHubFindingRepository()
@@ -451,7 +670,7 @@ func TestCorrelateEventsSuppressesExpectedDeploymentFileFindings(t *testing.T) {
 		t.Fatalf("SaveDeploymentMarker returned error: %v", err)
 	}
 	ingest.timelineEvents = []domain.TimelineEvent{
-		deploymentFileEvent("evt-deploy-index", environment.ID, app.ID, host.ID, host.Slug, agent.ID, agent.AgentID, now, "file.modified", "public/index.php", domain.SeverityInfo),
+		deploymentFileEvent("evt-deploy-index", environment.ID, app.ID, host.ID, host.Slug, agent.ID, agent.AgentID, now, "file.modified", "public/index.php", domain.SeverityHigh),
 	}
 
 	result, err := hub.CorrelateEvents(ctx, CorrelateEventsInput{
@@ -466,10 +685,19 @@ func TestCorrelateEventsSuppressesExpectedDeploymentFileFindings(t *testing.T) {
 		t.Fatalf("CorrelateEvents returned error: %v", err)
 	}
 	if len(result.Chains) != 1 {
-		t.Fatalf("chains = %#v, want one raw correlation chain before deployment suppression", result.Chains)
+		t.Fatalf("chains = %#v, want one raw correlation chain", result.Chains)
 	}
-	if len(result.Findings) != 0 {
-		t.Fatalf("findings = %#v, want expected deployment file finding suppressed", result.Findings)
+	if len(result.Findings) != 1 {
+		t.Fatalf("findings = %#v, want deployment-context finding to remain visible", result.Findings)
+	}
+	finding := result.Findings[0]
+	if finding.RuleID != "file-php-changed" || finding.Severity != domain.SeverityHigh || finding.Status != "open" {
+		t.Fatalf("finding = %#v, want open high-severity expected-rule finding", finding)
+	}
+	deploymentContext, ok := finding.Metadata["deployment_context"].(map[string]any)
+	if !ok || deploymentContext["active"] != true || deploymentContext["severity_adjusted"] != false ||
+		deploymentContext["original_severity"] != "high" || deploymentContext["adjusted_severity"] != "high" {
+		t.Fatalf("deployment context = %#v, want annotation without severity adjustment", finding.Metadata["deployment_context"])
 	}
 	stored, err := hub.ListHubFindings(ctx, ListHubFindingsInput{
 		OrganizationSlug: "acme",
@@ -481,12 +709,12 @@ func TestCorrelateEventsSuppressesExpectedDeploymentFileFindings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListHubFindings returned error: %v", err)
 	}
-	if len(stored) != 0 {
-		t.Fatalf("stored findings = %#v, want no saved finding for expected deployment file change", stored)
+	if len(stored) != 1 || stored[0].RuleID != "file-php-changed" || stored[0].Severity != domain.SeverityHigh || stored[0].Status != "open" {
+		t.Fatalf("stored findings = %#v, want visible high-severity deployment-context finding", stored)
 	}
 }
 
-func TestSaveDeploymentMarkerAcknowledgesExistingExpectedFileFindings(t *testing.T) {
+func TestSaveDeploymentMarkerDoesNotAcknowledgeExistingFindings(t *testing.T) {
 	inventory := newMemoryInventoryRepository()
 	ingest := &memoryIngestRepository{}
 	findings := newMemoryHubFindingRepository()
@@ -516,7 +744,7 @@ func TestSaveDeploymentMarkerAcknowledgesExistingExpectedFileFindings(t *testing
 	}
 
 	finishedAt := now.Add(10 * time.Minute)
-	deploymentResult, err := hub.SaveDeploymentMarkerWithStatusUpdate(ctx, SaveDeploymentMarkerInput{
+	deployment, err := hub.SaveDeploymentMarker(ctx, SaveDeploymentMarkerInput{
 		OrganizationSlug: "acme",
 		ProjectSlug:      "customer-site",
 		EnvironmentSlug:  "production",
@@ -527,10 +755,10 @@ func TestSaveDeploymentMarkerAcknowledgesExistingExpectedFileFindings(t *testing
 		FinishedAt:       &finishedAt,
 	})
 	if err != nil {
-		t.Fatalf("SaveDeploymentMarkerWithStatusUpdate returned error: %v", err)
+		t.Fatalf("SaveDeploymentMarker returned error: %v", err)
 	}
-	if deploymentResult.Deployment.ID == "" || deploymentResult.AcknowledgedFindings != 1 {
-		t.Fatalf("deploymentResult=%#v, want one expected file finding acknowledged", deploymentResult)
+	if deployment.ID == "" {
+		t.Fatalf("deployment=%#v, want a saved context marker", deployment)
 	}
 	stored, err := hub.ListHubFindings(ctx, ListHubFindingsInput{
 		OrganizationSlug: "acme",
@@ -546,8 +774,8 @@ func TestSaveDeploymentMarkerAcknowledgesExistingExpectedFileFindings(t *testing
 	for _, finding := range stored {
 		statusByRule[finding.RuleID] = finding.Status + ":" + finding.StatusReason
 	}
-	if statusByRule["file-php-changed"] != "acknowledged:deployment_window" {
-		t.Fatalf("statusByRule = %#v, want expected PHP change acknowledged by deployment marker", statusByRule)
+	if statusByRule["file-php-changed"] != "open:" {
+		t.Fatalf("statusByRule = %#v, want expected PHP change left open", statusByRule)
 	}
 	if statusByRule["file-php-in-writable-path"] != "open:" {
 		t.Fatalf("statusByRule = %#v, want high-risk writable PHP finding left open", statusByRule)
@@ -1188,9 +1416,7 @@ func accessEvent(id string, eventTime time.Time, method string, path string, sta
 		"status_code": status,
 		"remote_addr": remoteAddr,
 	}
-	for key, value := range extraPayload {
-		payload[key] = value
-	}
+	maps.Copy(payload, extraPayload)
 	return domain.TimelineEvent{
 		ID:        domain.ID(id),
 		HostSlug:  "web-01",
@@ -1253,36 +1479,7 @@ func (r *memoryHubFindingRepository) UpdateOpenHubFindingStatuses(ctx context.Co
 		if appID != "" && finding.AppID != appID {
 			continue
 		}
-		finding.Status = update.Status
-		finding.StatusReason = update.Reason
-		finding.StatusNote = update.Note
-		finding.StatusActor = update.Actor
-		finding.StatusUpdatedAt = now
-		finding.UpdatedAt = now
-		r.byKey[key] = finding
-		updated++
-	}
-	return updated, nil
-}
-
-func (r *memoryHubFindingRepository) UpdateOpenHubFindingStatusesForRulesInWindow(ctx context.Context, environmentID domain.ID, appID domain.ID, ruleIDs []string, windowStart time.Time, windowEnd time.Time, update domain.HubFindingStatusUpdate) (int, error) {
-	ruleSet := map[string]struct{}{}
-	for _, ruleID := range ruleIDs {
-		ruleSet[ruleID] = struct{}{}
-	}
-	now := time.Now().UTC()
-	updated := 0
-	for key, finding := range r.byKey {
-		if finding.EnvironmentID != environmentID || finding.Status != "open" {
-			continue
-		}
-		if appID != "" && finding.AppID != appID {
-			continue
-		}
-		if _, ok := ruleSet[finding.RuleID]; !ok {
-			continue
-		}
-		if finding.FirstEventAt.After(windowEnd) || finding.LastEventAt.Before(windowStart) {
+		if severityRank(finding.Severity) >= severityRank(domain.SeverityHigh) {
 			continue
 		}
 		finding.Status = update.Status

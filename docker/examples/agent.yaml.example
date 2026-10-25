@@ -6,6 +6,7 @@ hub:
   hub_public_key: replace-with-hub-public-key-from-node-create
   node_secret: ""
   node_secret_env: AEGRAIL_NODE_SECRET
+  timeout: 60s
   send_limit: 100
 
 identity:
@@ -32,7 +33,7 @@ sites:
     name: Example WordPress
     domain: example.com
     kind: wordpress
-    app: main-web
+    app: example-wordpress
     service: frontend
     root: /mnt/sites/example-wordpress
     labels:

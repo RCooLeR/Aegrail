@@ -1,9 +1,8 @@
 import {
   Activity,
   AlertTriangle,
-  Boxes,
-  Building2,
-  FileText,
+  Bot,
+  ChartNoAxesCombined,
   GitBranch,
   Globe,
   LayoutDashboard,
@@ -18,14 +17,13 @@ export const autoRefreshIntervalMs = 30_000;
 
 export const navItems: Array<{ key: ViewKey; label: string; icon: LucideIcon }> = [
   { key: "overview", label: "Overview", icon: LayoutDashboard },
-  { key: "companies", label: "Companies", icon: Building2 },
-  { key: "sites", label: "Sites", icon: Boxes },
   { key: "nodes", label: "Nodes", icon: MonitorCog },
   { key: "issues", label: "Issues", icon: AlertTriangle },
+  { key: "traffic", label: "Traffic", icon: ChartNoAxesCombined },
+  { key: "bots", label: "Bots / crawlers", icon: Bot },
   { key: "signals", label: "Signals", icon: Activity },
   { key: "browser", label: "Browser scripts", icon: Globe },
   { key: "deployments", label: "Deployments", icon: GitBranch },
-  { key: "reports", label: "Reports", icon: FileText },
   { key: "settings", label: "Settings", icon: Settings }
 ];
 

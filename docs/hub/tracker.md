@@ -6,7 +6,7 @@
 - Encrypted Agent wire ingest with node key lookup and timestamp validation.
 - Encrypted `aegrail.agent.wire.v1` ingest envelopes with X25519/AES-GCM.
 - Admin provisioning APIs for companies, sites, nodes, and generated Agent config samples.
-- PostgreSQL storage for inventory, events, findings, users, reports, allowlists, deployments, and ignore rules.
+- PostgreSQL storage for inventory, events, typed request traffic, IP intelligence/policy, findings, users, reports, allowlists, deployments, and ignore rules.
 - Immediate ingest correlation with Redis fallback/catch-up queue and distributed model-analysis worker lock.
 - Dependency-aware `/healthz`, HTTP server timeouts, startup validation for Hub wire/user secrets, and bounded PostgreSQL pool defaults.
 - Deterministic rule registry, correlation, risk scoring, and fixture evaluation.
@@ -18,6 +18,7 @@
 - Browser script allowlist workflows.
 - File ignore rules created from dashboard findings.
 - Deployment markers with expected rollout context.
+- Lazy traffic, IP detail/policy, User-Agent detail, and bot/crawler dashboard APIs.
 - Users, access levels, sessions, and pending TOTP verification before activation.
 - TOTP replay protection and login/TOTP endpoint rate limiting.
 - Login failure lockout and authentication audit events.
@@ -29,9 +30,9 @@
 - Notification hooks for observed findings and finding status changes, with optional signed webhook delivery, SMTP email, and browser push delivery.
 - Graceful shutdown waits briefly for Hub background workers.
 - Built-in retention pruning worker and owner-only system status endpoint.
-- Six-month default retention policy for Hub events, resolved findings, model reports, and auth audit events.
+- Six-month default retention policy for Hub events, model reports, and auth audit events; resolved/false-positive findings are retained by default for operator history.
 - Baseline HTTP security headers on Hub API, dashboard assets, redirects, and 404 responses.
-- Hub performance pass: bulk event inserts, batched finding saves, single-query ingest scope resolution, dedicated correlation timeline queries, coalesced immediate/fallback correlation jobs, low-signal log filtering, throttled session and agent heartbeat writes, cached push subscription reads, token-rotation suppression, and composite indexes for timeline, finding, model-report, and notification lookups.
+- Hub performance pass: bulk event inserts, batched finding saves, single-query ingest scope resolution, dedicated correlation timeline queries, immediate per-candidate-batch correlation with fallback jobs, low-signal log filtering, throttled session and agent heartbeat writes, cached push subscription reads, token-rotation suppression, and composite indexes for timeline, finding, model-report, and notification lookups.
 
 ## Next
 

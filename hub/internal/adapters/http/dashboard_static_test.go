@@ -41,6 +41,15 @@ func TestHubRouterServesDashboardAssets(t *testing.T) {
 		t.Fatalf("asset body = %q, want dashboard asset", assetResponse.Body.String())
 	}
 
+	missingAssetResponse := httptest.NewRecorder()
+	router.ServeHTTP(missingAssetResponse, httptest.NewRequest(http.MethodGet, "/dashboard/assets/stale-chunk.js", nil))
+	if missingAssetResponse.Code != http.StatusNotFound {
+		t.Fatalf("missing asset status = %d body = %s, want 404", missingAssetResponse.Code, missingAssetResponse.Body.String())
+	}
+	if strings.Contains(missingAssetResponse.Body.String(), `id="root"`) {
+		t.Fatalf("missing asset body = %q, must not serve dashboard index", missingAssetResponse.Body.String())
+	}
+
 	spaResponse := httptest.NewRecorder()
 	router.ServeHTTP(spaResponse, httptest.NewRequest(http.MethodGet, "/dashboard/findings", nil))
 	if spaResponse.Code != http.StatusOK {
@@ -49,5 +58,8 @@ func TestHubRouterServesDashboardAssets(t *testing.T) {
 	assertHubSecurityHeaders(t, spaResponse.Result(), false)
 	if !strings.Contains(spaResponse.Body.String(), `id="root"`) {
 		t.Fatalf("spa body = %q, want dashboard index", spaResponse.Body.String())
+	}
+	if got := spaResponse.Header().Get("Cache-Control"); got != "no-cache" {
+		t.Fatalf("spa Cache-Control = %q, want no-cache", got)
 	}
 }

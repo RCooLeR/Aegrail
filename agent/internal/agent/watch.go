@@ -1020,6 +1020,13 @@ func fileEvent(eventType string, current fileState, previous fileState) EnqueueE
 		payload["file_role"] = "directory_guard"
 		payload["file_role_confidence"] = "high"
 	}
+	if suspicion, ok := detectSuspiciousPHPContent(eventType, current.Path, current.SizeBytes); ok {
+		severity = string(domain.SeverityHigh)
+		payload["file_role"] = "suspicious_php"
+		payload["file_role_confidence"] = "high"
+		payload["security_context"] = "webshell_like_php"
+		payload["suspicious_php_reason"] = suspicion
+	}
 	if previous.Path != "" {
 		payload["previous_size_bytes"] = previous.SizeBytes
 		payload["previous_mod_time"] = previous.ModTime.Format(time.RFC3339Nano)
@@ -1348,6 +1355,39 @@ func detectKnownBenignPHPGuard(eventType string, path string, sizeBytes int64) (
 		return "", false
 	}
 	return "prestashop_asset_guard_index", true
+}
+
+func detectSuspiciousPHPContent(eventType string, path string, sizeBytes int64) (string, bool) {
+	if eventType == "file.deleted" || sizeBytes <= 0 || sizeBytes > maxKnownPHPGuardBytes {
+		return "", false
+	}
+	normalized := strings.ToLower(filepath.ToSlash(path))
+	if !strings.HasSuffix(normalized, ".php") && !strings.HasSuffix(normalized, ".phtml") && !strings.HasSuffix(normalized, ".phar") {
+		return "", false
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return "", false
+	}
+	return suspiciousPHPContentReason(string(content))
+}
+
+func suspiciousPHPContentReason(content string) (string, bool) {
+	compact := strings.NewReplacer(" ", "", "\t", "", "\n", "", "\r", "").Replace(strings.ToLower(content))
+	switch {
+	case strings.Contains(compact, "@eval(base64_decode($_post["):
+		return "post_base64_eval_webshell", true
+	case strings.Contains(compact, "base64_decode($_post[") && strings.Contains(compact, "eval("):
+		return "post_base64_eval_webshell", true
+	case strings.Contains(compact, "passthru(") && strings.Contains(compact, "cmd_start") && strings.Contains(compact, "@unlink("):
+		return "self_deleting_command_probe", true
+	case strings.Contains(compact, "multi_query(") && strings.Contains(compact, "app/config/parameters.php") && strings.Contains(compact, "$_get["):
+		return "db_credential_sql_webshell", true
+	case strings.Contains(compact, "file_put_contents(") && strings.Contains(compact, "base64_decode(") && strings.Contains(compact, "$_post["):
+		return "post_file_write_webshell", true
+	default:
+		return "", false
+	}
 }
 
 func isPrestaShopAssetGuardPath(path string) bool {

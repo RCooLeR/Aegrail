@@ -7,7 +7,7 @@ import (
 	"github.com/rcooler/aegrail/hub/internal/domain"
 )
 
-const currentRiskScoreVersion = "2026-05-13.1"
+const currentRiskScoreVersion = "2026-08-04.1"
 
 type riskFactor struct {
 	ID     string
@@ -82,10 +82,9 @@ func calculateFindingRisk(finding domain.HubFinding) riskScoreResult {
 		add("evidence:multi_host", 6, "evidence spans multiple hosts")
 	}
 
-	if riskDeploymentAdjusted(finding.Metadata) {
-		add("context:deployment_adjusted", -5, "active deployment lowered expected-change risk")
-	}
-
+	// Deployment markers are investigation context only. In particular, do
+	// not honor legacy severity_adjusted metadata here: older findings may
+	// still contain it, but it must not lower their score or risk band.
 	score := 0
 	for _, factor := range factors {
 		score += factor.Points
@@ -259,12 +258,4 @@ func riskDeploymentActive(metadata map[string]any) bool {
 		return false
 	}
 	return payloadBool(context, "active")
-}
-
-func riskDeploymentAdjusted(metadata map[string]any) bool {
-	context, ok := metadata["deployment_context"].(map[string]any)
-	if !ok {
-		return false
-	}
-	return payloadBool(context, "severity_adjusted")
 }

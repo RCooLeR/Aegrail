@@ -5,7 +5,7 @@
 - Modular React dashboard structure under `dashboard/src/dashboard`.
 - Light main workspace with dark collapsible sidebar.
 - Overview company cards with site summaries.
-- Company, site, node, issues, issue detail, signals, browser scripts, deployments, reports, and settings views.
+- Overview, nodes, issues, issue detail, signals, traffic, bots/crawlers, browser scripts, deployments, and settings views.
 - Issue detail tabs for overview, evidence, timeline, comments, related issues, and LLM analysis.
 - Finding actions for status changes, file ignores, script allowlists, model analysis, and reports.
 - Issue detail report tab with deterministic guidance, latest model section, copy, download, and generate-analysis actions.
@@ -16,6 +16,9 @@
 - Static, React, and Node.js app kinds are available in site create/edit flows and labels.
 - Profile push notification controls with browser support/config/permission/subscription state.
 - Site icons/favicons where available.
+- Lazy, request-level traffic views with parsed User-Agent families, bot/tool classification, cached IP intelligence, and explicit trusted/blocked IP policy.
+- Company, site, and standalone report pages removed; inventory management remains in Settings and finding reports remain inside Issue Details.
+- Deployment markers reduced to app-scoped, context-only records that cannot acknowledge, suppress, or downgrade findings.
 
 ## Next
 

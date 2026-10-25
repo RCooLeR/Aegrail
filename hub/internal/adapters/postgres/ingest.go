@@ -2,14 +2,13 @@ package postgres
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"math"
 	"strconv"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -105,6 +104,9 @@ func (r *IngestRepository) SaveIngestBatch(ctx context.Context, batch domain.Ing
 		if err != nil {
 			return domain.IngestBatch{}, nil, false, err
 		}
+		if err := projectTrafficRequests(ctx, tx, existingEvents); err != nil {
+			return domain.IngestBatch{}, nil, false, err
+		}
 		if err := touchIngestAgentLastSeen(ctx, tx, existingBatch.AgentID, batch.ReceivedAt); err != nil {
 			return domain.IngestBatch{}, nil, false, err
 		}
@@ -152,11 +154,7 @@ func (r *IngestRepository) SaveIngestBatch(ctx context.Context, batch domain.Ing
 		`
 		eventBatch := &pgx.Batch{}
 		for _, event := range events {
-			eventID, err := newUUIDString()
-			if err != nil {
-				return domain.IngestBatch{}, nil, false, err
-			}
-			event.ID = domain.ID(eventID)
+			event.ID = domain.ID(newUUIDString())
 			event.BatchID = savedBatch.ID
 			event.CreatedAt = createdAt
 			savedEvents = append(savedEvents, event)
@@ -196,6 +194,9 @@ func (r *IngestRepository) SaveIngestBatch(ctx context.Context, batch domain.Ing
 		if insertErr != nil {
 			return domain.IngestBatch{}, nil, false, insertErr
 		}
+	}
+	if err := projectTrafficRequests(ctx, tx, savedEvents); err != nil {
+		return domain.IngestBatch{}, nil, false, err
 	}
 
 	if err := touchIngestAgentLastSeen(ctx, tx, savedBatch.AgentID, savedBatch.ReceivedAt); err != nil {
@@ -384,6 +385,7 @@ func (r *IngestRepository) ListTimelineEvents(ctx context.Context, environmentID
 		INNER JOIN agents a ON a.id = e.agent_id
 		WHERE e.environment_id = $1
 			AND e.event_time >= $2
+			AND e.event_type <> 'traffic.request'
 		ORDER BY e.event_time DESC, e.created_at DESC
 		LIMIT $3
 		)
@@ -406,6 +408,7 @@ func (r *IngestRepository) ListTimelineEvents(ctx context.Context, environmentID
 		WHERE e.environment_id = $1
 			AND e.app_id = $2::uuid
 			AND e.event_time >= $3
+			AND e.event_type <> 'traffic.request'
 		ORDER BY e.event_time DESC, e.created_at DESC
 		LIMIT $4
 		)
@@ -603,7 +606,7 @@ func (r *IngestRepository) ListTimelineEventsByTypes(ctx context.Context, enviro
 	seen := map[string]struct{}{}
 	for _, eventType := range eventTypes {
 		eventType = strings.TrimSpace(eventType)
-		if eventType == "" {
+		if eventType == "" || eventType == "traffic.request" {
 			continue
 		}
 		if _, ok := seen[eventType]; ok {
@@ -749,6 +752,7 @@ func (r *IngestRepository) ListTimelineEventsByID(ctx context.Context, environme
 		INNER JOIN hosts h ON h.id = e.host_id
 		INNER JOIN agents a ON a.id = e.agent_id
 		WHERE e.environment_id = $1
+			AND e.event_type <> 'traffic.request'
 		ORDER BY requested.ord ASC
 	`
 	const appQuery = `
@@ -770,6 +774,7 @@ func (r *IngestRepository) ListTimelineEventsByID(ctx context.Context, environme
 		INNER JOIN agents a ON a.id = e.agent_id
 		WHERE e.environment_id = $1
 			AND e.app_id = $2::uuid
+			AND e.event_type <> 'traffic.request'
 		ORDER BY requested.ord ASC
 	`
 	query := environmentQuery
@@ -917,25 +922,8 @@ func nonNilAnyMap(values map[string]any) map[string]any {
 	return values
 }
 
-func newUUIDString() (string, error) {
-	var raw [16]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return "", err
-	}
-	raw[6] = (raw[6] & 0x0f) | 0x40
-	raw[8] = (raw[8] & 0x3f) | 0x80
-
-	var out [36]byte
-	hex.Encode(out[0:8], raw[0:4])
-	out[8] = '-'
-	hex.Encode(out[9:13], raw[4:6])
-	out[13] = '-'
-	hex.Encode(out[14:18], raw[6:8])
-	out[18] = '-'
-	hex.Encode(out[19:23], raw[8:10])
-	out[23] = '-'
-	hex.Encode(out[24:36], raw[10:16])
-	return string(out[:]), nil
+func newUUIDString() string {
+	return uuid.NewV7().String()
 }
 
 func payloadString(payload map[string]any, key string, fallback string) string {

@@ -12,6 +12,7 @@ import (
 
 const notificationErrorReportEvery = 5 * time.Minute
 const notificationErrorMaxLength = 800
+const notificationDeliveryConcurrency = 4
 
 func (h *Hub) notifyHubFindings(ctx context.Context, eventType string, findings []domain.HubFinding, metadata map[string]any) error {
 	if h.notifications == nil || len(findings) == 0 {
@@ -19,6 +20,9 @@ func (h *Hub) notifyHubFindings(ctx context.Context, eventType string, findings 
 	}
 	failed := 0
 	var firstErr error
+	results := make(chan error, len(findings))
+	slots := make(chan struct{}, notificationDeliveryConcurrency)
+	pending := 0
 	for index := range findings {
 		finding := findings[index]
 		if !shouldNotifyHubFinding(eventType, finding) {
@@ -29,7 +33,15 @@ func (h *Hub) notifyHubFindings(ctx context.Context, eventType string, findings 
 		stripHubFindingSaveMetadata(&findings[index])
 		// Notification transports are best-effort. Findings are durable evidence;
 		// webhook/email/push outages must not make correlation or ingest jobs fail.
-		if err := h.notifyHubFinding(ctx, eventType, finding, metadata); err != nil {
+		slots <- struct{}{}
+		pending++
+		go func() {
+			defer func() { <-slots }()
+			results <- h.notifyHubFinding(ctx, eventType, finding, metadata)
+		}()
+	}
+	for range pending {
+		if err := <-results; err != nil {
 			failed++
 			if firstErr == nil {
 				firstErr = err
@@ -40,6 +52,49 @@ func (h *Hub) notifyHubFindings(ctx context.Context, eventType string, findings 
 		h.reportNotificationError(fmt.Errorf("%d finding notification(s) failed; first error: %w", failed, firstErr))
 	}
 	return nil
+}
+
+func (h *Hub) saveHubFindingsObserved(ctx context.Context, findings []domain.HubFinding, source string) ([]domain.HubFinding, error) {
+	if h.findings == nil {
+		return nil, fmt.Errorf("finding repository is not configured")
+	}
+	outboxWriter, durableOutbox := h.findings.(ports.HubFindingObservedOutboxWriter)
+	durableOutbox = durableOutbox && h.notificationOutbox != nil && h.notifications != nil
+	var (
+		saved []domain.HubFinding
+		err   error
+	)
+	if durableOutbox {
+		saved, err = outboxWriter.SaveHubFindingsObserved(ctx, findings, source)
+	} else {
+		saved, err = h.findings.SaveHubFindings(ctx, findings)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if durableOutbox {
+		createdFindingIDs := make([]domain.ID, 0, len(saved))
+		for index := range saved {
+			if shouldNotifyHubFinding("finding.observed", saved[index]) {
+				createdFindingIDs = append(createdFindingIDs, saved[index].ID)
+			}
+			stripHubFindingSaveMetadata(&saved[index])
+		}
+		if len(createdFindingIDs) > 0 {
+			if _, deliverErr := h.DeliverPendingHubFindingNotifications(ctx, NotificationOutboxDeliveryOptions{
+				BatchSize:  500,
+				MaxBatches: 10,
+				FindingIDs: createdFindingIDs,
+			}); deliverErr != nil {
+				h.reportNotificationError(fmt.Errorf("immediate finding notification outbox delivery failed: %w", deliverErr))
+			}
+		}
+		return saved, nil
+	}
+	if err := h.notifyHubFindings(ctx, "finding.observed", saved, map[string]any{"source": source}); err != nil {
+		return nil, err
+	}
+	return saved, nil
 }
 
 func shouldNotifyHubFinding(eventType string, finding domain.HubFinding) bool {

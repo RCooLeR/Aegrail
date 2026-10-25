@@ -29,7 +29,7 @@ func NewClient(ctx context.Context, cfg Config) (*Client, error) {
 	if url == "" {
 		return nil, errors.New("redis url is required")
 	}
-	options, err := goredis.ParseURL(url)
+	options, err := parseClientOptions(url)
 	if err != nil {
 		return nil, fmt.Errorf("parse redis url: %w", err)
 	}
@@ -46,6 +46,20 @@ func NewClient(ctx context.Context, cfg Config) (*Client, error) {
 		client:    client,
 		keyPrefix: prefix,
 	}, nil
+}
+
+func parseClientOptions(url string) (*goredis.Options, error) {
+	options, err := goredis.ParseURL(url)
+	if err != nil {
+		return nil, err
+	}
+	if options.Protocol == 0 {
+		options.Protocol = 3
+	}
+	if strings.TrimSpace(options.ClientName) == "" {
+		options.ClientName = "aegrail-hub"
+	}
+	return options, nil
 }
 
 func (c *Client) Close() error {
@@ -135,19 +149,19 @@ func (c *Client) Allow(ctx context.Context, key string, limit int, window time.D
 	if windowMS <= 0 {
 		windowMS = 1
 	}
-	count, err := c.client.Eval(ctx, rateLimitAllowScript, []string{rateKey}, windowMS).Int64()
+	count, err := rateLimitAllowScript.Run(ctx, c.client, []string{rateKey}, windowMS).Int64()
 	if err != nil {
 		return false, err
 	}
 	return count <= int64(limit), nil
 }
 
-const rateLimitAllowScript = `
+var rateLimitAllowScript = goredis.NewScript(`
 local count = redis.call("INCR", KEYS[1])
 if count == 1 then
   redis.call("PEXPIRE", KEYS[1], ARGV[1])
 end
-return count`
+return count`)
 
 func (c *Client) queueKey(queue string) (string, error) {
 	name := strings.TrimSpace(queue)
@@ -181,13 +195,14 @@ type redisLock struct {
 }
 
 func (l *redisLock) Release(ctx context.Context) error {
-	const releaseScript = `
+	return releaseLockScript.Run(ctx, l.client, []string{l.key}, l.token).Err()
+}
+
+var releaseLockScript = goredis.NewScript(`
 if redis.call("get", KEYS[1]) == ARGV[1] then
   return redis.call("del", KEYS[1])
 end
-return 0`
-	return l.client.Eval(ctx, releaseScript, []string{l.key}, l.token).Err()
-}
+return 0`)
 
 func randomToken() (string, error) {
 	var bytes [16]byte

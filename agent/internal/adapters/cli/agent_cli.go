@@ -16,7 +16,7 @@ import (
 	"github.com/rcooler/aegrail/agent/internal/agent"
 	"github.com/rcooler/aegrail/agent/internal/collector"
 	"github.com/rcooler/aegrail/agent/internal/domain"
-	urfavecli "github.com/urfave/cli/v2"
+	urfavecli "github.com/urfave/cli/v3"
 )
 
 func agentInstallCommand() *urfavecli.Command {
@@ -39,12 +39,12 @@ func agentInstallCommand() *urfavecli.Command {
 			&urfavecli.StringFlag{Name: "region"},
 			&urfavecli.StringSliceFlag{Name: "label"},
 		),
-		Action: func(c *urfavecli.Context) error {
+		Action: func(ctx context.Context, c *urfavecli.Command) error {
 			if strings.TrimSpace(c.String("node-secret")) == "" && strings.TrimSpace(c.String("node-secret-env")) == "" {
 				return fmt.Errorf("node-secret or node-secret-env is required")
 			}
 			runtime := newAgentRuntime(c)
-			identity, err := runtime.Install(c.Context, agent.Identity{
+			identity, err := runtime.Install(ctx, agent.Identity{
 				HubURL:        c.String("hub-url"),
 				HubProtocol:   c.String("hub-protocol"),
 				HubPublicKey:  c.String("hub-public-key"),
@@ -64,9 +64,9 @@ func agentInstallCommand() *urfavecli.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(c.App.Writer, "Installed agent %s for host %s\n", identity.AgentID, identity.Host)
-			fmt.Fprintf(c.App.Writer, "Config: %s\n", runtime.Config.ConfigPath)
-			fmt.Fprintf(c.App.Writer, "Queue:  %s\n", identity.QueueDir)
+			fmt.Fprintf(c.Root().Writer, "Installed agent %s for host %s\n", identity.AgentID, identity.Host)
+			fmt.Fprintf(c.Root().Writer, "Config: %s\n", runtime.Config.ConfigPath)
+			fmt.Fprintf(c.Root().Writer, "Queue:  %s\n", identity.QueueDir)
 			return nil
 		},
 	}
@@ -77,13 +77,13 @@ func agentStatusCommand() *urfavecli.Command {
 		Name:  "status",
 		Usage: "show local Agent queue and identity status",
 		Flags: agentConfigFlags(),
-		Action: func(c *urfavecli.Context) error {
+		Action: func(ctx context.Context, c *urfavecli.Command) error {
 			runtime := newAgentStatusRuntime(c)
-			status, err := runtime.Status(c.Context)
+			status, err := runtime.Status(ctx)
 			if err != nil {
 				return err
 			}
-			writer := tabwriter.NewWriter(c.App.Writer, 0, 0, 2, ' ', 0)
+			writer := tabwriter.NewWriter(c.Root().Writer, 0, 0, 2, ' ', 0)
 			fmt.Fprintln(writer, "CONFIG\tQUEUE\tINSTALLED\tPENDING\tSENT\tFAILED\tDISCARDED")
 			fmt.Fprintf(writer, "%s\t%s\t%t\t%d\t%d\t%d\t%d\n", status.ConfigPath, status.QueueDir, status.Installed, status.Pending, status.Sent, status.Failed, status.Discarded)
 			return writer.Flush()
@@ -95,19 +95,19 @@ func agentConfigCommand() *urfavecli.Command {
 	return &urfavecli.Command{
 		Name:  "config",
 		Usage: "inspect Agent server configuration",
-		Subcommands: []*urfavecli.Command{
+		Commands: []*urfavecli.Command{
 			{
 				Name:  "validate",
 				Usage: "validate a multi-site Agent config",
 				Flags: []urfavecli.Flag{
 					&urfavecli.StringFlag{Name: "config", Usage: "Agent server config path", Value: ".aegrail/agent.yaml"},
 				},
-				Action: func(c *urfavecli.Context) error {
+				Action: func(ctx context.Context, c *urfavecli.Command) error {
 					config, err := agent.LoadServerConfig(c.String("config"))
 					if err != nil {
 						return err
 					}
-					fmt.Fprintf(c.App.Writer, "Config valid: %d site(s), host %s, agent %s\n", len(config.Sites), config.Identity.Host, config.Identity.AgentID)
+					fmt.Fprintf(c.Root().Writer, "Config valid: %d site(s), host %s, agent %s\n", len(config.Sites), config.Identity.Host, config.Identity.AgentID)
 					return nil
 				},
 			},
@@ -119,7 +119,7 @@ func agentEnqueueCommand() *urfavecli.Command {
 	return &urfavecli.Command{
 		Name:  "enqueue",
 		Usage: "enqueue local Agent evidence events",
-		Subcommands: []*urfavecli.Command{
+		Commands: []*urfavecli.Command{
 			{
 				Name:  "event",
 				Usage: "enqueue one normalized event",
@@ -134,13 +134,13 @@ func agentEnqueueCommand() *urfavecli.Command {
 					&urfavecli.StringSliceFlag{Name: "label"},
 					&urfavecli.StringSliceFlag{Name: "payload"},
 				),
-				Action: func(c *urfavecli.Context) error {
+				Action: func(ctx context.Context, c *urfavecli.Command) error {
 					eventTime, err := parseOptionalTime(c.String("event-time"))
 					if err != nil {
 						return err
 					}
 					runtime := newAgentRuntime(c)
-					batch, path, err := runtime.EnqueueEvent(c.Context, agent.EnqueueEventInput{
+					batch, path, err := runtime.EnqueueEvent(ctx, agent.EnqueueEventInput{
 						BatchID:   c.String("batch-id"),
 						EventTime: eventTime,
 						Type:      c.String("type"),
@@ -154,8 +154,8 @@ func agentEnqueueCommand() *urfavecli.Command {
 					if err != nil {
 						return err
 					}
-					fmt.Fprintf(c.App.Writer, "Queued batch %s with %d event(s)\n", batch.BatchID, len(batch.Events))
-					fmt.Fprintf(c.App.Writer, "Path: %s\n", path)
+					fmt.Fprintf(c.Root().Writer, "Queued batch %s with %d event(s)\n", batch.BatchID, len(batch.Events))
+					fmt.Fprintf(c.Root().Writer, "Path: %s\n", path)
 					return nil
 				},
 			},
@@ -175,7 +175,7 @@ func agentRunCommand() *urfavecli.Command {
 			&urfavecli.IntFlag{Name: "send-limit", Usage: "maximum pending batches to send after each scan"},
 			&urfavecli.DurationFlag{Name: "interval", Usage: "override configured polling interval"},
 		},
-		Action: func(c *urfavecli.Context) error {
+		Action: func(ctx context.Context, c *urfavecli.Command) error {
 			config, err := agent.LoadServerConfig(c.String("config"))
 			if err != nil {
 				return err
@@ -197,10 +197,10 @@ func agentRunCommand() *urfavecli.Command {
 			databaseCollectorRuntime := collector.NewRuntime(collector.Config{Name: "database"})
 			defer func() {
 				if err := databaseCollectorRuntime.Close(); err != nil {
-					fmt.Fprintf(c.App.ErrWriter, "database connection close: %v\n", err)
+					fmt.Fprintf(c.Root().ErrWriter, "database connection close: %v\n", err)
 				}
 			}()
-			ctx, stop := signal.NotifyContext(c.Context, syscall.SIGINT, syscall.SIGTERM)
+			ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
 
 			runOnce := func(config agent.ServerConfig) error {
@@ -242,9 +242,9 @@ func agentRunCommand() *urfavecli.Command {
 							return err
 						}
 						result.Pending = discard.PendingAfter
-						fmt.Fprintf(c.App.Writer, "Discarded %d existing pending batch(es); pending %d\n", discard.Discarded, discard.PendingAfter)
+						fmt.Fprintf(c.Root().Writer, "Discarded %d existing pending batch(es); pending %d\n", discard.Discarded, discard.PendingAfter)
 						for _, item := range discard.Errors {
-							fmt.Fprintf(c.App.ErrWriter, "%s\n", item)
+							fmt.Fprintf(c.Root().ErrWriter, "%s\n", item)
 						}
 					}
 				} else {
@@ -256,13 +256,13 @@ func agentRunCommand() *urfavecli.Command {
 					result.Failed = send.Failed
 					result.Pending = send.PendingAfter
 					for _, item := range send.Errors {
-						fmt.Fprintf(c.App.ErrWriter, "%s\n", item)
+						fmt.Fprintf(c.Root().ErrWriter, "%s\n", item)
 					}
 				}
-				fmt.Fprintf(c.App.Writer, "Scanned %d site(s); queued %d event(s); sent %d; failed %d; pending %d\n", len(result.Sites), result.Queued, result.Sent, result.Failed, result.Pending)
+				fmt.Fprintf(c.Root().Writer, "Scanned %d site(s); queued %d event(s); sent %d; failed %d; pending %d\n", len(result.Sites), result.Queued, result.Sent, result.Failed, result.Pending)
 				for _, site := range result.Sites {
 					fmt.Fprintf(
-						c.App.Writer,
+						c.Root().Writer,
 						"  %s app=%s service=%s files=%d logs=%d queued=%d state=%s\n",
 						site.Slug,
 						site.App,
@@ -274,23 +274,23 @@ func agentRunCommand() *urfavecli.Command {
 					)
 				}
 				if databaseResult.Databases > 0 || databaseResult.Queued > 0 {
-					fmt.Fprintf(c.App.Writer, "Database collected %d database(s); queued %d event(s)\n", databaseResult.Databases, databaseResult.Queued)
+					fmt.Fprintf(c.Root().Writer, "Database collected %d database(s); queued %d event(s)\n", databaseResult.Databases, databaseResult.Queued)
 					for _, site := range databaseResult.Sites {
-						fmt.Fprintf(c.App.Writer, "  %s databases=%d baselines=%d changes=%d skipped=%d queued=%d warnings=%d\n", site.Slug, site.Databases, site.Baselines, site.Changes, site.Skipped, site.Queued, site.Warnings)
+						fmt.Fprintf(c.Root().Writer, "  %s databases=%d baselines=%d changes=%d skipped=%d queued=%d warnings=%d\n", site.Slug, site.Databases, site.Baselines, site.Changes, site.Skipped, site.Queued, site.Warnings)
 					}
 				}
 				if browserResult.Pages > 0 || browserResult.Queued > 0 {
-					fmt.Fprintf(c.App.Writer, "Browser crawled %d page(s); queued %d event(s)\n", browserResult.Pages, browserResult.Queued)
+					fmt.Fprintf(c.Root().Writer, "Browser crawled %d page(s); queued %d event(s)\n", browserResult.Pages, browserResult.Queued)
 					for _, site := range browserResult.Sites {
-						fmt.Fprintf(c.App.Writer, "  %s browser_pages=%d queued=%d\n", site.Slug, site.Pages, site.Queued)
+						fmt.Fprintf(c.Root().Writer, "  %s browser_pages=%d queued=%d\n", site.Slug, site.Pages, site.Queued)
 					}
 				}
 				if coverageResult.Sites > 0 {
-					fmt.Fprintf(c.App.Writer, "Config coverage checked %d site(s); queued %d update(s)\n", coverageResult.Sites, coverageResult.Queued)
+					fmt.Fprintf(c.Root().Writer, "Config coverage checked %d site(s); queued %d update(s)\n", coverageResult.Sites, coverageResult.Queued)
 				}
-				printAgentRunCollectorStatus(c.App.Writer, config, result, databaseResult, browserResult, coverageResult, bootstrap)
+				printAgentRunCollectorStatus(c.Root().Writer, config, result, databaseResult, browserResult, coverageResult, bootstrap)
 				if bootstrap {
-					fmt.Fprintln(c.App.Writer, "Bootstrap mode enabled: baselines captured, no events queued.")
+					fmt.Fprintln(c.Root().Writer, "Bootstrap mode enabled: baselines captured, no events queued.")
 				}
 				return nil
 			}
@@ -301,7 +301,7 @@ func agentRunCommand() *urfavecli.Command {
 
 			for {
 				if err := runOnce(config); err != nil {
-					fmt.Fprintf(c.App.ErrWriter, "%s\n", err)
+					fmt.Fprintf(c.Root().ErrWriter, "%s\n", err)
 				}
 				timer := time.NewTimer(interval)
 				select {
@@ -311,7 +311,7 @@ func agentRunCommand() *urfavecli.Command {
 				case <-timer.C:
 					nextConfig, err := agent.LoadServerConfig(c.String("config"))
 					if err != nil {
-						fmt.Fprintf(c.App.ErrWriter, "%s\n", err)
+						fmt.Fprintf(c.Root().ErrWriter, "%s\n", err)
 						continue
 					}
 					config = nextConfig
@@ -921,15 +921,15 @@ func agentSendCommand(name string, usage string) *urfavecli.Command {
 		Flags: append(agentConfigFlags(),
 			&urfavecli.IntFlag{Name: "limit", Usage: "maximum pending batches to send"},
 		),
-		Action: func(c *urfavecli.Context) error {
+		Action: func(ctx context.Context, c *urfavecli.Command) error {
 			runtime := newAgentRuntime(c)
-			result, err := runtime.SendQueued(c.Context, c.Int("limit"))
+			result, err := runtime.SendQueued(ctx, c.Int("limit"))
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(c.App.Writer, "Sent %d queued batch(es); %d failed; %d pending remain\n", result.Sent, result.Failed, result.PendingAfter)
+			fmt.Fprintf(c.Root().Writer, "Sent %d queued batch(es); %d failed; %d pending remain\n", result.Sent, result.Failed, result.PendingAfter)
 			for _, item := range result.Errors {
-				fmt.Fprintf(c.App.ErrWriter, "%s\n", item)
+				fmt.Fprintf(c.Root().ErrWriter, "%s\n", item)
 			}
 			if result.Failed > 0 {
 				return fmt.Errorf("failed to send %d queued batch(es)", result.Failed)
@@ -952,7 +952,7 @@ func agentStartCommand() *urfavecli.Command {
 			&urfavecli.BoolFlag{Name: "once", Usage: "run one scan and exit"},
 			&urfavecli.IntFlag{Name: "send-limit", Usage: "maximum pending batches to send after each scan"},
 		),
-		Action: func(c *urfavecli.Context) error {
+		Action: func(ctx context.Context, c *urfavecli.Command) error {
 			interval := c.Duration("interval")
 			if interval <= 0 {
 				return fmt.Errorf("interval must be positive")
@@ -975,7 +975,7 @@ func agentStartCommand() *urfavecli.Command {
 			}
 
 			runtime := newAgentRuntime(c)
-			ctx, stop := signal.NotifyContext(c.Context, syscall.SIGINT, syscall.SIGTERM)
+			ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
 
 			runOnce := func() error {
@@ -987,9 +987,9 @@ func agentStartCommand() *urfavecli.Command {
 					}
 					queued += result.Queued
 					if result.Baselined {
-						fmt.Fprintf(c.App.Writer, "Watch baseline saved at %s (%d file(s))\n", result.StatePath, result.WatchedFiles)
+						fmt.Fprintf(c.Root().Writer, "Watch baseline saved at %s (%d file(s))\n", result.StatePath, result.WatchedFiles)
 					} else {
-						fmt.Fprintf(c.App.Writer, "Watch scan queued %d event(s) from %d file(s)\n", result.Queued, result.WatchedFiles)
+						fmt.Fprintf(c.Root().Writer, "Watch scan queued %d event(s) from %d file(s)\n", result.Queued, result.WatchedFiles)
 					}
 				}
 				if len(logPaths) > 0 {
@@ -999,9 +999,9 @@ func agentStartCommand() *urfavecli.Command {
 					}
 					queued += result.Queued
 					if result.Baselined {
-						fmt.Fprintf(c.App.Writer, "Log baseline saved at %s (%d log file(s))\n", result.StatePath, result.WatchedLogs)
+						fmt.Fprintf(c.Root().Writer, "Log baseline saved at %s (%d log file(s))\n", result.StatePath, result.WatchedLogs)
 					} else {
-						fmt.Fprintf(c.App.Writer, "Log scan queued %d event(s) from %d log file(s)\n", result.Queued, result.WatchedLogs)
+						fmt.Fprintf(c.Root().Writer, "Log scan queued %d event(s) from %d log file(s)\n", result.Queued, result.WatchedLogs)
 					}
 				}
 
@@ -1010,19 +1010,19 @@ func agentStartCommand() *urfavecli.Command {
 					if c.Bool("once") {
 						return err
 					}
-					fmt.Fprintf(c.App.ErrWriter, "%s\n", err)
+					fmt.Fprintf(c.Root().ErrWriter, "%s\n", err)
 					return nil
 				}
-				fmt.Fprintf(c.App.Writer, "Sent %d queued batch(es); %d failed; %d pending remain\n", send.Sent, send.Failed, send.PendingAfter)
+				fmt.Fprintf(c.Root().Writer, "Sent %d queued batch(es); %d failed; %d pending remain\n", send.Sent, send.Failed, send.PendingAfter)
 				for _, item := range send.Errors {
-					fmt.Fprintf(c.App.ErrWriter, "%s\n", item)
+					fmt.Fprintf(c.Root().ErrWriter, "%s\n", item)
 				}
 				if send.Failed > 0 {
 					err := fmt.Errorf("failed to send %d queued batch(es)", send.Failed)
 					if c.Bool("once") {
 						return err
 					}
-					fmt.Fprintf(c.App.ErrWriter, "%s\n", err)
+					fmt.Fprintf(c.Root().ErrWriter, "%s\n", err)
 				}
 				return nil
 			}
@@ -1033,7 +1033,7 @@ func agentStartCommand() *urfavecli.Command {
 
 			for {
 				if err := runOnce(); err != nil {
-					fmt.Fprintf(c.App.ErrWriter, "%s\n", err)
+					fmt.Fprintf(c.Root().ErrWriter, "%s\n", err)
 				}
 
 				timer := time.NewTimer(interval)
@@ -1048,14 +1048,14 @@ func agentStartCommand() *urfavecli.Command {
 	}
 }
 
-func newAgentRuntime(c *urfavecli.Context) *agent.Runtime {
+func newAgentRuntime(c *urfavecli.Command) *agent.Runtime {
 	return agent.NewRuntime(agent.Config{
 		ConfigPath: c.String("config"),
 		QueueDir:   c.String("queue-dir"),
 	})
 }
 
-func newAgentStatusRuntime(c *urfavecli.Context) *agent.Runtime {
+func newAgentStatusRuntime(c *urfavecli.Command) *agent.Runtime {
 	if config, err := agent.LoadServerConfig(c.String("config")); err == nil {
 		identity := config.AgentIdentity()
 		return agent.NewRuntime(agent.Config{

@@ -7,6 +7,7 @@ services:
     build:
       context: ../..
       dockerfile: docker/examples/agent.Dockerfile
+      pull: true
     restart: unless-stopped
     env_file:
       - ./.env.agent

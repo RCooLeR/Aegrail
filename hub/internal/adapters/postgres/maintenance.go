@@ -8,6 +8,8 @@ import (
 	"github.com/rcooler/aegrail/hub/internal/domain"
 )
 
+const minimumResolvedFindingRetention = 30 * 24 * time.Hour
+
 type HubMaintenanceRepository struct {
 	pool *pgxpool.Pool
 }
@@ -41,7 +43,7 @@ func (r *HubMaintenanceRepository) PruneHubData(ctx context.Context, options dom
 			return result, err
 		}
 	}
-	if options.ResolvedFindingRetention > 0 {
+	if options.ResolvedFindingRetention >= minimumResolvedFindingRetention {
 		cutoff := now.Add(-options.ResolvedFindingRetention)
 		result.ResolvedFindingsDeleted, err = r.pruneResolvedFindings(ctx, cutoff, batchSize)
 		if err != nil {
@@ -123,7 +125,10 @@ func (r *HubMaintenanceRepository) pruneResolvedFindings(ctx context.Context, cu
 			SELECT id
 			FROM hub_findings
 			WHERE status IN ('resolved', 'false_positive')
+				AND severity NOT IN ('high', 'critical')
+				AND created_at < $1
 				AND updated_at < $1
+				AND last_event_at < $1
 			ORDER BY updated_at ASC
 			LIMIT $2
 		)

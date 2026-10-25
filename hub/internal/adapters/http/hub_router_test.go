@@ -29,7 +29,7 @@ func TestDecodeIngestBodyDecryptsWireEnvelope(t *testing.T) {
 	agent.WireProtocol = wire.EnvelopeSchema
 	repo.agents[repo.hosts[0].ID][0] = agent
 
-	plaintext := []byte(`{"org":"acme","project":"customer-site","environment":"production","host":"web-01","agent_id":"agt_web_01","batch_id":"b1","events":[{"time":"2026-05-17T01:02:03Z","type":"test.event"}]}`)
+	plaintext := []byte(`{"schema":"aegrail.agent.queue.v1","queued_at":"2026-05-17T01:02:03Z","org":"acme","project":"customer-site","environment":"production","host":"web-01","agent_id":"agt_web_01","batch_id":"b1","events":[{"time":"2026-05-17T01:02:03Z","type":"test.event"}]}`)
 	envelope, err := wire.Encrypt(plaintext, agent.AgentID, nodePrivate, hubPublic, now)
 	if err != nil {
 		t.Fatalf("Encrypt returned error: %v", err)

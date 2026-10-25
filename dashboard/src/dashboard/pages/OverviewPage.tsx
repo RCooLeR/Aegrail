@@ -1,6 +1,6 @@
 import { Activity, AlertTriangle, Bell, Building2, ListChecks, TerminalSquare, type LucideIcon } from "lucide-react";
 import type { CompanyModel, InstanceModel } from "../../estate";
-import { buildSiteRows, companiesFromInstances } from "../model/viewModels";
+import { buildSiteRows, companiesFromInstances, findingCountLabel } from "../model/viewModels";
 import type { DashboardStats } from "../types";
 import { formatRelative } from "../utils/time";
 import { EmptyState, StatusPill } from "../components/common";
@@ -17,10 +17,10 @@ export function OverviewPage({
   const companies = [...companiesFromInstances(visibleInstances)].sort(compareCompaniesBySeverity);
   const visibleCompanies = companies.slice(0, 6);
   const showCompanyMenu = companies.length > 6;
-  const chips: Array<{ icon: LucideIcon; label: string; tone: string; value: number }> = [
-    { icon: AlertTriangle, label: "Critical", tone: "danger", value: stats.criticalIssues },
-    { icon: Bell, label: "High", tone: "warning", value: stats.highIssues },
-    { icon: Building2, label: "Affected companies", tone: "neutral", value: stats.affectedCompanies },
+  const chips: Array<{ icon: LucideIcon; label: string; tone: string; value: number | string }> = [
+    { icon: AlertTriangle, label: "Critical", tone: "danger", value: findingCountLabel(stats.criticalIssues, stats.findingCountsExact) },
+    { icon: Bell, label: "High", tone: "warning", value: findingCountLabel(stats.highIssues, stats.findingCountsExact) },
+    { icon: Building2, label: "Affected companies", tone: "neutral", value: findingCountLabel(stats.affectedCompanies, stats.findingCountsExact) },
     { icon: TerminalSquare, label: "Offline agents", tone: stats.offlineNodes > 0 ? "warning" : "ok", value: stats.offlineNodes },
     { icon: ListChecks, label: "Coverage gaps", tone: stats.coverageProblems > 0 ? "warning" : "ok", value: stats.coverageProblems },
     { icon: Activity, label: "Signals today", tone: "neutral", value: stats.signals }
@@ -55,8 +55,8 @@ export function OverviewPage({
                 </header>
                 <p>{company.statusReason}</p>
                 <div className="overview-company-metrics">
-                  <span><b>{company.openFindings}</b> open</span>
-                  <span><b>{company.criticalFindings}</b> critical</span>
+                  <span><b>{findingCountLabel(company.openFindings, company.findingCountsExact)}</b> open</span>
+                  <span><b>{findingCountLabel(company.criticalFindings, company.findingCountsExact)}</b> critical</span>
                   <span><b>{company.siteCount}</b> sites</span>
                   <span><b>{company.instances.length}</b> nodes</span>
                   <span><b>{activeAgents}/{agentCount}</b> agents</span>
@@ -76,7 +76,7 @@ export function OverviewPage({
                       <StatusPill value={site.status} />
                       <span>{site.instances.length}</span>
                       <span>{site.agentActive}/{site.agentCount}</span>
-                      <span>{site.openIssues}</span>
+                      <span>{findingCountLabel(site.openIssues, site.findingCountsExact)}</span>
                     </div>
                   ))}
                 </div>

@@ -32,12 +32,14 @@ type webRequestObservation struct {
 }
 
 type webRequestRule struct {
-	RuleID     string
-	Title      string
-	Severity   domain.Severity
-	Confidence domain.Confidence
-	Summary    string
-	Events     []webRequestObservation
+	RuleID      string
+	Title       string
+	Severity    domain.Severity
+	Confidence  domain.Confidence
+	Summary     string
+	DedupeGroup string
+	WindowStart time.Time
+	Events      []webRequestObservation
 }
 
 func buildWebRequestTrafficChains(events []domain.TimelineEvent, coveredWebEvents map[string]struct{}) []CorrelationChain {
@@ -376,12 +378,14 @@ func webRequestWindowChains(observations []webRequestObservation, covered map[st
 			covered[item.Key] = struct{}{}
 		}
 		chains = append(chains, buildWebRequestChain(webRequestRule{
-			RuleID:     rule.ruleID,
-			Title:      rule.title,
-			Severity:   rule.severity,
-			Confidence: rule.confidence,
-			Summary:    rule.summary(group),
-			Events:     group,
+			RuleID:      rule.ruleID,
+			Title:       rule.title,
+			Severity:    rule.severity,
+			Confidence:  rule.confidence,
+			Summary:     rule.summary(group),
+			DedupeGroup: rule.groupKey(observation),
+			WindowStart: windowStart,
+			Events:      group,
 		}))
 	}
 	return chains
@@ -411,12 +415,14 @@ func webTorNetworkChains(observations []webRequestObservation, covered map[strin
 		seen[windowKey] = struct{}{}
 		covered[observation.Key] = struct{}{}
 		chains = append(chains, buildWebRequestChain(webRequestRule{
-			RuleID:     ruleID,
-			Title:      title,
-			Severity:   severity,
-			Confidence: confidence,
-			Summary:    fmt.Sprintf("Tor-marked request observed on %s from remote %s", observation.PathFamily, observation.RemoteDisplay),
-			Events:     []webRequestObservation{observation},
+			RuleID:      ruleID,
+			Title:       title,
+			Severity:    severity,
+			Confidence:  confidence,
+			Summary:     fmt.Sprintf("Tor-marked request observed on %s from remote %s", observation.PathFamily, observation.RemoteDisplay),
+			DedupeGroup: observation.RemoteFingerprint + ":" + observation.PathFamily,
+			WindowStart: observation.Event.EventTime.Truncate(webRequestSpikeWindow),
+			Events:      []webRequestObservation{observation},
 		}))
 	}
 	return chains
@@ -436,7 +442,7 @@ func buildWebRequestChain(rule webRequestRule) CorrelationChain {
 		})
 	}
 	return CorrelationChain{
-		ID:         webRequestChainID(rule.RuleID, rule.Events),
+		ID:         webRequestChainID(rule.RuleID, rule.DedupeGroup, rule.WindowStart),
 		RuleID:     rule.RuleID,
 		Title:      rule.Title,
 		Severity:   rule.Severity,
@@ -446,13 +452,15 @@ func buildWebRequestChain(rule webRequestRule) CorrelationChain {
 	}
 }
 
-func webRequestChainID(ruleID string, events []webRequestObservation) string {
-	parts := []string{ruleID}
-	if len(events) > 0 {
-		parts = append(parts, events[0].PathFamily, events[0].RemoteFingerprint, events[0].Event.EventTime.Truncate(webRequestSpikeWindow).Format(time.RFC3339))
-	}
-	for _, event := range events {
-		parts = append(parts, string(event.Event.ID), event.Path, fmt.Sprint(event.Status))
+func webRequestChainID(ruleID string, dedupeGroup string, windowStart time.Time) string {
+	// A finding represents the logical rule/group/window, not the exact set of
+	// events visible during one correlation pass. The event set grows while a
+	// window is active; including event IDs here would create and notify a new
+	// finding on every pass.
+	parts := []string{
+		ruleID,
+		strings.TrimSpace(dedupeGroup),
+		windowStart.UTC().Format(time.RFC3339),
 	}
 	return "web-request-" + sha256Short(strings.Join(parts, "\n"))
 }

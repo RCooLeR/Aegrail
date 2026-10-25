@@ -232,7 +232,7 @@ func (s *NotificationSink) findingURL(findingID domain.ID) string {
 func eventSet(values []string) map[string]struct{} {
 	events := map[string]struct{}{}
 	for _, value := range values {
-		for _, item := range strings.Split(value, ",") {
+		for item := range strings.SplitSeq(value, ",") {
 			item = strings.TrimSpace(item)
 			if item != "" {
 				events[item] = struct{}{}

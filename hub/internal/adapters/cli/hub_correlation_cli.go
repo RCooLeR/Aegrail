@@ -1,13 +1,14 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"text/tabwriter"
 	"time"
 
 	"github.com/rcooler/aegrail/hub/internal/domain"
 	hubapp "github.com/rcooler/aegrail/hub/internal/hub"
-	urfavecli "github.com/urfave/cli/v2"
+	urfavecli "github.com/urfave/cli/v3"
 )
 
 func hubCorrelationCommand(meta domain.AppMeta) *urfavecli.Command {
@@ -15,7 +16,7 @@ func hubCorrelationCommand(meta domain.AppMeta) *urfavecli.Command {
 		Name:    "correlate",
 		Aliases: []string{"correlation"},
 		Usage:   "run deterministic Hub event correlation rules",
-		Subcommands: []*urfavecli.Command{
+		Commands: []*urfavecli.Command{
 			{
 				Name:  "events",
 				Usage: "correlate recent Hub ingest events",
@@ -26,18 +27,18 @@ func hubCorrelationCommand(meta domain.AppMeta) *urfavecli.Command {
 					&urfavecli.IntFlag{Name: "limit", Value: 1000, Usage: "maximum timeline events to inspect"},
 					&urfavecli.BoolFlag{Name: "save", Usage: "save or refresh matching Hub findings"},
 				),
-				Action: func(c *urfavecli.Context) error {
+				Action: func(ctx context.Context, c *urfavecli.Command) error {
 					since, err := parseLookback(c.String("since"), time.Now)
 					if err != nil {
 						return err
 					}
-					container, cleanup, err := newDatabaseContainer(c.Context, meta)
+					container, cleanup, err := newDatabaseContainer(ctx, meta)
 					if err != nil {
 						return err
 					}
 					defer cleanup()
 
-					result, err := container.Hub.CorrelateEvents(c.Context, hubapp.CorrelateEventsInput{
+					result, err := container.Hub.CorrelateEvents(ctx, hubapp.CorrelateEventsInput{
 						OrganizationSlug: c.String("org"),
 						ProjectSlug:      c.String("project"),
 						EnvironmentSlug:  c.String("env"),
@@ -51,14 +52,14 @@ func hubCorrelationCommand(meta domain.AppMeta) *urfavecli.Command {
 						return err
 					}
 					if len(result.Chains) == 0 {
-						fmt.Fprintf(c.App.Writer, "No correlation chains found across %d event(s) since %s.\n", result.Events, since.Format(time.RFC3339))
+						fmt.Fprintf(c.Root().Writer, "No correlation chains found across %d event(s) since %s.\n", result.Events, since.Format(time.RFC3339))
 						return nil
 					}
 
 					if c.Bool("save") {
-						fmt.Fprintf(c.App.Writer, "Saved or refreshed %d finding(s).\n", len(result.Findings))
+						fmt.Fprintf(c.Root().Writer, "Saved or refreshed %d finding(s).\n", len(result.Findings))
 					}
-					writer := tabwriter.NewWriter(c.App.Writer, 0, 0, 2, ' ', 0)
+					writer := tabwriter.NewWriter(c.Root().Writer, 0, 0, 2, ' ', 0)
 					fmt.Fprintln(writer, "CHAIN\tSEVERITY\tCONFIDENCE\tRULE\tEVENTS\tSUMMARY")
 					for index, chain := range result.Chains {
 						fmt.Fprintf(writer, "%d\t%s\t%s\t%s\t%d\t%s\n", index+1, chain.Severity, chain.Confidence, chain.RuleID, len(chain.Events), chain.Summary)
@@ -83,7 +84,7 @@ func hubCorrelationCommand(meta domain.AppMeta) *urfavecli.Command {
 					&urfavecli.IntFlag{Name: "limit", Value: 5000, Usage: "maximum browser timeline events to inspect"},
 					&urfavecli.BoolFlag{Name: "save", Usage: "save or refresh matching Hub findings"},
 				),
-				Action: func(c *urfavecli.Context) error {
+				Action: func(ctx context.Context, c *urfavecli.Command) error {
 					observeSince, err := parseLookback(c.String("since"), time.Now)
 					if err != nil {
 						return err
@@ -92,13 +93,13 @@ func hubCorrelationCommand(meta domain.AppMeta) *urfavecli.Command {
 					if err != nil {
 						return err
 					}
-					container, cleanup, err := newDatabaseContainer(c.Context, meta)
+					container, cleanup, err := newDatabaseContainer(ctx, meta)
 					if err != nil {
 						return err
 					}
 					defer cleanup()
 
-					result, err := container.Hub.AnalyzeBrowserScriptDrift(c.Context, hubapp.AnalyzeBrowserScriptDriftInput{
+					result, err := container.Hub.AnalyzeBrowserScriptDrift(ctx, hubapp.AnalyzeBrowserScriptDriftInput{
 						OrganizationSlug: c.String("org"),
 						ProjectSlug:      c.String("project"),
 						EnvironmentSlug:  c.String("env"),
@@ -113,7 +114,7 @@ func hubCorrelationCommand(meta domain.AppMeta) *urfavecli.Command {
 					}
 					if len(result.Drifts) == 0 {
 						fmt.Fprintf(
-							c.App.Writer,
+							c.Root().Writer,
 							"No browser script drift found across %d observed event(s); baseline had %d event(s) since %s.\n",
 							result.ObservedEvents,
 							result.BaselineEvents,
@@ -122,9 +123,9 @@ func hubCorrelationCommand(meta domain.AppMeta) *urfavecli.Command {
 						return nil
 					}
 					if c.Bool("save") {
-						fmt.Fprintf(c.App.Writer, "Saved or refreshed %d browser drift finding(s).\n", len(result.Findings))
+						fmt.Fprintf(c.Root().Writer, "Saved or refreshed %d browser drift finding(s).\n", len(result.Findings))
 					}
-					writer := tabwriter.NewWriter(c.App.Writer, 0, 0, 2, ' ', 0)
+					writer := tabwriter.NewWriter(c.Root().Writer, 0, 0, 2, ' ', 0)
 					fmt.Fprintln(writer, "TIME\tSEVERITY\tCONFIDENCE\tRULE\tPAGE\tVALUE\tEVENT")
 					for _, drift := range result.Drifts {
 						fmt.Fprintf(

@@ -56,7 +56,7 @@ func WriteHubFindingsManagerMarkdown(w io.Writer, report HubFindingsJSONReport) 
 	if len(findings) > 0 {
 		builder.WriteString("\n## Priority Findings\n\n")
 		limit := min(5, len(findings))
-		for index := 0; index < limit; index++ {
+		for index := range limit {
 			finding := findings[index]
 			fmt.Fprintf(
 				&builder,

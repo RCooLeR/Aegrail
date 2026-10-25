@@ -3,6 +3,7 @@ package hub
 import (
 	"context"
 	"errors"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -126,8 +127,6 @@ func cloneAnyMap(values map[string]any) map[string]any {
 		return map[string]any{}
 	}
 	clone := make(map[string]any, len(values))
-	for key, value := range values {
-		clone[key] = value
-	}
+	maps.Copy(clone, values)
 	return clone
 }

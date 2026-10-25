@@ -23,6 +23,10 @@ type CorrelateEventsInput struct {
 	Window           time.Duration
 	Limit            int
 	SaveFindings     bool
+	// TriggerEventIDs is nil for manual correlation. Automatic correlation
+	// always supplies a non-nil slice and only persists findings that intersect
+	// those triggering ingest events.
+	TriggerEventIDs []domain.ID
 }
 
 type CorrelateEventsResult struct {
@@ -102,17 +106,13 @@ func (h *Hub) CorrelateEvents(ctx context.Context, input CorrelateEventsInput) (
 	if err != nil {
 		return CorrelateEventsResult{}, err
 	}
-	findings = filterDeploymentExpectedFindings(findings)
 	findings = applyRiskScoringToFindings(findings)
+	if input.TriggerEventIDs != nil {
+		findings = findingsIntersectingEventIDs(findings, input.TriggerEventIDs)
+	}
 	if input.SaveFindings && len(findings) > 0 {
-		if h.findings == nil {
-			return CorrelateEventsResult{}, errors.New("finding repository is not configured")
-		}
-		findings, err = h.findings.SaveHubFindings(ctx, findings)
+		findings, err = h.saveHubFindingsObserved(ctx, findings, "correlation")
 		if err != nil {
-			return CorrelateEventsResult{}, err
-		}
-		if err := h.notifyHubFindings(ctx, "finding.observed", findings, map[string]any{"source": "correlation"}); err != nil {
 			return CorrelateEventsResult{}, err
 		}
 	}
@@ -127,6 +127,31 @@ func (h *Hub) CorrelateEvents(ctx context.Context, input CorrelateEventsInput) (
 		Chains:       chains,
 		Findings:     findings,
 	}, nil
+}
+
+func findingsIntersectingEventIDs(findings []domain.HubFinding, triggerEventIDs []domain.ID) []domain.HubFinding {
+	if len(findings) == 0 || len(triggerEventIDs) == 0 {
+		return nil
+	}
+	triggered := make(map[domain.ID]struct{}, len(triggerEventIDs))
+	for _, eventID := range triggerEventIDs {
+		if eventID != "" {
+			triggered[eventID] = struct{}{}
+		}
+	}
+	if len(triggered) == 0 {
+		return nil
+	}
+	filtered := make([]domain.HubFinding, 0, len(findings))
+	for _, finding := range findings {
+		for _, eventID := range finding.EventIDs {
+			if _, ok := triggered[eventID]; ok {
+				filtered = append(filtered, finding)
+				break
+			}
+		}
+	}
+	return filtered
 }
 
 func (h *Hub) listCorrelationTimelineEvents(ctx context.Context, environmentID domain.ID, appID domain.ID, since time.Time, limit int) ([]domain.TimelineEvent, error) {
@@ -545,7 +570,15 @@ func addCorrelationChain(chains *[]CorrelationChain, seen map[string]struct{}, c
 
 func correlationID(ruleID string, events []domain.TimelineEvent) string {
 	parts := []string{ruleID}
-	for _, event := range events {
+	anchorStart := 0
+	if len(events) > 1 && isSuspiciousWebEvent(events[0]) {
+		// A burst of suspicious requests can all point at the same subsequent
+		// file/database/persistence evidence. Anchor the finding to that durable
+		// evidence so every triggering request does not become a separate
+		// incident and email.
+		anchorStart = 1
+	}
+	for _, event := range events[anchorStart:] {
 		id := string(event.ID)
 		if id == "" {
 			id = event.EventTime.Format(time.RFC3339Nano) + ":" + event.EventType + ":" + event.Target

@@ -5,6 +5,7 @@ hub:
   protocol: aegrail-wire-v1
   hub_public_key: replace-with-hub-public-key
   node_secret: replace-with-node-secret
+  timeout: 60s
   send_limit: 100
 
 identity:

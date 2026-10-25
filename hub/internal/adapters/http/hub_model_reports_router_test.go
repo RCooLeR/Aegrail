@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -253,13 +254,7 @@ func (r *httpTestModelAnalysisReportRepository) ListModelAnalysisReportsForFindi
 		if appID != "" && report.AppID != appID {
 			continue
 		}
-		hasFinding := false
-		for _, sourceFindingID := range report.SourceFindingIDs {
-			if sourceFindingID == findingID {
-				hasFinding = true
-				break
-			}
-		}
+		hasFinding := slices.Contains(report.SourceFindingIDs, findingID)
 		if !hasFinding {
 			continue
 		}
@@ -290,10 +285,8 @@ func (r *httpTestModelAnalysisReportRepository) FindModelAnalysisReportByEvidenc
 		if appID != "" && report.AppID != appID {
 			continue
 		}
-		for _, sourceFindingID := range report.SourceFindingIDs {
-			if sourceFindingID == findingID {
-				return report, true, nil
-			}
+		if slices.Contains(report.SourceFindingIDs, findingID) {
+			return report, true, nil
 		}
 	}
 	return domain.ModelAnalysisReport{}, false, nil
@@ -313,13 +306,7 @@ func (r *httpTestModelAnalysisReportRepository) FindLatestModelAnalysisReportByF
 		if strings.TrimSpace(modelName) != "" && report.ModelName != modelName {
 			continue
 		}
-		hasFinding := false
-		for _, sourceFindingID := range report.SourceFindingIDs {
-			if sourceFindingID == findingID {
-				hasFinding = true
-				break
-			}
-		}
+		hasFinding := slices.Contains(report.SourceFindingIDs, findingID)
 		if !hasFinding {
 			continue
 		}

@@ -9,7 +9,7 @@
 - Atomic/synced state writes and flushed pending queue batches before send eligibility.
 - Encrypted Hub replay through `aegrail.agent.wire.v1`.
 - File monitoring with path metadata, size, mtime, SHA-256, delete detection, and reusable hashes for unchanged files.
-- Log tailing for access logs, PHP errors, generic logs, and Tor exit metadata when enabled, with routine public/API/static traffic filtered before it reaches Hub.
+- Log tailing for access logs, PHP errors, generic logs, and Tor exit metadata when enabled, with routine public/API/static requests classified as traffic telemetry instead of security signals.
 - WordPress, WordPress multisite, PrestaShop, Mautic, Yii2 RBAC, and Laravel database snapshots.
 - Static, React, and Node.js file profiles with log/browser/config coverage and no default database snapshot profile.
 - Mautic file profile, DB snapshots, DB entity diffs, and access-log noise filtering.

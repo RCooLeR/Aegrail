@@ -15,22 +15,22 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
-import { loadTimelineEventsByID } from "../../api";
-import type { RuleDefinition } from "../../types";
+import { loadModelAnalysisReportsForFinding, loadTimelineEventsByID } from "../../api";
+import type { ApiScope, ModelAnalysisReport, RuleDefinition } from "../../types";
 import { modelPresetLabel } from "../config/modelPresets";
 import { collectorLabel, issueStatusLabel, nodeLabel, recommendedAction, serviceForEvent, signalTypeLabel } from "../model/viewModels";
-import type { IssueRow, ReportRow, SignalRow } from "../types";
+import type { IssueRow, SignalRow } from "../types";
 import { fileIgnorePathCandidate, firstMetadataString, metadataNumber, metadataString, metadataStringList, operatorActionGuidance } from "../utils/metadata";
 import { copyIssueBrief, exportIssueBrief } from "../utils/reports";
 import {
-  AnalysisLine,
+  type AnalysisLine,
   isModelAnalysisHTML,
   parseModelAnalysisSections,
   sanitizeModelAnalysisHTML,
   splitCodeTokens
 } from "../utils/modelAnalysis";
 import { formatDate, formatRelative } from "../utils/time";
-import { EmptyState, Panel, ResponsiveTable, SeverityPill, StatusPill } from "../components/common";
+import { EmptyState, ErrorState, InlineAlert, LoadingBlock, Panel, ResponsiveTable, SeverityPill, StatusPill } from "../components/common";
 
 type IssueDetailTab = "overview" | "evidence" | "timeline" | "comments" | "related" | "report" | "analysis";
 
@@ -53,8 +53,9 @@ export function IssueDetailPage({
   onIgnoreFilePath,
   onIssue,
   onStatus,
-  reportRows,
   row,
+  rowLookupError,
+  rowLoading,
   rule,
   selectedModel,
   signalRows
@@ -63,12 +64,13 @@ export function IssueDetailPage({
   issueRows: IssueRow[];
   onAllowScript: (row: IssueRow) => void;
   onBack: () => void;
-  onGenerateAnalysis: (row: IssueRow) => void;
+  onGenerateAnalysis: (row: IssueRow) => Promise<ModelAnalysisReport | undefined>;
   onIgnoreFilePath: (row: IssueRow) => void;
   onIssue: (row: IssueRow) => void;
   onStatus: (row: IssueRow, status: string) => void;
-  reportRows: ReportRow[];
   row?: IssueRow;
+  rowLookupError: string;
+  rowLoading: boolean;
   rule?: RuleDefinition;
   selectedModel: string;
   signalRows: SignalRow[];
@@ -77,6 +79,27 @@ export function IssueDetailPage({
   const [hydratedLinkedSignals, setHydratedLinkedSignals] = useState<SignalRow[]>([]);
   const [linkedTimelineLoading, setLinkedTimelineLoading] = useState(false);
   const [linkedTimelineError, setLinkedTimelineError] = useState("");
+  const [reports, setReports] = useState<ModelAnalysisReport[]>([]);
+  const [reportsLoading, setReportsLoading] = useState(false);
+  const [reportsError, setReportsError] = useState("");
+  const linkedEventIDsForLoad = new Set(row?.finding.event_ids ?? []);
+  const cachedLinkedEventIDs = new Set(
+    row
+      ? signalRows
+          .filter((signal) => signal.instance.key === row.instance.key && linkedEventIDsForLoad.has(signal.event.id))
+          .map((signal) => signal.event.id)
+      : []
+  );
+  const missingLinkedEventIDs = row?.finding.event_ids.filter((eventID) => !cachedLinkedEventIDs.has(eventID)) ?? [];
+  const linkedTimelineLoadKey = row
+    ? [
+        issueScopeKey(row.instance.scope),
+        row.finding.id,
+        [...row.finding.event_ids].sort().join("\u0002"),
+        [...missingLinkedEventIDs].sort().join("\u0002")
+      ].join("\u0001")
+    : "";
+  const reportsLoadKey = row ? [issueScopeKey(row.instance.scope), row.finding.id].join("\u0001") : "";
 
   useEffect(() => {
     if (!row) {
@@ -85,22 +108,16 @@ export function IssueDetailPage({
       setLinkedTimelineError("");
       return;
     }
-    const cachedIDs = new Set(
-      signalRows
-        .filter((signal) => signal.instance.key === row.instance.key)
-        .map((signal) => signal.event.id)
-    );
-    const missingEventIDs = row.finding.event_ids.filter((eventID) => !cachedIDs.has(eventID));
     setHydratedLinkedSignals([]);
     setLinkedTimelineError("");
-    if (!missingEventIDs.length) {
+    if (!missingLinkedEventIDs.length) {
       setLinkedTimelineLoading(false);
       return;
     }
 
     let cancelled = false;
     setLinkedTimelineLoading(true);
-    loadTimelineEventsByID(row.instance.scope, missingEventIDs)
+    loadTimelineEventsByID(row.instance.scope, missingLinkedEventIDs)
       .then((events) => {
         if (cancelled) {
           return;
@@ -126,7 +143,33 @@ export function IssueDetailPage({
     return () => {
       cancelled = true;
     };
-  }, [row, signalRows]);
+  }, [linkedTimelineLoadKey]);
+
+  useEffect(() => {
+    if (!row) {
+      setReports([]);
+      setReportsLoading(false);
+      setReportsError("");
+      return;
+    }
+    let cancelled = false;
+    setReports([]);
+    setReportsLoading(true);
+    setReportsError("");
+    loadModelAnalysisReportsForFinding(row.instance.scope, row.finding)
+      .then((items) => {
+        if (!cancelled) setReports(items);
+      })
+      .catch((error) => {
+        if (!cancelled) setReportsError(error instanceof Error ? error.message : String(error));
+      })
+      .finally(() => {
+        if (!cancelled) setReportsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [reportsLoadKey]);
 
   if (!row) {
     return (
@@ -135,7 +178,11 @@ export function IssueDetailPage({
         icon={AlertTriangle}
         action={<button className="ghost-button" type="button" onClick={onBack}><ArrowLeft size={15} /> Issues</button>}
       >
-        <EmptyState title="Issue not found" />
+        {rowLoading
+          ? <LoadingBlock title="Loading issue" />
+          : rowLookupError
+            ? <ErrorState message={rowLookupError} title="Issue not found" />
+            : <EmptyState title="Issue not found" />}
       </Panel>
     );
   }
@@ -156,7 +203,12 @@ export function IssueDetailPage({
       (candidate.instance.companySlug === instance.companySlug && candidate.instance.projectSlug === instance.projectSlug && candidate.service === service)
     )
     .slice(0, 8);
-  const matchingReports = latestReportsForFinding(reportRows, finding.id);
+  const selectedRow = row;
+  async function generateAnalysis() {
+    const report = await onGenerateAnalysis(selectedRow);
+    if (!report) return;
+    setReports((current) => [report, ...current.filter((item) => item.id !== report.id)]);
+  }
 
   return (
     <section className="issue-workspace">
@@ -195,8 +247,8 @@ export function IssueDetailPage({
       {activeTab === "timeline" && <TimelineTab error={linkedTimelineError} linkedSignals={linkedSignals} loading={linkedTimelineLoading} totalLinkedSignals={finding.event_ids.length} />}
       {activeTab === "comments" && <CommentsTab row={row} />}
       {activeTab === "related" && <RelatedIssuesTab onIssue={onIssue} rows={relatedIssues} />}
-      {activeTab === "report" && <ReportTab actionLoading={actionLoading} modelValue={selectedModel} onGenerate={() => onGenerateAnalysis(row)} reports={matchingReports} row={row} rule={rule} />}
-      {activeTab === "analysis" && <AnalysisTab actionLoading={actionLoading} modelValue={selectedModel} onGenerate={() => onGenerateAnalysis(row)} reports={matchingReports} />}
+      {activeTab === "report" && <ReportTab actionLoading={actionLoading} error={reportsError} loading={reportsLoading} modelValue={selectedModel} onGenerate={() => void generateAnalysis()} reports={reports} row={row} rule={rule} />}
+      {activeTab === "analysis" && <AnalysisTab actionLoading={actionLoading} error={reportsError} loading={reportsLoading} modelValue={selectedModel} onGenerate={() => void generateAnalysis()} reports={reports} />}
     </section>
   );
 }
@@ -476,6 +528,8 @@ function RelatedIssuesTab({ onIssue, rows }: { onIssue: (row: IssueRow) => void;
 
 function ReportTab({
   actionLoading,
+  error,
+  loading,
   modelValue,
   onGenerate,
   reports,
@@ -483,14 +537,16 @@ function ReportTab({
   rule
 }: {
   actionLoading: boolean;
+  error: string;
+  loading: boolean;
   modelValue: string;
   onGenerate: () => void;
-  reports: ReportRow[];
+  reports: ModelAnalysisReport[];
   row: IssueRow;
   rule?: RuleDefinition;
 }) {
   const [copyState, setCopyState] = useState("");
-  const latestReport = reports[0]?.report;
+  const latestReport = preferredReport(reports);
   const guidance = operatorActionGuidance(row.finding);
 
   async function handleCopy() {
@@ -532,7 +588,8 @@ function ReportTab({
         {copyState && <p className="muted-line">{copyState}</p>}
       </Panel>
       <Panel title="Model section" icon={Brain} action={<span className="muted-line inline">{modelPresetLabel(modelValue)}</span>}>
-        {latestReport ? (
+        {error && <InlineAlert message={error} />}
+        {loading && !latestReport ? <LoadingBlock title="Loading model analysis" /> : latestReport ? (
           <div className="analysis-card">
             <strong>{latestReport.model_name || latestReport.model_provider || "Model report"}</strong>
             <small>{latestReport.status} / {formatDate(latestReport.generated_at)}</small>
@@ -547,7 +604,7 @@ function ReportTab({
   );
 }
 
-function AnalysisTab({ actionLoading, modelValue, onGenerate, reports }: { actionLoading: boolean; modelValue: string; onGenerate: () => void; reports: ReportRow[] }) {
+function AnalysisTab({ actionLoading, error, loading, modelValue, onGenerate, reports }: { actionLoading: boolean; error: string; loading: boolean; modelValue: string; onGenerate: () => void; reports: ModelAnalysisReport[] }) {
   const action = (
     <div className="analysis-action">
       <span>{modelPresetLabel(modelValue)}</span>
@@ -556,17 +613,22 @@ function AnalysisTab({ actionLoading, modelValue, onGenerate, reports }: { actio
       </button>
     </div>
   );
+  if (loading && !reports.length) {
+    return <Panel title="LLM analysis" icon={Brain} action={action}><LoadingBlock title="Loading analysis history" /></Panel>;
+  }
   if (!reports.length) {
     return (
       <Panel title="LLM analysis" icon={Brain} action={action}>
+        {error && <InlineAlert message={error} />}
         <EmptyState title="No analysis yet" />
       </Panel>
     );
   }
   return (
     <Panel title="LLM analysis" icon={Brain} action={action}>
+      {error && <InlineAlert message={error} />}
       <div className="stack-list">
-        {reports.map(({ report }) => (
+        {reports.map((report) => (
           <div className="analysis-card" key={report.id}>
             <div className="analysis-meta">
               <strong>{report.model_name || report.model_provider || "Model report"}</strong>
@@ -589,11 +651,12 @@ function AnalysisTab({ actionLoading, modelValue, onGenerate, reports }: { actio
   );
 }
 
-function latestReportsForFinding(reportRows: ReportRow[], findingID: string) {
-  const matching = reportRows.filter((item) => item.report.source_finding_ids.includes(findingID));
-  const completed = matching.find((item) => item.report.status === "completed" && item.report.analysis);
-  const latest = completed ?? matching[0];
-  return latest ? [latest] : [];
+function preferredReport(reports: ModelAnalysisReport[]) {
+  return reports.find((report) => report.status === "completed" && report.analysis) ?? reports[0];
+}
+
+function issueScopeKey(scope: ApiScope) {
+  return [scope.baseUrl, scope.org, scope.project, scope.environment, scope.app].join("\u0000");
 }
 
 function AnalysisOutput({ analysis }: { analysis: string }) {

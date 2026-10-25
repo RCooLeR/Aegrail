@@ -19,6 +19,10 @@ id_rsa
 id_rsa.pub
 *.pem
 *.key
+live hub db.txt
+*.dump
+*.dump.zst
+/.pnpm-store/
 
 # Go build and test output
 app/bin/

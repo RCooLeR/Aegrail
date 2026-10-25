@@ -486,9 +486,9 @@ func TestShouldSkipDatabaseCollectionMissingState(t *testing.T) {
 }
 
 func TestRunConfiguredBrowserCrawlsCanSkipBySchedule(t *testing.T) {
-	var requests int32
+	var requests atomic.Int32
 	pageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&requests, 1)
+		requests.Add(1)
 		w.Header().Set("Content-Type", "text/html")
 		_, _ = w.Write([]byte(`<!doctype html><html><head><title>Example</title><script src="/app.js"></script></head><body></body></html>`))
 	}))
@@ -557,7 +557,7 @@ func TestRunConfiguredBrowserCrawlsCanSkipBySchedule(t *testing.T) {
 	if len(skipResult.Sites) != 1 || !skipResult.Sites[0].Skipped {
 		t.Fatalf("skip result = %#v, want skipped site", skipResult)
 	}
-	if got := atomic.LoadInt32(&requests); got != 0 {
+	if got := requests.Load(); got != 0 {
 		t.Fatalf("requests = %d, want 0 for scheduled skip", got)
 	}
 
@@ -569,7 +569,7 @@ func TestRunConfiguredBrowserCrawlsCanSkipBySchedule(t *testing.T) {
 	if runResult.Pages != 1 || runResult.Queued == 0 {
 		t.Fatalf("run result = %#v, want one crawled page with queued events", runResult)
 	}
-	if got := atomic.LoadInt32(&requests); got != 1 {
+	if got := requests.Load(); got != 1 {
 		t.Fatalf("requests = %d, want 1 after schedule disabled", got)
 	}
 	entries, err := os.ReadDir(pendingDir)
@@ -643,11 +643,11 @@ func TestRunConfiguredBrowserCrawlsDoesNotAdvanceScheduleWhenEnqueueFails(t *tes
 }
 
 func TestAgentStartOnceSendsOneRequestForOneQueuedChange(t *testing.T) {
-	var requests int32
+	var requests atomic.Int32
 	var mu sync.Mutex
 	var batchIDs []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&requests, 1)
+		requests.Add(1)
 		var envelope wire.Envelope
 		if err := json.NewDecoder(r.Body).Decode(&envelope); err != nil {
 			t.Fatalf("Decode returned error: %v", err)
@@ -703,7 +703,7 @@ func TestAgentStartOnceSendsOneRequestForOneQueuedChange(t *testing.T) {
 	}
 	runCLI(t, "agent", "start", "--once", "--config", configPath, "--queue-dir", queueDir, "--root", appRoot, "--profile", "wordpress")
 
-	if got := atomic.LoadInt32(&requests); got != 1 {
+	if got := requests.Load(); got != 1 {
 		t.Fatalf("requests = %d, want 1; batch ids: %v", got, batchIDs)
 	}
 }
@@ -755,7 +755,7 @@ func runCLICapture(t *testing.T, args ...string) string {
 	var stderr bytes.Buffer
 	app.Writer = &stdout
 	app.ErrWriter = &stderr
-	if err := app.Run(args); err != nil {
+	if err := app.Run(context.Background(), args); err != nil {
 		t.Fatalf("Run(%v) returned error: %v\nstdout:\n%s\nstderr:\n%s", args, err, stdout.String(), stderr.String())
 	}
 	return stdout.String()

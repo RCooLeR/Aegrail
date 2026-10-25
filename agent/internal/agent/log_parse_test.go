@@ -250,6 +250,34 @@ func TestAccessLogFilterDropsRoutineSuccessfulPublicRequests(t *testing.T) {
 	}
 }
 
+func TestRoutineAccessLogIsDemotedToTrafficTelemetry(t *testing.T) {
+	event := logLineEvent("/var/log/nginx/access.log", logLine{
+		Text: `203.0.113.10 - - [12/May/2026:09:10:11 +0000] "GET /products HTTP/1.1" 200 842 "-" "Mozilla/5.0"`,
+	})
+	demoteRoutineAccessLogEvent(&event)
+
+	if event.Type != "traffic.request" || event.Severity != "info" {
+		t.Fatalf("event = %#v, want info traffic.request", event)
+	}
+	if event.Payload["remote_addr"] != "203.0.113.10" || event.Payload["path"] != "/products" {
+		t.Fatalf("payload = %#v, want request telemetry preserved", event.Payload)
+	}
+	if event.Message != "" {
+		t.Fatalf("message = %q, want routine traffic message omitted", event.Message)
+	}
+}
+
+func TestHighSignalAccessLogRemainsSecurityEvent(t *testing.T) {
+	event := logLineEvent("/var/log/nginx/access.log", logLine{
+		Text: `203.0.113.10 - - [12/May/2026:09:10:11 +0000] "POST /wp-login.php HTTP/1.1" 403 842 "-" "sqlmap/1.8"`,
+	})
+	demoteRoutineAccessLogEvent(&event)
+
+	if event.Type != "log.access" {
+		t.Fatalf("event type = %q, want log.access", event.Type)
+	}
+}
+
 func TestAccessLogFiltersKeepPasswordResetPaths(t *testing.T) {
 	cases := []struct {
 		name     string

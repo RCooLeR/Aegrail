@@ -1,21 +1,40 @@
+import { Activity, lazy, Suspense, useEffect, useState } from "react";
 import { AuthGate } from "./dashboard/components/AuthGate";
+import { LoadingBlock } from "./dashboard/components/common";
 import { DashboardShell } from "./dashboard/components/DashboardShell";
 import { initialFilters } from "./dashboard/config/navigation";
 import { useDashboardController } from "./dashboard/controllers/useDashboardController";
-import { BrowserScriptsPage } from "./dashboard/pages/BrowserScriptsPage";
-import { CompaniesPage } from "./dashboard/pages/CompaniesPage";
-import { DeploymentsPage } from "./dashboard/pages/DeploymentsPage";
-import { IssueDetailPage } from "./dashboard/pages/IssueDetailPage";
-import { IssuesPage } from "./dashboard/pages/IssuesPage";
-import { NodesPage } from "./dashboard/pages/NodesPage";
-import { OverviewPage } from "./dashboard/pages/OverviewPage";
-import { ReportsPage } from "./dashboard/pages/ReportsPage";
-import { SettingsPage } from "./dashboard/pages/SettingsPage";
-import { SignalsPage } from "./dashboard/pages/SignalsPage";
-import { SitesPage } from "./dashboard/pages/SitesPage";
+import type { ViewKey } from "./dashboard/types";
+
+const BrowserScriptsPage = lazy(() => import("./dashboard/pages/BrowserScriptsPage").then(({ BrowserScriptsPage }) => ({ default: BrowserScriptsPage })));
+const BotsPage = lazy(() => import("./dashboard/pages/BotsPage").then(({ BotsPage }) => ({ default: BotsPage })));
+const DeploymentsPage = lazy(() => import("./dashboard/pages/DeploymentsPage").then(({ DeploymentsPage }) => ({ default: DeploymentsPage })));
+const IssueDetailPage = lazy(() => import("./dashboard/pages/IssueDetailPage").then(({ IssueDetailPage }) => ({ default: IssueDetailPage })));
+const IssuesPage = lazy(() => import("./dashboard/pages/IssuesPage").then(({ IssuesPage }) => ({ default: IssuesPage })));
+const NodesPage = lazy(() => import("./dashboard/pages/NodesPage").then(({ NodesPage }) => ({ default: NodesPage })));
+const OverviewPage = lazy(() => import("./dashboard/pages/OverviewPage").then(({ OverviewPage }) => ({ default: OverviewPage })));
+const SettingsPage = lazy(() => import("./dashboard/pages/SettingsPage").then(({ SettingsPage }) => ({ default: SettingsPage })));
+const SignalsPage = lazy(() => import("./dashboard/pages/SignalsPage").then(({ SignalsPage }) => ({ default: SignalsPage })));
+const TrafficPage = lazy(() => import("./dashboard/pages/TrafficPage").then(({ TrafficPage }) => ({ default: TrafficPage })));
 
 export default function App() {
   const dashboard = useDashboardController();
+  const [visitedViews, setVisitedViews] = useState<ReadonlySet<ViewKey>>(
+    () => new Set([dashboard.view])
+  );
+
+  useEffect(() => {
+    setVisitedViews((current) => {
+      if (current.has(dashboard.view)) {
+        return current;
+      }
+      const next = new Set(current);
+      next.add(dashboard.view);
+      return next;
+    });
+  }, [dashboard.view]);
+
+  const hasVisited = (view: ViewKey) => dashboard.view === view || visitedViews.has(view);
 
   if (dashboard.authLoading || !dashboard.auth?.authenticated || !dashboard.auth.dashboard_ready) {
     return (
@@ -47,99 +66,170 @@ export default function App() {
       onView={dashboard.go}
       user={dashboard.auth.user}
       visibleOpenIssueCount={dashboard.visibleOpenIssueCount}
+      visibleOpenIssueCountExact={dashboard.visibleOpenIssueCountExact}
       view={dashboard.view}
     >
-      {dashboard.view === "overview" && (
-        <OverviewPage
-          onCompany={dashboard.selectCompany}
-          stats={dashboard.dashboardStats}
-          visibleInstances={dashboard.visibleInstances}
-        />
-      )}
-      {dashboard.view === "companies" && (
-        <CompaniesPage companies={dashboard.visibleCompanies} onCompany={dashboard.selectCompany} />
-      )}
-      {dashboard.view === "sites" && (
-        <SitesPage onSite={dashboard.selectSite} sites={dashboard.visibleSites} />
-      )}
-      {dashboard.view === "nodes" && (
-        <NodesPage
-          actionLoading={dashboard.actionLoading}
-          instances={dashboard.visibleInstances}
-          issueRows={dashboard.issueRows}
-          onIssue={dashboard.selectIssue}
-          onStatus={dashboard.setIssueStatus}
-        />
-      )}
-      {dashboard.view === "issues" && (
-        <IssuesPage
-          actionLoading={dashboard.actionLoading}
-          issueRows={dashboard.issueRows}
-          onIssue={dashboard.selectIssue}
-          onBulkStatus={dashboard.setIssueStatuses}
-          onStatus={dashboard.setIssueStatus}
-          ruleByID={dashboard.ruleByID}
-          selectedIssue={dashboard.selectedIssue}
-        />
-      )}
-      {dashboard.view === "issue" && (
-        <IssueDetailPage
-          actionLoading={dashboard.actionLoading}
-          issueRows={dashboard.issueRows}
-          onAllowScript={dashboard.allowScript}
-          onBack={() => dashboard.go("issues")}
-          onGenerateAnalysis={dashboard.generateAnalysis}
-          onIgnoreFilePath={dashboard.ignoreFilePath}
-          onIssue={dashboard.selectIssue}
-          onStatus={dashboard.setIssueStatus}
-          reportRows={dashboard.reportRows}
-          row={dashboard.selectedIssue}
-          rule={dashboard.selectedIssue ? dashboard.ruleByID.get(dashboard.selectedIssue.finding.rule_id) : undefined}
-          selectedModel={dashboard.actionState.model}
-          signalRows={dashboard.signalRows}
-        />
-      )}
-      {dashboard.view === "signals" && <SignalsPage rows={dashboard.signalRows} />}
-      {dashboard.view === "browser" && (
-        <BrowserScriptsPage
-          actionLoading={dashboard.actionLoading}
-          allowlistRows={dashboard.allowlistRows}
-          onAllowScript={dashboard.allowBrowserScript}
-          onAllowScripts={dashboard.allowBrowserScripts}
-          onUpdateEntries={dashboard.updateAllowlistEntries}
-          onUpdateEntry={dashboard.updateAllowlistEntry}
-          scriptRows={dashboard.browserScriptRows}
-        />
-      )}
-      {dashboard.view === "deployments" && (
-        <DeploymentsPage
-          actor={dashboard.actionState.actor || dashboard.auth.user?.email || "dashboard"}
-          deploymentRows={dashboard.deploymentRows}
-          issueRows={dashboard.deploymentIssueRows}
-          loading={dashboard.loading || dashboard.actionLoading}
-          onCreate={dashboard.recordDeployment}
-          visibleInstances={dashboard.visibleInstances}
-        />
-      )}
-      {dashboard.view === "reports" && (
-        <ReportsPage issueRows={dashboard.issueRows} reports={dashboard.reportRows} visibleInstances={dashboard.visibleInstances} />
-      )}
-      {dashboard.view === "settings" && (
-        <SettingsPage
-          actionState={dashboard.actionState}
-          allInstances={dashboard.estate.instances}
-          allSites={dashboard.allSites}
-          draftScope={dashboard.draftScope}
-          inventory={dashboard.inventory}
-          loading={dashboard.loading}
-          onActionChange={dashboard.setActionState}
-          onRefresh={dashboard.refresh}
-          onScopeChange={dashboard.setDraftScope}
-          onScopeSubmit={dashboard.applyScope}
-          scope={dashboard.scope}
-          user={dashboard.auth.user}
-        />
-      )}
+      <Suspense fallback={<LoadingBlock title="Loading dashboard view" />}>
+        {hasVisited("overview") && (
+          <Activity mode={dashboard.view === "overview" ? "visible" : "hidden"}>
+            <OverviewPage
+              onCompany={dashboard.selectCompany}
+              stats={dashboard.dashboardStats}
+              visibleInstances={dashboard.visibleInstances}
+            />
+          </Activity>
+        )}
+        {hasVisited("nodes") && (
+          <Activity mode={dashboard.view === "nodes" ? "visible" : "hidden"}>
+            <NodesPage
+              actionLoading={dashboard.actionLoading}
+              instances={dashboard.visibleInstances}
+              issueRows={dashboard.issueRows}
+              onIssue={dashboard.selectIssue}
+              onStatus={dashboard.setIssueStatus}
+            />
+          </Activity>
+        )}
+        {hasVisited("issues") && (
+          <Activity mode={dashboard.view === "issues" ? "visible" : "hidden"}>
+            <IssuesPage
+              actionLoading={dashboard.actionLoading}
+              error={dashboard.issueQueueError}
+              issueRows={dashboard.issueQueueRows}
+              loadedCount={dashboard.issueQueueLoadedCount}
+              loading={dashboard.issueQueueLoading}
+              matchedTotal={dashboard.issueQueueMatchedTotal}
+              matchedTotalExact={dashboard.issueQueueMatchedTotalExact}
+              onNext={dashboard.nextIssueQueuePage}
+              onPrevious={dashboard.previousIssueQueuePage}
+              onIssue={dashboard.selectIssue}
+              onBulkStatus={dashboard.setIssueStatuses}
+              onPageSize={dashboard.setIssueQueuePageSize}
+              onStatus={dashboard.setIssueStatus}
+              onStatusFilter={dashboard.setIssueQueueStatus}
+              page={dashboard.issueQueuePage}
+              pageCount={dashboard.issueQueuePageCount}
+              pageSize={dashboard.issueQueuePageSize}
+              queueKey={dashboard.issueQueueKey}
+              ruleByID={dashboard.ruleByID}
+              selectedIssue={dashboard.selectedIssue}
+              status={dashboard.issueQueueStatus}
+            />
+          </Activity>
+        )}
+        {hasVisited("issue") && (
+          <Activity mode={dashboard.view === "issue" ? "visible" : "hidden"}>
+            <IssueDetailPage
+              key={dashboard.selectedIssue?.finding.id ?? "issue-loading"}
+              actionLoading={dashboard.actionLoading}
+              issueRows={dashboard.issueRows}
+              onAllowScript={dashboard.allowScript}
+              onBack={() => dashboard.go("issues")}
+              onGenerateAnalysis={dashboard.generateAnalysis}
+              onIgnoreFilePath={dashboard.ignoreFilePath}
+              onIssue={dashboard.selectIssue}
+              onStatus={dashboard.setIssueStatus}
+              row={dashboard.selectedIssue}
+              rowLookupError={dashboard.issueLookupError}
+              rowLoading={dashboard.issueLookupLoading || dashboard.loading}
+              rule={dashboard.selectedIssue ? dashboard.ruleByID.get(dashboard.selectedIssue.finding.rule_id) : undefined}
+              selectedModel={dashboard.actionState.model}
+              signalRows={dashboard.signalRows}
+            />
+          </Activity>
+        )}
+        {hasVisited("signals") && (
+          <Activity mode={dashboard.view === "signals" ? "visible" : "hidden"}>
+            <SignalsPage rows={dashboard.signalRows} />
+          </Activity>
+        )}
+        {hasVisited("traffic") && (
+          <Activity mode={dashboard.view === "traffic" ? "visible" : "hidden"}>
+            <TrafficPage
+              key={`traffic:${dashboard.trafficTargetSignature}:${dashboard.trafficTimeframe}`}
+              canManagePolicy={["owner", "admin", "operator"].includes(dashboard.auth.user?.access_level ?? "")}
+              data={dashboard.trafficScopes}
+              error={dashboard.trafficError}
+              ipDetail={dashboard.trafficIPDetail}
+              ipDetailError={dashboard.trafficIPDetailError}
+              ipDetailLoading={dashboard.trafficIPDetailLoading}
+              loading={dashboard.trafficLoading}
+              onCloseIP={dashboard.closeTrafficIPDetail}
+              onCloseUserAgent={dashboard.closeTrafficUserAgentDetail}
+              onIP={dashboard.openTrafficIPDetail}
+              onPolicy={dashboard.setTrafficIPPolicy}
+              onTimeframe={dashboard.setTrafficTimeframe}
+              onUserAgent={dashboard.openTrafficUserAgentDetail}
+              policyLoading={dashboard.trafficPolicyLoading}
+              query={dashboard.deferredQuery}
+              timeframe={dashboard.trafficTimeframe}
+              userAgentDetail={dashboard.trafficUserAgentDetail}
+              userAgentDetailError={dashboard.trafficUserAgentDetailError}
+              userAgentDetailLoading={dashboard.trafficUserAgentDetailLoading}
+            />
+          </Activity>
+        )}
+        {hasVisited("bots") && (
+          <Activity mode={dashboard.view === "bots" ? "visible" : "hidden"}>
+            <BotsPage
+              key={`bots:${dashboard.trafficTargetSignature}:${dashboard.trafficTimeframe}`}
+              data={dashboard.trafficBotsScopes}
+              detail={dashboard.trafficUserAgentDetail}
+              detailError={dashboard.trafficUserAgentDetailError}
+              detailLoading={dashboard.trafficUserAgentDetailLoading}
+              error={dashboard.trafficBotsError}
+              loading={dashboard.trafficBotsLoading}
+              onClose={dashboard.closeTrafficUserAgentDetail}
+              onTimeframe={dashboard.setTrafficTimeframe}
+              onUserAgent={dashboard.openTrafficUserAgentDetail}
+              query={dashboard.deferredQuery}
+              timeframe={dashboard.trafficTimeframe}
+            />
+          </Activity>
+        )}
+        {hasVisited("browser") && (
+          <Activity mode={dashboard.view === "browser" ? "visible" : "hidden"}>
+            <BrowserScriptsPage
+              actionLoading={dashboard.actionLoading}
+              allowlistRows={dashboard.allowlistRows}
+              onAllowScript={dashboard.allowBrowserScript}
+              onAllowScripts={dashboard.allowBrowserScripts}
+              onUpdateEntries={dashboard.updateAllowlistEntries}
+              onUpdateEntry={dashboard.updateAllowlistEntry}
+              scriptRows={dashboard.browserScriptRows}
+            />
+          </Activity>
+        )}
+        {hasVisited("deployments") && (
+          <Activity mode={dashboard.view === "deployments" ? "visible" : "hidden"}>
+            <DeploymentsPage
+              deploymentRows={dashboard.deploymentRows}
+              error={dashboard.deploymentError}
+              loading={dashboard.deploymentLoading || dashboard.actionLoading}
+              onCreate={dashboard.recordDeployment}
+              visibleInstances={dashboard.deploymentTargets}
+            />
+          </Activity>
+        )}
+        {hasVisited("settings") && (
+          <Activity mode={dashboard.view === "settings" ? "visible" : "hidden"}>
+            <SettingsPage
+              actionState={dashboard.actionState}
+              allInstances={dashboard.estate.instances}
+              allSites={dashboard.allSites}
+              draftScope={dashboard.draftScope}
+              inventory={dashboard.inventory}
+              loading={dashboard.loading}
+              onActionChange={dashboard.setActionState}
+              onRefresh={dashboard.refresh}
+              onScopeChange={dashboard.setDraftScope}
+              onScopeSubmit={dashboard.applyScope}
+              scope={dashboard.scope}
+              user={dashboard.auth.user}
+            />
+          </Activity>
+        )}
+      </Suspense>
     </DashboardShell>
   );
 }

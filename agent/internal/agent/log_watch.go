@@ -22,12 +22,13 @@ import (
 	"github.com/rcooler/aegrail/agent/internal/redaction"
 )
 
-const LogWatchStateSchema = "aegrail.agent.log_watch_state.v1"
+const LogWatchStateSchema = "aegrail.agent.log_watch_state.v2"
 
 const (
-	maxLogLineBytes     = 64 << 10
-	maxLogReadBytes     = 1 << 20
-	maxLogEventsPerScan = 500
+	maxLogLineBytes    = 64 << 10
+	maxLogReadBytes    = 8 << 20
+	maxLogLinesPerScan = 50_000
+	logCheckpointBytes = 4 << 10
 
 	// Queued log events are shipped as multi-event batches so one scan produces
 	// a handful of hub requests instead of one request per log line. The hub
@@ -62,16 +63,24 @@ type logWatchState struct {
 }
 
 type logFileState struct {
-	Path      string    `json:"path"`
-	Offset    int64     `json:"offset"`
-	SizeBytes int64     `json:"size_bytes"`
-	ModTime   time.Time `json:"mod_time"`
+	Path             string    `json:"path"`
+	Offset           int64     `json:"offset"`
+	SizeBytes        int64     `json:"size_bytes"`
+	ModTime          time.Time `json:"mod_time"`
+	Missing          bool      `json:"missing,omitempty"`
+	FileIdentity     string    `json:"file_identity,omitempty"`
+	Generation       uint64    `json:"generation,omitempty"`
+	CheckpointOffset int64     `json:"checkpoint_offset,omitempty"`
+	CheckpointBytes  int       `json:"checkpoint_bytes,omitempty"`
+	CheckpointSHA256 string    `json:"checkpoint_sha256,omitempty"`
 }
 
 type logTarget struct {
-	Path      string
-	SizeBytes int64
-	ModTime   time.Time
+	Path                     string
+	SizeBytes                int64
+	ModTime                  time.Time
+	FileIdentity             string
+	ReadFromStartWhenNewPath bool
 }
 
 type logLine struct {
@@ -108,54 +117,147 @@ func (r *Runtime) ScanLogPaths(ctx context.Context, options LogWatchOptions) (Lo
 	if err != nil {
 		return LogWatchResult{}, err
 	}
+	explicitPaths := explicitConfiguredLogPaths(paths)
 	var torMatcher torExitMatcher
 	if !options.NoEvents {
 		torMatcher = r.loadTorExitMatcher(ctx, identity.QueueDir)
 	}
 
 	current := make(map[string]logFileState, len(targets))
+	temporarilyUnavailableTargets := make(map[string]struct{})
 	result := LogWatchResult{
 		WatchedLogs: len(targets),
 		Baselined:   !hadState,
 		StatePath:   statePath,
 	}
 	for _, target := range targets {
+		readFromStartWhenNewPath := target.ReadFromStartWhenNewPath
+		file, actualTarget, err := openLogTarget(target.Path)
+		if errors.Is(err, os.ErrNotExist) {
+			// The path may have been rename-rotated between directory
+			// discovery and open. Preserve its previous cursor as missing so a
+			// replacement at the same path is read from byte zero next scan.
+			temporarilyUnavailableTargets[filepath.Clean(target.Path)] = struct{}{}
+			continue
+		}
+		if err != nil {
+			return LogWatchResult{}, err
+		}
+		target = actualTarget
+		target.ReadFromStartWhenNewPath = readFromStartWhenNewPath
+
 		offset := target.SizeBytes
+		generation := uint64(1)
+		var previousState logFileState
+		hadPreviousState := false
+		rotationDetected := false
 		if hadState {
-			previousState, ok := previous.Logs[target.Path]
+			var ok bool
+			previousState, ok = previous.Logs[target.Path]
 			start := target.SizeBytes
 			if ok {
+				hadPreviousState = true
+				generation = normalizedLogGeneration(previousState.Generation)
 				start = previousState.Offset
-				if target.SizeBytes < previousState.Offset {
+				checkpointMatches, err := logCheckpointMatches(file, previousState)
+				if err != nil {
+					file.Close()
+					return LogWatchResult{}, err
+				}
+				if previousState.Missing ||
+					logFileWasReplaced(previousState, target) ||
+					target.SizeBytes < previousState.Offset ||
+					!checkpointMatches {
 					start = 0
+					generation++
+					rotationDetected = true
 					result.Rotated++
 				}
+			} else if target.ReadFromStartWhenNewPath {
+				start = 0
 			}
 			if options.NoEvents {
-				current[target.Path] = logFileState{
-					Path:      target.Path,
-					Offset:    target.SizeBytes,
-					SizeBytes: target.SizeBytes,
-					ModTime:   target.ModTime,
+				state, err := snapshotLogFileState(file, target.Path, target.SizeBytes, generation)
+				file.Close()
+				if err != nil {
+					return LogWatchResult{}, err
 				}
+				current[target.Path] = state
 				continue
 			}
-			lines, nextOffset, err := readNewLogLines(target.Path, start)
+			lines, nextOffset, err := readNewLogLinesFromFile(file, start)
 			if err != nil {
+				file.Close()
 				return LogWatchResult{}, err
 			}
 			offset = nextOffset
-			queued, err := r.enqueueLogLineBatches(ctx, target.Path, lines, torMatcher, options)
+			state, err := snapshotLogFileState(file, target.Path, offset, generation)
 			if err != nil {
+				file.Close()
+				return LogWatchResult{}, err
+			}
+
+			// A copytruncate rotation can happen after the initial checkpoint
+			// check but while this scan is reading. Validate the old checkpoint
+			// again after taking the candidate snapshot. If it changed, discard
+			// the candidate cursor and reread the replacement generation from
+			// byte zero before any events are queued.
+			if hadPreviousState && !rotationDetected {
+				checkpointStillMatches, err := logCheckpointMatches(file, previousState)
+				if err != nil {
+					file.Close()
+					return LogWatchResult{}, err
+				}
+				if !checkpointStillMatches {
+					generation++
+					rotationDetected = true
+					result.Rotated++
+					lines, offset, err = readNewLogLinesFromFile(file, 0)
+					if err != nil {
+						file.Close()
+						return LogWatchResult{}, err
+					}
+					state, err = snapshotLogFileState(file, target.Path, offset, generation)
+					if err != nil {
+						file.Close()
+						return LogWatchResult{}, err
+					}
+				}
+			}
+			queued, err := r.enqueueLogLineBatches(ctx, target.Path, generation, lines, torMatcher, options)
+			if err != nil {
+				file.Close()
 				return LogWatchResult{}, err
 			}
 			result.Queued += queued
+			current[target.Path] = state
+			file.Close()
+			continue
 		}
-		current[target.Path] = logFileState{
-			Path:      target.Path,
-			Offset:    offset,
-			SizeBytes: target.SizeBytes,
-			ModTime:   target.ModTime,
+		state, err := snapshotLogFileState(file, target.Path, offset, generation)
+		file.Close()
+		if err != nil {
+			return LogWatchResult{}, err
+		}
+		current[target.Path] = state
+	}
+	if hadState {
+		// Keep the cursor for a configured file that temporarily disappeared.
+		// When it returns, Missing forces a new generation and a byte-zero read.
+		// Directory-discovered files are intentionally not retained, so rotated
+		// historical files are not replayed when a directory changes.
+		for path, previousState := range previous.Logs {
+			if _, ok := current[path]; ok {
+				continue
+			}
+			cleaned := filepath.Clean(path)
+			_, explicitlyConfigured := explicitPaths[cleaned]
+			_, disappearedAfterDiscovery := temporarilyUnavailableTargets[cleaned]
+			if !explicitlyConfigured && !disappearedAfterDiscovery {
+				continue
+			}
+			previousState.Missing = true
+			current[path] = previousState
 		}
 	}
 	if hadState && !options.NoEvents && len(targets) > 0 && result.Queued == 0 {
@@ -192,11 +294,12 @@ func (r *Runtime) ScanLogPaths(ctx context.Context, options LogWatchOptions) (Lo
 }
 
 // enqueueLogLineBatches turns the new log lines of one file into queued
-// multi-event batches. Batch IDs are deterministic over (path, line offsets,
-// line contents), so a rescan of the same byte range after a crash produces
-// the same batch IDs and is deduplicated locally (pending file already
-// exists) and by the hub (external batch ID reuse).
-func (r *Runtime) enqueueLogLineBatches(ctx context.Context, path string, lines []logLine, torMatcher torExitMatcher, options LogWatchOptions) (int, error) {
+// multi-event batches. Batch IDs are deterministic over (path, generation,
+// line offsets, line contents), so a rescan of the same byte range after a
+// crash produces the same batch IDs while a rotated file may safely reuse
+// byte offsets. Retries are deduplicated locally (pending file already exists)
+// and by the hub (external batch ID reuse).
+func (r *Runtime) enqueueLogLineBatches(ctx context.Context, path string, generation uint64, lines []logLine, torMatcher torExitMatcher, options LogWatchOptions) (int, error) {
 	queued := 0
 	var chunk []EnqueueEventInput
 	chunkBytes := 0
@@ -223,17 +326,15 @@ func (r *Runtime) enqueueLogLineBatches(ctx context.Context, path string, lines 
 		return nil
 	}
 	for _, line := range lines {
-		event := logLineEvent(path, line)
+		event := logLineEventForGeneration(path, generation, line)
 		enrichAccessLogEventWithTor(&event, torMatcher)
 		event.App = options.App
 		event.Service = options.Service
 		event.Region = options.Region
 		event.Labels = mergeStringMaps(event.Labels, options.Labels)
-		if shouldDropNoisyLogEvent(event) {
-			continue
-		}
+		demoteRoutineAccessLogEvent(&event)
 		if len(chunk) == 0 {
-			fmt.Fprintf(hasher, "%s\n", path)
+			fmt.Fprintf(hasher, "%s\n%d\n", path, generation)
 		}
 		fmt.Fprintf(hasher, "%d\n%s\n", line.Offset, line.Text)
 		chunk = append(chunk, event)
@@ -327,6 +428,108 @@ func loadLogWatchState(path string) (logWatchState, bool, error) {
 	return state, true, nil
 }
 
+func normalizedLogGeneration(generation uint64) uint64 {
+	if generation == 0 {
+		return 1
+	}
+	return generation
+}
+
+func logFileWasReplaced(previous logFileState, current logTarget) bool {
+	return previous.FileIdentity != "" &&
+		current.FileIdentity != "" &&
+		previous.FileIdentity != current.FileIdentity
+}
+
+func openLogTarget(path string) (*os.File, logTarget, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, logTarget{}, err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		file.Close()
+		return nil, logTarget{}, err
+	}
+	if !info.Mode().IsRegular() {
+		file.Close()
+		return nil, logTarget{}, fmt.Errorf("%s is not a regular file", path)
+	}
+	return file, logTarget{
+		Path:         path,
+		SizeBytes:    info.Size(),
+		ModTime:      info.ModTime().UTC(),
+		FileIdentity: logFileIdentity(file, info),
+	}, nil
+}
+
+func logCheckpointMatches(file *os.File, previous logFileState) (bool, error) {
+	if previous.CheckpointSHA256 == "" || previous.CheckpointBytes <= 0 {
+		return true, nil
+	}
+	if previous.CheckpointOffset < 0 {
+		return false, nil
+	}
+	info, err := file.Stat()
+	if err != nil {
+		return false, err
+	}
+	checkpointEnd := previous.CheckpointOffset + int64(previous.CheckpointBytes)
+	if checkpointEnd > info.Size() {
+		return false, nil
+	}
+	content := make([]byte, previous.CheckpointBytes)
+	read, err := file.ReadAt(content, previous.CheckpointOffset)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return false, err
+	}
+	if read != len(content) {
+		return false, nil
+	}
+	return sha256Hex(string(content)) == previous.CheckpointSHA256, nil
+}
+
+func snapshotLogFileState(file *os.File, path string, offset int64, generation uint64) (logFileState, error) {
+	info, err := file.Stat()
+	if err != nil {
+		return logFileState{}, err
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > info.Size() {
+		offset = info.Size()
+	}
+	checkpointOffset := offset - logCheckpointBytes
+	if checkpointOffset < 0 {
+		checkpointOffset = 0
+	}
+	checkpointSize := int(offset - checkpointOffset)
+	checkpointHash := ""
+	if checkpointSize > 0 {
+		content := make([]byte, checkpointSize)
+		read, err := file.ReadAt(content, checkpointOffset)
+		if err != nil && !errors.Is(err, io.EOF) {
+			return logFileState{}, err
+		}
+		if read != len(content) {
+			return logFileState{}, io.ErrUnexpectedEOF
+		}
+		checkpointHash = sha256Hex(string(content))
+	}
+	return logFileState{
+		Path:             path,
+		Offset:           offset,
+		SizeBytes:        info.Size(),
+		ModTime:          info.ModTime().UTC(),
+		FileIdentity:     logFileIdentity(file, info),
+		Generation:       normalizedLogGeneration(generation),
+		CheckpointOffset: checkpointOffset,
+		CheckpointBytes:  checkpointSize,
+		CheckpointSHA256: checkpointHash,
+	}, nil
+}
+
 func saveLogWatchState(path string, state logWatchState) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
@@ -356,6 +559,22 @@ func resolveLogTargets(paths []string, queueDir string) ([]logTarget, error) {
 	return targets, nil
 }
 
+func explicitConfiguredLogPaths(paths []string) map[string]struct{} {
+	explicit := make(map[string]struct{}, len(paths))
+	for _, path := range paths {
+		info, err := os.Stat(path)
+		if err == nil && info.IsDir() {
+			continue
+		}
+		abs, absErr := filepath.Abs(path)
+		if absErr != nil {
+			continue
+		}
+		explicit[filepath.Clean(abs)] = struct{}{}
+	}
+	return explicit
+}
+
 func resolveLogPath(path string, queueAbs string, seen map[string]struct{}, targets *[]logTarget) error {
 	info, err := os.Stat(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -366,7 +585,7 @@ func resolveLogPath(path string, queueAbs string, seen map[string]struct{}, targ
 	}
 	if !info.IsDir() {
 		if info.Mode().IsRegular() {
-			addLogTarget(path, info, seen, targets)
+			addLogTarget(path, info, true, seen, targets)
 		}
 		return nil
 	}
@@ -391,13 +610,13 @@ func resolveLogPath(path string, queueAbs string, seen map[string]struct{}, targ
 			return err
 		}
 		if info.Mode().IsRegular() {
-			addLogTarget(current, info, seen, targets)
+			addLogTarget(current, info, false, seen, targets)
 		}
 		return nil
 	})
 }
 
-func addLogTarget(path string, info fs.FileInfo, seen map[string]struct{}, targets *[]logTarget) {
+func addLogTarget(path string, info fs.FileInfo, readFromStartWhenNewPath bool, seen map[string]struct{}, targets *[]logTarget) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return
@@ -408,9 +627,11 @@ func addLogTarget(path string, info fs.FileInfo, seen map[string]struct{}, targe
 	}
 	seen[cleaned] = struct{}{}
 	*targets = append(*targets, logTarget{
-		Path:      cleaned,
-		SizeBytes: info.Size(),
-		ModTime:   info.ModTime().UTC(),
+		Path:                     cleaned,
+		SizeBytes:                info.Size(),
+		ModTime:                  info.ModTime().UTC(),
+		FileIdentity:             logFileIdentity(nil, info),
+		ReadFromStartWhenNewPath: readFromStartWhenNewPath,
 	})
 }
 
@@ -431,6 +652,10 @@ func readNewLogLines(path string, start int64) ([]logLine, int64, error) {
 		return nil, start, err
 	}
 	defer file.Close()
+	return readNewLogLinesFromFile(file, start)
+}
+
+func readNewLogLinesFromFile(file *os.File, start int64) ([]logLine, int64, error) {
 	if start < 0 {
 		start = 0
 	}
@@ -442,7 +667,7 @@ func readNewLogLines(path string, start int64) ([]logLine, int64, error) {
 	offset := start
 	readBytes := 0
 	var lines []logLine
-	for len(lines) < maxLogEventsPerScan && readBytes < maxLogReadBytes {
+	for len(lines) < maxLogLinesPerScan && readBytes < maxLogReadBytes {
 		chunk, err := reader.ReadString('\n')
 		if len(chunk) > 0 {
 			remaining := maxLogReadBytes - readBytes
@@ -451,6 +676,13 @@ func readNewLogLines(path string, start int64) ([]logLine, int64, error) {
 				chunk = chunk[:remaining]
 			}
 			lineOffset := offset
+			if errors.Is(err, io.EOF) && !strings.HasSuffix(chunk, "\n") && !truncatedByScanLimit {
+				// A writer may be between writes when this scan reaches EOF.
+				// Leave the incomplete record unconsumed so the next scan parses
+				// the complete line instead of emitting a fragment and losing
+				// its remainder.
+				return lines, lineOffset, nil
+			}
 			offset += int64(len(chunk))
 			readBytes += len(chunk)
 			text := strings.TrimRight(chunk, "\r\n")
@@ -478,6 +710,10 @@ func readNewLogLines(path string, start int64) ([]logLine, int64, error) {
 }
 
 func logLineEvent(path string, line logLine) EnqueueEventInput {
+	return logLineEventForGeneration(path, 0, line)
+}
+
+func logLineEventForGeneration(path string, generation uint64, line logLine) EnqueueEventInput {
 	redactedLine := redaction.RedactText(line.Text)
 	payload := map[string]any{
 		"path":        path,
@@ -486,6 +722,9 @@ func logLineEvent(path string, line logLine) EnqueueEventInput {
 		"line":        redactedLine,
 		"line_sha256": sha256Hex(line.Text),
 		"truncated":   line.Truncated,
+	}
+	if generation > 0 {
+		payload["log_generation"] = generation
 	}
 	eventType := "log.line"
 	severity := classifyLogSeverity(line.Text)
@@ -505,7 +744,7 @@ func logLineEvent(path string, line logLine) EnqueueEventInput {
 		}
 	}
 	return EnqueueEventInput{
-		BatchID:   logLineBatchID(path, line),
+		BatchID:   logLineBatchIDForGeneration(path, generation, line),
 		EventTime: eventTime,
 		Type:      eventType,
 		Target:    path,
@@ -518,6 +757,13 @@ func logLineEvent(path string, line logLine) EnqueueEventInput {
 
 func logLineBatchID(path string, line logLine) string {
 	return "log-" + sha256Hex(fmt.Sprintf("%s\n%d\n%s", path, line.Offset, line.Text))[:24]
+}
+
+func logLineBatchIDForGeneration(path string, generation uint64, line logLine) string {
+	if generation == 0 {
+		return logLineBatchID(path, line)
+	}
+	return "log-" + sha256Hex(fmt.Sprintf("%s\n%d\n%d\n%s", path, generation, line.Offset, line.Text))[:24]
 }
 
 func sha256Hex(value string) string {
@@ -624,6 +870,18 @@ func shouldDropNoisyLogEvent(event EnqueueEventInput) bool {
 		return true
 	}
 	return false
+}
+
+// demoteRoutineAccessLogEvent keeps complete request telemetry for the traffic
+// views without feeding routine public traffic into the security timeline or
+// correlation rules. High-signal access observations remain log.access.
+func demoteRoutineAccessLogEvent(event *EnqueueEventInput) {
+	if event == nil || !shouldDropNoisyLogEvent(*event) {
+		return
+	}
+	event.Type = "traffic.request"
+	event.Severity = string(domain.SeverityInfo)
+	event.Message = ""
 }
 
 func isWordPressSiteKind(siteKind string) bool {

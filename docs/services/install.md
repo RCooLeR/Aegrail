@@ -5,14 +5,14 @@
 Copy and edit the environment template first:
 
 ```powershell
-Copy-Item services\.env.example services\.env
+Copy-Item docker\services\.env.example docker\services\.env
 ```
 
 Set strong local-only values for `AEGRAIL_POSTGRES_PASSWORD` and
 `AEGRAIL_REDIS_PASSWORD`. The compose file refuses to start without them.
 
 ```powershell
-docker compose --env-file services/.env -f services/compose.yaml up -d postgres18 redis
+docker compose --env-file docker/services/.env -f docker/services/compose.yaml up -d postgres18 redis
 ```
 
 Local PostgreSQL connection string shape:
@@ -45,13 +45,16 @@ Hub.
 The Compose service enables required PostgreSQL extensions from:
 
 ```text
-services/postgres18/initdb/001_extensions.sql
+docker/services/postgres18/initdb/001_extensions.sql
 ```
+
+Hub migrations use PostgreSQL 18's native `uuidv7()` function for new
+database-generated identifiers. Existing identifiers are not rewritten.
 
 ## Stop
 
 ```powershell
-docker compose --env-file services/.env -f services/compose.yaml down
+docker compose --env-file docker/services/.env -f docker/services/compose.yaml down
 ```
 
 ## Reset Local Services
@@ -59,7 +62,7 @@ docker compose --env-file services/.env -f services/compose.yaml down
 This deletes the local database and Redis volumes:
 
 ```powershell
-docker compose --env-file services/.env -f services/compose.yaml down -v
+docker compose --env-file docker/services/.env -f docker/services/compose.yaml down -v
 ```
 
 This service is for local development only. Do not place real customer data in committed service configs.

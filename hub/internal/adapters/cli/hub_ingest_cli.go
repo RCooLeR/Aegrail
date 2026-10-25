@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"text/tabwriter"
@@ -8,14 +9,14 @@ import (
 
 	"github.com/rcooler/aegrail/hub/internal/domain"
 	hubapp "github.com/rcooler/aegrail/hub/internal/hub"
-	urfavecli "github.com/urfave/cli/v2"
+	urfavecli "github.com/urfave/cli/v3"
 )
 
 func hubIngestCommand(meta domain.AppMeta) *urfavecli.Command {
 	return &urfavecli.Command{
 		Name:  "ingest",
 		Usage: "accept normalized Hub event batches",
-		Subcommands: []*urfavecli.Command{
+		Commands: []*urfavecli.Command{
 			hubIngestEventCommand(meta),
 			hubIngestBatchCommand(meta),
 		},
@@ -42,18 +43,18 @@ func hubIngestEventCommand(meta domain.AppMeta) *urfavecli.Command {
 			&urfavecli.StringSliceFlag{Name: "label"},
 			&urfavecli.StringSliceFlag{Name: "payload"},
 		),
-		Action: func(c *urfavecli.Context) error {
+		Action: func(ctx context.Context, c *urfavecli.Command) error {
 			eventTime, err := parseOptionalTime(c.String("event-time"))
 			if err != nil {
 				return err
 			}
-			container, cleanup, err := newDatabaseContainer(c.Context, meta)
+			container, cleanup, err := newDatabaseContainer(ctx, meta)
 			if err != nil {
 				return err
 			}
 			defer cleanup()
 
-			result, err := container.Hub.IngestEvents(c.Context, hubapp.IngestEventsInput{
+			result, err := container.Hub.IngestEvents(ctx, hubapp.IngestEventsInput{
 				OrganizationSlug: c.String("org"),
 				ProjectSlug:      c.String("project"),
 				EnvironmentSlug:  c.String("env"),
@@ -81,7 +82,7 @@ func hubIngestEventCommand(meta domain.AppMeta) *urfavecli.Command {
 				return err
 			}
 
-			fmt.Fprintf(c.App.Writer, "Stored ingest batch %s with %d event(s)\n", result.Batch.ExternalID, len(result.Events))
+			fmt.Fprintf(c.Root().Writer, "Stored ingest batch %s with %d event(s)\n", result.Batch.ExternalID, len(result.Events))
 			return nil
 		},
 	}
@@ -91,25 +92,25 @@ func hubIngestBatchCommand(meta domain.AppMeta) *urfavecli.Command {
 	return &urfavecli.Command{
 		Name:  "batch",
 		Usage: "inspect Hub ingest batches",
-		Subcommands: []*urfavecli.Command{
+		Commands: []*urfavecli.Command{
 			{
 				Name:  "list",
 				Usage: "list recent ingest batches for an environment",
 				Flags: append(environmentPathFlags(),
 					&urfavecli.IntFlag{Name: "limit", Value: 20},
 				),
-				Action: func(c *urfavecli.Context) error {
-					container, cleanup, err := newDatabaseContainer(c.Context, meta)
+				Action: func(ctx context.Context, c *urfavecli.Command) error {
+					container, cleanup, err := newDatabaseContainer(ctx, meta)
 					if err != nil {
 						return err
 					}
 					defer cleanup()
 
-					items, err := container.Hub.ListIngestBatches(c.Context, c.String("org"), c.String("project"), c.String("env"), c.Int("limit"))
+					items, err := container.Hub.ListIngestBatches(ctx, c.String("org"), c.String("project"), c.String("env"), c.Int("limit"))
 					if err != nil {
 						return err
 					}
-					writer := tabwriter.NewWriter(c.App.Writer, 0, 0, 2, ' ', 0)
+					writer := tabwriter.NewWriter(c.Root().Writer, 0, 0, 2, ' ', 0)
 					fmt.Fprintln(writer, "BATCH_ID\tSOURCE\tSTATUS\tEVENTS\tRECEIVED_AT\tID")
 					for _, item := range items {
 						fmt.Fprintf(writer, "%s\t%s\t%s\t%d\t%s\t%s\n", item.ExternalID, item.Source, item.Status, item.EventCount, item.ReceivedAt.Format(time.RFC3339), item.ID)

@@ -17,6 +17,7 @@ type Hub struct {
 	meta                       domain.AppMeta
 	inventory                  ports.InventoryRepository
 	ingest                     ports.IngestRepository
+	traffic                    ports.TrafficRepository
 	findings                   ports.HubFindingRepository
 	fileIgnoreRules            ports.HubFileIgnoreRuleRepository
 	browserAllowlist           ports.BrowserScriptAllowlistRepository
@@ -29,6 +30,7 @@ type Hub struct {
 	maintenance                ports.HubMaintenanceRepository
 	pushSubscriptions          ports.PushSubscriptionRepository
 	notifications              ports.NotificationSink
+	notificationOutbox         ports.HubFindingNotificationOutboxRepository
 	userSecretKey              string
 	backgroundError            func(error)
 	usersExistMu               sync.RWMutex
@@ -37,57 +39,58 @@ type Hub struct {
 	totpReplay                 map[totpReplayKey]time.Time
 	notificationErrorMu        sync.Mutex
 	notificationErrorLast      map[string]time.Time
-	correlationEnqueueMu       sync.Mutex
-	correlationEnqueueLast     map[string]time.Time
 	correlationRunMu           sync.Mutex
-	correlationRunLast         map[string]time.Time
+	correlationRuns            map[string]*autoCorrelationRunState
 	workersWG                  sync.WaitGroup
 	modelQueueFallbackWarnOnce sync.Once
 }
 
 type Dependencies struct {
-	Meta              domain.AppMeta
-	Inventory         ports.InventoryRepository
-	Ingest            ports.IngestRepository
-	Findings          ports.HubFindingRepository
-	FileIgnoreRules   ports.HubFileIgnoreRuleRepository
-	BrowserAllowlist  ports.BrowserScriptAllowlistRepository
-	ModelReports      ports.ModelAnalysisReportRepository
-	Model             ports.ModelGateway
-	Jobs              ports.JobQueue
-	Locks             ports.LockManager
-	RateLimiter       ports.RateLimiter
-	Users             ports.HubUserRepository
-	Maintenance       ports.HubMaintenanceRepository
-	PushSubscriptions ports.PushSubscriptionRepository
-	Notifications     ports.NotificationSink
-	UserSecretKey     string
-	BackgroundError   func(error)
+	Meta               domain.AppMeta
+	Inventory          ports.InventoryRepository
+	Ingest             ports.IngestRepository
+	Traffic            ports.TrafficRepository
+	Findings           ports.HubFindingRepository
+	FileIgnoreRules    ports.HubFileIgnoreRuleRepository
+	BrowserAllowlist   ports.BrowserScriptAllowlistRepository
+	ModelReports       ports.ModelAnalysisReportRepository
+	Model              ports.ModelGateway
+	Jobs               ports.JobQueue
+	Locks              ports.LockManager
+	RateLimiter        ports.RateLimiter
+	Users              ports.HubUserRepository
+	Maintenance        ports.HubMaintenanceRepository
+	PushSubscriptions  ports.PushSubscriptionRepository
+	Notifications      ports.NotificationSink
+	NotificationOutbox ports.HubFindingNotificationOutboxRepository
+	UserSecretKey      string
+	BackgroundError    func(error)
 }
 
 func New(deps Dependencies) *Hub {
 	return &Hub{
-		meta:                   deps.Meta,
-		inventory:              deps.Inventory,
-		ingest:                 deps.Ingest,
-		findings:               deps.Findings,
-		fileIgnoreRules:        deps.FileIgnoreRules,
-		browserAllowlist:       deps.BrowserAllowlist,
-		modelReports:           deps.ModelReports,
-		model:                  deps.Model,
-		jobs:                   deps.Jobs,
-		locks:                  deps.Locks,
-		rateLimiter:            deps.RateLimiter,
-		users:                  deps.Users,
-		maintenance:            deps.Maintenance,
-		pushSubscriptions:      deps.PushSubscriptions,
-		notifications:          deps.Notifications,
-		userSecretKey:          strings.TrimSpace(deps.UserSecretKey),
-		backgroundError:        deps.BackgroundError,
-		totpReplay:             map[totpReplayKey]time.Time{},
-		notificationErrorLast:  map[string]time.Time{},
-		correlationEnqueueLast: map[string]time.Time{},
-		correlationRunLast:     map[string]time.Time{},
+		meta:                  deps.Meta,
+		inventory:             deps.Inventory,
+		ingest:                deps.Ingest,
+		traffic:               deps.Traffic,
+		findings:              deps.Findings,
+		fileIgnoreRules:       deps.FileIgnoreRules,
+		browserAllowlist:      deps.BrowserAllowlist,
+		modelReports:          deps.ModelReports,
+		model:                 deps.Model,
+		jobs:                  deps.Jobs,
+		locks:                 deps.Locks,
+		rateLimiter:           deps.RateLimiter,
+		users:                 deps.Users,
+		maintenance:           deps.Maintenance,
+		pushSubscriptions:     deps.PushSubscriptions,
+		notifications:         deps.Notifications,
+		notificationOutbox:    deps.NotificationOutbox,
+		userSecretKey:         strings.TrimSpace(deps.UserSecretKey),
+		backgroundError:       deps.BackgroundError,
+		totpReplay:            map[totpReplayKey]time.Time{},
+		notificationErrorLast: map[string]time.Time{},
+		correlationRuns:       map[string]*autoCorrelationRunState{},
 	}
 }
 
@@ -206,11 +209,6 @@ type SaveDeploymentMarkerInput struct {
 	Actor            string
 	StartedAt        time.Time
 	FinishedAt       *time.Time
-}
-
-type SaveDeploymentMarkerResult struct {
-	Deployment           domain.DeploymentMarker
-	AcknowledgedFindings int
 }
 
 func (h *Hub) SaveOrganization(ctx context.Context, input SaveOrganizationInput) (domain.Organization, error) {
@@ -688,29 +686,21 @@ func (h *Hub) FindAgentByAgentID(ctx context.Context, agentID string) (domain.Ag
 }
 
 func (h *Hub) SaveDeploymentMarker(ctx context.Context, input SaveDeploymentMarkerInput) (domain.DeploymentMarker, error) {
-	result, err := h.SaveDeploymentMarkerWithStatusUpdate(ctx, input)
-	if err != nil {
-		return domain.DeploymentMarker{}, err
-	}
-	return result.Deployment, nil
-}
-
-func (h *Hub) SaveDeploymentMarkerWithStatusUpdate(ctx context.Context, input SaveDeploymentMarkerInput) (SaveDeploymentMarkerResult, error) {
 	environment, err := h.resolveEnvironmentPath(ctx, input.OrganizationSlug, input.ProjectSlug, input.EnvironmentSlug)
 	if err != nil {
-		return SaveDeploymentMarkerResult{}, err
+		return domain.DeploymentMarker{}, err
 	}
 	var appID domain.ID
 	if strings.TrimSpace(input.AppSlug) != "" {
 		app, err := h.resolveAppPath(ctx, input.OrganizationSlug, input.ProjectSlug, input.EnvironmentSlug, input.AppSlug)
 		if err != nil {
-			return SaveDeploymentMarkerResult{}, err
+			return domain.DeploymentMarker{}, err
 		}
 		appID = app.ID
 	}
 	version := strings.TrimSpace(input.Version)
 	if version == "" {
-		return SaveDeploymentMarkerResult{}, errors.New("deployment version is required")
+		return domain.DeploymentMarker{}, errors.New("deployment version is required")
 	}
 	startedAt := input.StartedAt
 	if startedAt.IsZero() {
@@ -726,16 +716,9 @@ func (h *Hub) SaveDeploymentMarkerWithStatusUpdate(ctx context.Context, input Sa
 		FinishedAt:    input.FinishedAt,
 	})
 	if err != nil {
-		return SaveDeploymentMarkerResult{}, err
+		return domain.DeploymentMarker{}, err
 	}
-	acknowledged, err := h.acknowledgeDeploymentExpectedOpenFindings(ctx, deployment)
-	if err != nil {
-		return SaveDeploymentMarkerResult{}, err
-	}
-	return SaveDeploymentMarkerResult{
-		Deployment:           deployment,
-		AcknowledgedFindings: acknowledged,
-	}, nil
+	return deployment, nil
 }
 
 func (h *Hub) ListDeploymentMarkers(ctx context.Context, organizationSlug string, projectSlug string, environmentSlug string, appSlug string) ([]domain.DeploymentMarker, error) {

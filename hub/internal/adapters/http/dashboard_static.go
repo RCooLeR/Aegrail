@@ -26,6 +26,10 @@ func mountDashboard(router chi.Router, dashboardDir string) {
 			fileServer.ServeHTTP(w, r)
 			return
 		}
+		if requested == "assets" || strings.HasPrefix(requested, "assets/") {
+			http.NotFound(w, r)
+			return
+		}
 		serveDashboardIndex(w, r, dashboardDir)
 	})
 }
@@ -40,5 +44,6 @@ func dashboardAssetExists(dashboardDir string, requested string) bool {
 }
 
 func serveDashboardIndex(w http.ResponseWriter, r *http.Request, dashboardDir string) {
+	w.Header().Set("Cache-Control", "no-cache")
 	http.ServeFile(w, r, filepath.Join(dashboardDir, "index.html"))
 }

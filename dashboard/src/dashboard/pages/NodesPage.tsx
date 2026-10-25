@@ -2,7 +2,7 @@ import { CheckCircle2, Eye, MonitorCog, Server, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { InstanceModel } from "../../estate";
 import type { CoverageRecord } from "../../types";
-import { nodeLabel } from "../model/viewModels";
+import { findingCountLabel, nodeLabel } from "../model/viewModels";
 import type { IssueRow } from "../types";
 import { formatRelative } from "../utils/time";
 import { EmptyState, MiniBlock, Panel, ResponsiveTable, SeverityPill, StatusPill } from "../components/common";
@@ -41,7 +41,7 @@ export function NodesPage({
               <th>Status</th>
               <th>Services</th>
               <th>Agent</th>
-              <th>Open issues</th>
+              <th>Open findings</th>
               <th>Last scan</th>
             </tr>
           </thead>
@@ -50,10 +50,13 @@ export function NodesPage({
               <tr className={selected?.key === instance.key ? "selected" : ""} key={instance.key} onClick={() => setSelectedNodeKey(instance.key)}>
                 <td><strong>{nodeLabel(instance)}</strong><small>{instance.appName}</small></td>
                 <td>{instance.companyName} / {instance.projectName}</td>
-                <td><StatusPill value={instance.status} /></td>
+                <td><StatusPill value={instance.status} /><small>{instance.statusReason}</small></td>
                 <td><CollectorBadges collectors={instance.collectors} /></td>
                 <td>{instance.activeAgentCount}/{instance.agentCount} online</td>
-                <td>{instance.openFindings}</td>
+                <td>
+                  <strong>{findingCountLabel(instance.openFindings, instance.findingCountsExact)}</strong>
+                  <small>Occurrences: {openFindingBreakdown(instance)}</small>
+                </td>
                 <td>{formatRelative(instance.lastSignalAt)}</td>
               </tr>
             ))}
@@ -70,6 +73,11 @@ export function NodesPage({
             <MiniBlock label="Site" value={selected.projectName} />
             <MiniBlock label="Status" value={selected.status} />
             <MiniBlock label="Last scan" value={formatRelative(selected.lastSignalAt)} />
+            <MiniBlock label={'Status reason'} value={selected.statusReason} />
+            <MiniBlock
+              label={'Open findings'}
+              value={`${findingCountLabel(selected.openFindings, selected.findingCountsExact)} (${openFindingBreakdown(selected)})`}
+            />
           </div>
           <h3>Services</h3>
           <ServiceGrid instance={selected} issueRows={issueRows.filter((row) => row.instance.key === selected.key)} />
@@ -86,6 +94,25 @@ export function NodesPage({
       )}
     </div>
   );
+}
+
+function openFindingBreakdown(instance: InstanceModel) {
+  const otherFindings = Math.max(
+    0,
+    instance.openFindings - instance.criticalFindings - instance.highFindings - instance.mediumFindings
+  );
+  const counts = [
+    `${instance.criticalFindings} critical`,
+    `${instance.highFindings} high`,
+    `${instance.mediumFindings} medium`
+  ];
+  if (otherFindings > 0) {
+    counts.push(`${otherFindings} low/info`);
+  }
+  if (!instance.findingCountsExact) {
+    counts.push("loaded minimum");
+  }
+  return counts.join(" / ");
 }
 
 type SafeFileIgnore = {

@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -36,6 +37,7 @@ type Runtime struct {
 type Config struct {
 	ConfigPath      string
 	QueueDir        string
+	HubTimeout      time.Duration
 	SentRetention   time.Duration
 	MaxPendingFiles int
 	Identity        *Identity
@@ -153,9 +155,14 @@ func NewRuntime(config Config) *Runtime {
 	if strings.TrimSpace(config.QueueDir) == "" {
 		config.QueueDir = ".aegrail/queue"
 	}
+	hubTimeout := config.HubTimeout
+	if hubTimeout <= 0 {
+		hubTimeout = 60 * time.Second
+	}
+	config.HubTimeout = hubTimeout
 	return &Runtime{
 		Config: config,
-		client: &http.Client{Timeout: 10 * time.Second},
+		client: &http.Client{Timeout: hubTimeout},
 		now:    time.Now,
 	}
 }
@@ -622,7 +629,7 @@ func (r *Runtime) sendBatch(ctx context.Context, identity Identity, nodeSecret s
 	if err != nil {
 		return err
 	}
-	requestBody, err := json.Marshal(envelope)
+	requestBody, err := jsonv2.Marshal(envelope)
 	if err != nil {
 		return err
 	}
