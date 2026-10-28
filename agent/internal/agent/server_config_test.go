@@ -52,7 +52,11 @@ func TestLoadServerConfigRejectsUnknownFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read example config: %v", err)
 	}
+	content = bytes.ReplaceAll(content, []byte("\r\n"), []byte("\n"))
 	content = bytes.Replace(content, []byte("hub:\n"), []byte("hub:\n  adress: typo\n"), 1)
+	if !bytes.Contains(content, []byte("  adress: typo\n")) {
+		t.Fatal("failed to insert unknown field into example config")
+	}
 	path := filepath.Join(t.TempDir(), "agent.yaml")
 	if err := os.WriteFile(path, content, 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
